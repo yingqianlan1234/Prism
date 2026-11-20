@@ -1,0 +1,30 @@
+{
+  "name": "music-desktop",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "dev": "vite --host 127.0.0.1",
+    "tauri": "tauri",
+    "dev:ui": "vite --host 127.0.0.1",
+    "build": "vite build",
+    "test": "npm run build && node --test src/cover.test.mjs src/a11.test.mjs src/providers.test.mjs src/listening.test.mjs src/playback-state.test.mjs && node src/integration.test.mjs && node src/platforms.test.mjs && node src/qq-community.test.mjs && node src/fm.test.mjs && node src/qq-login.test.mjs && node src/listening-integration.test.mjs && node src/playback-state-integration.test.mjs && node src/restore-lyric-race.test.mjs && node src/background-integration.test.mjs && node src/qq-playback-state-integration.test.mjs && node src/qq-stream-race.test.mjs && node src/desktop-interactions.test.mjs && node src/audio-transition.test.mjs && node src/logout-stale-rollback.test.mjs && node src/qq-rollback.test.mjs && node src/a11-integration.test.mjs && node src/performance.test.mjs",
+    "test:integration": "npm run build && node src/integration.test.mjs"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@tauri-apps/api": "^2.12.4",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2.12.4",
+    "@vitejs/plugin-react": "^6.2.1",
+    "jsdom": "^24.1.3",
+    "vite": "^8.3.6"
+  }
+}

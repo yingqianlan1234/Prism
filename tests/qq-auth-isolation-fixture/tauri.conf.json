@@ -1,0 +1,1 @@
+{"$schema":"https://schema.tauri.app/config/2","productName":"轻屿授权隔离测试","version":"0.1.0","identifier":"local.xianyu.qqauthfixture","build":{"frontendDist":"ui"},"app":{"windows":[{"label":"main","title":"轻屿：本地授权隔离测试","width":560,"height":240}],"security":{"csp":"default-src 'self'; script-src 'self'"}},"bundle":{"active":false}}

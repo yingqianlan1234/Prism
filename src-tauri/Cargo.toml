@@ -1,0 +1,24 @@
+[package]
+name = "xianyu"
+version = "0.1.0"
+edition = "2021"
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+[dependencies]
+tauri = { version = "2", features = ["image-png", "tray-icon"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+aes = "0.8"
+cbc = { version = "0.1", features = ["alloc", "block-padding"] }
+base64 = "0.22"
+num-bigint = "0.4"
+rand = "0.8"
+md5 = "0.7"
+qrcode = { version = "0.14", default-features = false, features = ["svg"] }
+keyring = { version = "3", features = ["windows-native"] }
+
+[target.'cfg(windows)'.dependencies]
+webview2-com = "0.39"
+windows = { version = "0.62", features = ["Win32_Foundation", "Win32_Graphics_Dwm"] }
+
