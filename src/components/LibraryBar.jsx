@@ -61,6 +61,7 @@ export function LibraryBar({
   openFm,
   openRecent,
   recommend,
+  qqRecommendationCapabilities = null,
   lists,
   openList,
   listStatus,
@@ -184,6 +185,37 @@ export function LibraryBar({
                 />
               </div>
             )}
+
+            {activeProvider === 'qqmusic' &&
+              profile &&
+              !identityUnknown &&
+              platformFlavor.qqmusic !== 'mock' &&
+              (qqRecommendationCapabilities?.newsong ||
+                qqRecommendationCapabilities?.playlists) && (
+                <div className="nr-side-section">
+                  <span className="nr-side-kicker">发现与推荐</span>
+                  <nav className="recommend-nav" aria-label="QQ 推荐">
+                    {qqRecommendationCapabilities.newsong && (
+                      <button
+                        type="button"
+                        className={ws?.title === '推荐新歌' ? 'is-active' : ''}
+                        onClick={() => recommend('newsong')}
+                      >
+                        推荐新歌
+                      </button>
+                    )}
+                    {qqRecommendationCapabilities.playlists && (
+                      <button
+                        type="button"
+                        className={ws?.title === '推荐歌单' ? 'is-active' : ''}
+                        onClick={() => recommend('playlists')}
+                      >
+                        推荐歌单
+                      </button>
+                    )}
+                  </nav>
+                </div>
+              )}
 
             <div className="nr-side-section nr-side-playlists">
               <span className="library-label">

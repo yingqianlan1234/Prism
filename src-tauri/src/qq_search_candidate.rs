@@ -66,10 +66,11 @@ fn map_search(body: &[u8], page: u32, page_size: u32) -> Result<Value, SearchErr
         let artists: Result<Vec<_>, _> = singers.iter().map(|s| required(s.get("name")).map(|name| json!({"name": name}))).collect();
         let album = required(item.pointer("/album/name"))?;
         let valid_mid=|v:Option<&Value>|v.and_then(Value::as_str).filter(|s|!s.is_empty()&&s.len()<=64&&s.bytes().all(|b|b.is_ascii_alphanumeric())).map(str::to_owned);
-        let cover=valid_mid(item.pointer("/album/mid")).map(|m|format!("https://y.gtimg.cn/music/photo_new/T002R300x300M{m}.jpg"));
+        let cover=valid_mid(item.pointer("/album/mid")).map(|m|format!("https://y.gtimg.cn/music/photo_new/T002R300x300M000{m}.jpg"));
         let media_mid=valid_mid(item.pointer("/file/media_mid"));
         let duration=item.get("interval").and_then(Value::as_u64).unwrap_or(0).min(86400)*1000;
-        Ok(json!({"id":id,"name":name,"artists":artists?,"album":{"name":album,"picUrl":cover},"duration":duration,"mediaMid":media_mid}))
+        let vip=item.pointer("/pay/pay_play").and_then(Value::as_i64)==Some(1);
+        Ok(json!({"id":id,"name":name,"artists":artists?,"album":{"name":album,"picUrl":cover},"duration":duration,"mediaMid":media_mid,"vip":vip}))
     }).collect();
     // No verified total field: retain unknown instead of assuming a page is final.
     Ok(json!({"result":{"songs":songs?,"songCount":null},"page":page,"hasMore":null}))
@@ -89,8 +90,16 @@ mod tests {
     }
     #[test]
     fn maps_and_keeps_total_unknown_even_when_claimed() {
-        let v=map_search(&wrap(json!({"list":[fixture()],"totalnum":12})),2,5).unwrap();
-        assert_eq!(v["result"]["songs"][0],json!({"id":"m","name":"n","artists":[{"name":"a"},{"name":"b"}],"album":{"name":"c","picUrl":null},"duration":0,"mediaMid":null}));
+        let mut paid=fixture();
+        paid["album"]["mid"]=json!("ALB1");
+        paid["pay"]=json!({"pay_play":1});
+        let mut free=fixture();
+        free["pay"]=json!({"pay_play":0});
+        let v=map_search(&wrap(json!({"list":[fixture(),paid,free],"totalnum":12})),2,5).unwrap();
+        assert_eq!(v["result"]["songs"][0],json!({"id":"m","name":"n","artists":[{"name":"a"},{"name":"b"}],"album":{"name":"c","picUrl":null},"duration":0,"mediaMid":null,"vip":false}));
+        assert_eq!(v["result"]["songs"][1]["album"]["picUrl"],"https://y.gtimg.cn/music/photo_new/T002R300x300M000ALB1.jpg");
+        assert_eq!(v["result"]["songs"][1]["vip"],true);
+        assert_eq!(v["result"]["songs"][2]["vip"],false);
         assert!(v["result"]["songCount"].is_null()); assert!(v["hasMore"].is_null());
         let empty=map_search(&wrap(json!({"list":[]})),1,5).unwrap();
         assert_eq!(empty["result"]["songs"],json!([])); assert!(empty["hasMore"].is_null());

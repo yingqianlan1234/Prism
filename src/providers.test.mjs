@@ -131,7 +131,7 @@ test('Release 构建配置使用静态前端且未配置 Node 后台服务（静
 test('生产 IPC 只注册受限网页登录原型，不注册旧二维码登录',async()=>{
  const rust=await readFile('src-tauri/src/main.rs','utf8');
  const handlers=rust.match(/tauri::generate_handler!\[([^\]]*)\]/s)?.[1];
- assert(handlers);assert(!handlers.includes('qq_login::'));assert(handlers.includes('qq_search'));assert(handlers.includes('qq_web_auth::qq_web_login_open'));
+ assert(handlers);assert(!handlers.includes('qq_login::'));assert(handlers.includes('qq_search'));assert(handlers.includes('qq_web_auth::qq_web_login_open'));assert(handlers.includes('qq_recommended_playlists'));assert(handlers.includes('qq_recommended_new_songs'));
 });
 
 test('QQ 社区仅匿名搜索并映射固定 IPC 参数',async()=>{
@@ -140,7 +140,13 @@ test('QQ 社区仅匿名搜索并映射固定 IPC 参数',async()=>{
  await qq.search('合成查询',{page:2,pageSize:5});
  assert.deepEqual(calls.at(-1),{command:'qq_search',args:{query:'合成查询',page:2,pageSize:5}});
  for(const [name,command] of [['login','qq_web_login_open'],['loginComplete','qq_web_login_complete'],['loginCancel','qq_web_login_cancel'],['logout','qq_web_logout'],['getUserProfile','qq_web_account'],['restoreSession','qq_web_account']]){await qq[name]();assert.equal(calls.at(-1).command,command);}
- await qq.getPlaylists({page:2});assert.deepEqual(calls.at(-1),{command:'qq_web_playlists',args:{page:2}});await qq.getPlaylistTracks('123',{page:3});assert.deepEqual(calls.at(-1),{command:'qq_web_playlist_tracks',args:{id:'123',page:3}});await qq.getLyrics('MID1');assert.deepEqual(calls.at(-1),{command:'qq_web_lyric',args:{mid:'MID1'}});await qq.resolvePlayback('MID1','MEDIA1');assert.deepEqual(calls.at(-1),{command:'qq_web_resolve',args:{mid:'MID1',mediaMid:'MEDIA1'}});for(const name of ['getRecommendations','reportListening'])await assert.rejects(qq[name](),e=>e.code==='unsupported');
+ await qq.getPlaylists({page:2});assert.deepEqual(calls.at(-1),{command:'qq_web_playlists',args:{page:2}});await qq.getPlaylistTracks('123',{page:3});assert.deepEqual(calls.at(-1),{command:'qq_web_playlist_tracks',args:{id:'123',page:3}});await qq.getLyrics('MID1');assert.deepEqual(calls.at(-1),{command:'qq_web_lyric',args:{mid:'MID1'}});await qq.resolvePlayback('MID1','MEDIA1');assert.deepEqual(calls.at(-1),{command:'qq_web_resolve',args:{mid:'MID1',mediaMid:'MEDIA1'}});
+ await qq.getRecommendations('playlists');assert.deepEqual(calls.at(-1),{command:'qq_recommended_playlists',args:{}});
+ await qq.getRecommendations('newsong');assert.deepEqual(calls.at(-1),{command:'qq_recommended_new_songs',args:{}});
+ const before=calls.length;
+ for(const kind of ['daily','resources','fm','unknown','constructor',undefined])await assert.rejects(qq.getRecommendations(kind),e=>e.code==='unsupported');
+ assert.equal(calls.length,before);
+ await assert.rejects(qq.reportListening(),e=>e.code==='unsupported');
 });
 
 test('QQ Mock 与社区适配器分别声明真实能力',async()=>{
@@ -149,10 +155,10 @@ test('QQ Mock 与社区适配器分别声明真实能力',async()=>{
  assert.notEqual(mock.capabilities,community.capabilities);
  assert(Object.isFrozen(mock.capabilities));
  for(const name of ['login','logout','getUserProfile','restoreSession','getPlaylists','getPlaylistTracks','search']){assert.equal(mock.capabilities[name],true);assert.equal(community.capabilities[name],true);}
- for(const name of ['getLyrics','resolvePlayback']){assert.equal(mock.capabilities[name],false);assert.equal(community.capabilities[name],true);await assert.rejects(mock[name](),e=>e.code==='unsupported');}
- for(const name of ['getRecommendations','reportListening']){assert.equal(mock.capabilities[name],false);assert.equal(community.capabilities[name],false);await assert.rejects(mock[name](),e=>e.code==='unsupported');await assert.rejects(community[name](),e=>e.code==='unsupported');}
+ for(const name of ['getLyrics','resolvePlayback','getRecommendations']){assert.equal(mock.capabilities[name],false);assert.equal(community.capabilities[name],true);await assert.rejects(mock[name](),e=>e.code==='unsupported');}
+ assert.equal(mock.capabilities.reportListening,false);assert.equal(community.capabilities.reportListening,false);await assert.rejects(mock.reportListening(),e=>e.code==='unsupported');await assert.rejects(community.reportListening(),e=>e.code==='unsupported');
  assert.deepEqual(mock.recommendationCapabilities,{daily:false,resources:false,playlists:false,fm:false,newsong:false});
- assert.deepEqual(community.recommendationCapabilities,mock.recommendationCapabilities);
+ assert.deepEqual(community.recommendationCapabilities,{daily:false,resources:false,playlists:true,fm:false,newsong:true});
 });
 
 test('桌面功能能力位、事件名与 P2-A IPC 命令参数映射正确',async()=>{

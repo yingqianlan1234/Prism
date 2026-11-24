@@ -203,7 +203,14 @@ export function SongList({
               <span className="song-name">
                 <SongArtwork song={s} size={80} className="song-placeholder" />
                 <span className="lw-track-copy">
-                  <b title={s.name}>{s.name}</b>
+                  <span className="lw-track-title-row">
+                    <b title={s.name}>{s.name}</b>
+                    {s.vip && (
+                      <span className="nr-vip-chip" title="需要平台会员或绿钻完整播放">
+                        VIP
+                      </span>
+                    )}
+                  </span>
                   <small title={artist(s)}>{artist(s)}</small>
                 </span>
               </span>

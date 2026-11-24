@@ -92,7 +92,7 @@ export function App({
   providers = defaultProviders,
   ListeningTracker = DefaultListeningTracker,
 } = {}) {
-  const { netease, getProvider, capabilities, platformFlavor, latestRequest, desktop, local } = providers;
+  const { netease, getProvider, capabilities, recommendationCapabilities, platformFlavor, latestRequest, desktop, local } = providers;
   const canGlobalShortcuts = Boolean(capabilities?.desktop?.globalShortcuts && desktop?.globalShortcutsGet);
   const canDesktopLyric = Boolean(capabilities?.desktop?.desktopLyric && desktop?.desktopLyricGet);
   const canLocalLibrary = Boolean(capabilities?.local?.getTracks && local?.getFolders);
@@ -1308,10 +1308,11 @@ export function App({
 
   const switchProvider = id => {
     if (activeRef.current !== id) {
+      const prevId = activeRef.current;
       recommendation.current.next();
       if (recommendationPending.current) {
         recommendationPending.current = false;
-        update('netease', { message: '推荐加载已取消' });
+        update(prevId, { message: '推荐加载已取消' });
       }
     }
     activeRef.current = id;
@@ -1631,9 +1632,9 @@ export function App({
   };
 
   const recommend = async kind => {
-    const id = 'netease';
+    const id = activeRef.current;
     const w = workRef.current[id];
-    if (activeRef.current !== id || w.identityUnknown || !w.profile?.userId) return;
+    if (!w || activeRef.current !== id || w.identityUnknown || !w.profile?.userId) return;
     const token = browse.current[id].next();
     const generation = identity.current[id].current();
     const recToken = recommendation.current.next();
@@ -1651,6 +1652,8 @@ export function App({
       searchTotal: null,
       recommendLists: null,
       fmView: false,
+      qqPlaylist: null,
+      qqTrackPage: 0,
       trackOrigin: 'recommendation',
       message: '正在加载…',
     });
@@ -3285,6 +3288,11 @@ export function App({
         openFm={openFm}
         openRecent={openRecent}
         recommend={recommend}
+        qqRecommendationCapabilities={
+          capabilities?.qqmusic?.getRecommendations
+            ? recommendationCapabilities?.qqmusic || null
+            : null
+        }
         lists={lists}
         openList={openList}
         listStatus={listStatus}

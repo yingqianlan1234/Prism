@@ -14,6 +14,10 @@ export function artworkUrl(value, size) {
  const url = new URL(safe);
  const isNetease = url.hostname === 'music.126.net' || url.hostname.endsWith('.music.126.net') || url.hostname === 'music.163.com' || url.hostname.endsWith('.music.163.com');
  if (isNetease && !url.search && [80,100,500,800].includes(size)) url.searchParams.set('param', `${size}y${size}`);
+ if (url.hostname === 'y.gtimg.cn' && !url.search && [500, 800].includes(size)) {
+  const match = url.pathname.match(/^\/music\/photo_new\/T002R300x300M000([A-Za-z0-9]+)\.jpg$/);
+  if (match) url.pathname = `/music/photo_new/T002R${size}x${size}M000${match[1]}.jpg`;
+ }
  return url.href;
 }
 export function songAlbum(song) {

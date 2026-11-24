@@ -9,7 +9,7 @@ export const capabilities = Object.freeze({
  desktop:Object.freeze({globalShortcuts:true,desktopLyric:true}),
  local:Object.freeze({manageFolders:true,scanLibrary:true,getTracks:true,resolvePlayback:true,getLyrics:true,persistQueue:true}),
  netease:Object.freeze({login:true,logout:true,restoreSession:true,getUserProfile:true,search:true,getPlaylists:true,getPlaylistTracks:true,getLyrics:true,resolvePlayback:true,getRecommendations:true,reportListening:false,...neteaseLibraryCapabilities(true)}),
- qqmusic:Object.freeze({login:true,logout:true,restoreSession:true,getUserProfile:true,search:true,getPlaylists:true,getPlaylistTracks:true,getLyrics:true,resolvePlayback:true,getRecommendations:false,reportListening:false,...neteaseLibraryCapabilities(false)})
+ qqmusic:Object.freeze({login:true,logout:true,restoreSession:true,getUserProfile:true,search:true,getPlaylists:true,getPlaylistTracks:true,getLyrics:true,resolvePlayback:true,getRecommendations:true,reportListening:false,...neteaseLibraryCapabilities(false)})
 });
 export const local = Object.freeze({
  capabilities:capabilities.local,
@@ -35,7 +35,7 @@ export const desktop = Object.freeze({
 export const platformFlavor=Object.freeze({netease:'netease',qqmusic:'community'});
 export const recommendationCapabilities=Object.freeze({
  netease:Object.freeze({daily:true,resources:true,playlists:true,fm:true,newsong:true}),
- qqmusic:Object.freeze({daily:false,resources:false,playlists:false,fm:false,newsong:false})
+ qqmusic:Object.freeze({daily:false,resources:false,playlists:true,fm:false,newsong:true})
 });
 const recommendationCommands=Object.freeze({daily:'netease_daily_songs',resources:'netease_recommended_resources',playlists:'netease_personalized_playlists',newsong:'netease_recommended_new_songs',fm:'netease_private_fm'});
 export const netease = Object.freeze({

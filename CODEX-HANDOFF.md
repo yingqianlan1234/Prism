@@ -2,7 +2,7 @@
 
 更新日期：2026-11-24 · 整理方：Antigravity（前端视觉与架构重构侧）
 
-> **交接边界说明**：**P1（网易云库与搜索增强）**、**P2-A（全局系统快捷键含方向键扩展 & 桌面悬浮歌词）** 与 **P2-B（本地音乐独立工作区）** 均已由 Codex 完成后端并在 Antigravity 完成全部前端 UI、事件同步与测试验收。目前仅 **P3（QQ 104003 播放协议排查）** 留待后续用户单独授权推进。
+> **交接边界说明**：**P1（网易云库与搜索增强）**、**P2-A（全局系统快捷键含方向键扩展 & 桌面悬浮歌词）**、**P2-B（本地音乐独立工作区）** 与 **P3（QQ 104003 播放协议修复 + 封面/`VIP`/公开推荐对齐）** 均已由 Codex 与 Antigravity 完成前后端对接与验收。
 
 ---
 
@@ -35,10 +35,18 @@
 - 后端 `src-tauri/src/local_library.rs`、`src-tauri/src/local_media.rs`（Lofty 元数据、IFileOpenDialog 目录授权、HTTP Range 受控本地流与排队持久化）与 `src/providers.js`（`capabilities.local` / `local.*`）已落地；
 - 前端已在 [AppHeader.jsx](src/components/AppHeader.jsx)、[LibraryBar.jsx](src/components/LibraryBar.jsx)、[LibraryContent.jsx](src/components/LibraryContent.jsx)、[Overlays.jsx](src/components/Overlays.jsx)、[App.jsx](src/App.jsx) 完成独立工作区、文件夹管理、本地筛选、进度恢复与歌词同步，并通过 `src/local-library-p2b.test.mjs` 与无头 Chromium 多尺寸视觉验收；真实系统文件夹选择弹窗与各类本地音频格式逐项出声/拖动进度待实机桌面端验证。
 
-### P3 · QQ 音乐 104003 播放协议专项排查（需用户单独授权实号排查）
-- **现状**：QQ 登录、资料、歌单、曲目浏览与社区匿名搜索已通，但普通 Vkey 取流返回 `0/0/104003`。
-- **边界**：严禁绕过会员、版权、DRM、验证码或设备风控；任何实号抓包/请求前须向用户说明请求范围与影响并获单独同意。
-- **相关文件**：`src-tauri/src/qq_web_auth.rs`、`src-tauri/src/qq_catalog.rs`、`src-tauri/src/qq_research.rs`。
+### [已完成前后端对接] P3 · QQ 音乐播放协议修复、封面/VIP 提示与公开推荐
+- **播放协议与授权修复（`src-tauri/src/qq_web_auth.rs`）**：
+  - 授权窗口入口与导航白名单更新兼容 `/n/ryqq_v2/`，修复升级跳转导致的空白页问题；
+  - `qq_web_resolve` 沿用免签 `musicu.fcg`（`vkey.GetVkeyServer / CgiGetVkey`），请求格式切换为 `C400{media_mid}.m4a`，补齐 `comm.g_tk_new_20200303` 与 `Origin: https://y.qq.com`；
+  - `allowed_media_url` 支持将可信 `http://` `sip` 来源安全升级为 `https://`（涵盖 `*.qqmusic.qq.com`、`aqqmusic.tc.qq.com`、`*.music.tc.qq.com`），`stream_chunk_inner` 按扩展名动态返回 `audio/mp4` / `audio/mpeg`；
+  - 保留严格白名单与 104003 友好错误提示，实测免费歌正常出声与拖动进度。
+- **专辑封面与 VIP 徽章（`qq_catalog.rs`、`qq_search_candidate.rs`、`cover.js`、`LibraryContent.jsx`）**：
+  - 修正 QQ 专辑封面模板为 `T002R300x300M000{m}.jpg`，前端舞台大图（500/800）自动升级对应清晰度；
+  - 映射 `pay.pay_play == 1` 为 `vip` 布尔字段，列表曲目展示克制的 `VIP` 徽章。
+- **公开免签推荐接入（`qq_catalog.rs`、`providers.js`、`qq-community.js`、`LibraryBar.jsx`）**：
+  - 新增隔离匿名命令 `qq_recommended_playlists`（`playlist.HotRecommendServer / get_hot_recommend`）与 `qq_recommended_new_songs`（`newsong.NewSongServer / get_new_song_info`），开启 QQ 工作区「推荐新歌」「推荐歌单」入口；
+  - QQ「每日推荐」与「私人 FM」因强鉴权/签名边界维持关闭，不引入任何 `sign` 签名、解密或风控绕过。
 
 ---
 
@@ -49,4 +57,4 @@
 3. 请保留 `src-tauri/src/window_dwm.rs` 与 `src-tauri/tauri.conf.json` 的深靛夜色（`#0E1624` / `#F0F4FA`）配置；`.oil-ui/` 为前端过程验收产物，勿纳入业务代码或发布提交。
 4. 错误返回沿用现有 `{ code, message }` 结构，保持前端 `errorText()` 统一提示体验。
 5. 改动 Rust 代码后请跑通 `cargo test --offline --manifest-path src-tauri/Cargo.toml` 与前端 `npm run test`。
-6. **状态提示**：**P1、P2-A（含键位扩展）与 P2-B 已全部完成前后端对接与自动化/视觉验收**；仅 **P3（QQ 104003）** 留待后续授权排查。
+6. **状态提示**：**P1、P2-A、P2-B 与 P3（QQ 播放修复、封面/`VIP` 徽章与公开推荐新歌/歌单）均已完成前后端对接**；QQ 每日推荐与私人 FM 维持关闭（不碰签名与加密接口）。
