@@ -3,6 +3,115 @@ import { artist, album, time } from '../utils/format.js';
 import { PlaylistCover, SongArtwork, SourceTag, InlineNotice } from './Artwork.jsx';
 import { Icon } from './Icons.jsx';
 
+const SEARCH_TYPES = [
+  { id: 1, label: '单曲' },
+  { id: 10, label: '专辑' },
+  { id: 100, label: '歌手' },
+  { id: 1000, label: '歌单' },
+];
+
+export function SearchCategoryBar({ searchType, disabled, onSelectType }) {
+  return (
+    <div className="nr-search-tabs" role="group" aria-label="搜索分类">
+      {SEARCH_TYPES.map(cat => (
+        <button
+          key={cat.id}
+          type="button"
+          className={'nr-search-tab' + (searchType === cat.id ? ' is-active' : '')}
+          aria-pressed={searchType === cat.id}
+          disabled={disabled}
+          onClick={() => onSelectType(cat.id)}
+        >
+          {cat.label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+export function SearchCategoryResults({ searchType, items, onOpenPlaylist, onSearchKeyword }) {
+  if (searchType === 1000) {
+    return (
+      <div className="lw-card-grid nr-search-grid">
+        {items.map(pl => (
+          <button
+            key={pl.id}
+            type="button"
+            className="lw-card"
+            title={pl.name}
+            aria-label={`打开歌单：${pl.name}`}
+            onClick={() => onOpenPlaylist(pl)}
+          >
+            <span className="lw-card-cover">
+              <PlaylistCover className="lw-card-img" url={pl.coverImgUrl} />
+              <span className="lw-card-play" aria-hidden="true">
+                <Icon name="next" />
+              </span>
+            </span>
+            <b className="lw-card-name">{pl.name}</b>
+            <small className="lw-card-meta">
+              {[pl.creator?.nickname || '未知创建者', pl.trackCount != null ? `${pl.trackCount} 首` : '']
+                .filter(Boolean)
+                .join(' · ')}
+            </small>
+          </button>
+        ))}
+      </div>
+    );
+  }
+
+  if (searchType === 10) {
+    return (
+      <div className="lw-card-grid nr-search-grid">
+        {items.map(al => {
+          const who = al.artist?.name || (al.artists || []).map(a => a.name).join(' / ');
+          return (
+            <button
+              key={al.id}
+              type="button"
+              className="lw-card"
+              title={al.name}
+              aria-label={`搜索专辑：${al.name}`}
+              onClick={() => onSearchKeyword(al.name)}
+            >
+              <span className="lw-card-cover">
+                <PlaylistCover className="lw-card-img" url={al.picUrl} />
+              </span>
+              <b className="lw-card-name">{al.name}</b>
+              <small className="lw-card-meta">
+                {[who || '未知歌手', al.size != null ? `${al.size} 首` : ''].filter(Boolean).join(' · ')}
+              </small>
+            </button>
+          );
+        })}
+      </div>
+    );
+  }
+
+  return (
+    <div className="lw-card-grid nr-artist-grid">
+      {items.map(ar => (
+        <button
+          key={ar.id}
+          type="button"
+          className="lw-card nr-artist-card"
+          title={ar.name}
+          aria-label={`搜索歌手：${ar.name}`}
+          onClick={() => onSearchKeyword(ar.name)}
+        >
+          <span className="lw-card-cover nr-artist-cover">
+            <PlaylistCover className="lw-card-img" url={ar.img1v1Url || ar.picUrl} />
+          </span>
+          <b className="lw-card-name">{ar.name}</b>
+          <small className="lw-card-meta">
+            {ar.albumSize != null ? `${ar.albumSize} 张专辑` : '网易云歌手'}
+          </small>
+        </button>
+      ))}
+    </div>
+  );
+}
+
 export function SongList({
   songs,
   ws,
@@ -13,8 +122,20 @@ export function SongList({
   buffering,
   play,
   setSelectedTrack,
+  neteaseSignedIn,
+  canLike,
+  canCollect,
+  canRemoveFromPlaylist,
+  likedIds,
+  likedBusyIds,
+  removingTrackKey,
+  onToggleLike,
+  onOpenPlaylistPicker,
+  onRemoveFromPlaylist,
 }) {
   const visibleSongs = activeProvider === 'netease' && ws.fmView ? songs.slice(-200) : songs;
+  const showRowActions =
+    activeProvider === 'netease' && neteaseSignedIn && (canLike || canCollect || canRemoveFromPlaylist);
   return (
     <div className="table">
       <div className="row table-head" aria-hidden="true">
@@ -31,59 +152,112 @@ export function SongList({
           selectedTrack?.provider === s.provider &&
           selectedTrack?.id === s.id &&
           selectedTrack?.accountId === s.accountId;
+        const numericId = Number(s.id);
+        const isLiked = s.provider === 'netease' && likedIds?.has(numericId);
+        const likeBusy = s.provider === 'netease' && likedBusyIds?.has(numericId);
+        const removeKey = ws.qqPlaylist ? `${ws.qqPlaylist.id}:${s.id}` : '';
+        const isRemoving = !!removingTrackKey && removingTrackKey === removeKey;
         return (
-          <button
-            type="button"
-            className={'row song ' + (isPlayingRow ? 'selected' : isPickedRow ? 'picked' : '')}
-            key={`${s.id}-${i}`}
-            aria-current={isPlayingRow ? 'true' : undefined}
-            onClick={() =>
-              s.provider === 'netease'
-                ? setSelectedTrack({ provider: s.provider, id: s.id, accountId: s.accountId })
-                : play(s)
+          <div
+            className={
+              'nr-song-row-wrap' +
+              (isPlayingRow ? ' is-selected' : isPickedRow ? ' is-picked' : '') +
+              (showRowActions ? ' has-actions' : '')
             }
-            onDoubleClick={() => {
-              if (s.provider === 'netease') play(s);
-            }}
-            onKeyDown={e => {
-              if (s.provider === 'netease' && e.key === 'Enter') {
-                e.preventDefault();
-                play(s);
-              }
-            }}
+            key={`${s.id}-${i}`}
           >
-            <span className="number">
-              {isPlayingRow ? (
-                buffering ? (
-                  '…'
+            <button
+              type="button"
+              className={'row song ' + (isPlayingRow ? 'selected' : isPickedRow ? 'picked' : '')}
+              aria-current={isPlayingRow ? 'true' : undefined}
+              onClick={() =>
+                s.provider === 'netease'
+                  ? setSelectedTrack({ provider: s.provider, id: s.id, accountId: s.accountId })
+                  : play(s)
+              }
+              onDoubleClick={() => {
+                if (s.provider === 'netease') play(s);
+              }}
+              onKeyDown={e => {
+                if (s.provider === 'netease' && e.key === 'Enter') {
+                  e.preventDefault();
+                  play(s);
+                }
+              }}
+            >
+              <span className="number">
+                {isPlayingRow ? (
+                  buffering ? (
+                    '…'
+                  ) : (
+                    <span className={'nr-eq-bars' + (playing ? ' is-playing' : '')} aria-hidden="true">
+                      <i />
+                      <i />
+                      <i />
+                    </span>
+                  )
                 ) : (
-                  <span className={'nr-eq-bars' + (playing ? ' is-playing' : '')} aria-hidden="true">
-                    <i />
-                    <i />
-                    <i />
-                  </span>
-                )
-              ) : (
-                String(i + 1).padStart(2, '0')
-              )}
-            </span>
-            <span className="song-name">
-              <SongArtwork song={s} size={80} className="song-placeholder" />
-              <span className="lw-track-copy">
-                <b title={s.name}>{s.name}</b>
-                <small title={artist(s)}>{artist(s)}</small>
+                  String(i + 1).padStart(2, '0')
+                )}
               </span>
-            </span>
-            <span className="nr-col-artist" title={artist(s)}>
-              {artist(s)}
-            </span>
-            <span className="nr-col-album" title={album(s).name}>
-              {album(s).name}
-            </span>
-            <span className="nr-col-dur">
-              {s.duration || s.dt ? time((s.duration || s.dt) / 1000) : '—'}
-            </span>
-          </button>
+              <span className="song-name">
+                <SongArtwork song={s} size={80} className="song-placeholder" />
+                <span className="lw-track-copy">
+                  <b title={s.name}>{s.name}</b>
+                  <small title={artist(s)}>{artist(s)}</small>
+                </span>
+              </span>
+              <span className="nr-col-artist" title={artist(s)}>
+                {artist(s)}
+              </span>
+              <span className="nr-col-album" title={album(s).name}>
+                {album(s).name}
+              </span>
+              <span className="nr-col-dur">
+                {s.duration || s.dt ? time((s.duration || s.dt) / 1000) : '—'}
+              </span>
+            </button>
+            {showRowActions && s.provider === 'netease' && (
+              <div className="nr-row-actions">
+                {canLike && (
+                  <button
+                    type="button"
+                    className={'nr-row-act nr-heart-btn' + (isLiked ? ' is-liked' : '')}
+                    aria-label={isLiked ? `取消喜欢 ${s.name}` : `喜欢 ${s.name}`}
+                    aria-pressed={isLiked}
+                    title={isLiked ? '取消喜欢' : '喜欢'}
+                    disabled={likeBusy}
+                    onClick={() => onToggleLike(s)}
+                  >
+                    <Icon name={isLiked ? 'heartFill' : 'heart'} className="nr-icon is-xs" />
+                  </button>
+                )}
+                {canCollect && (
+                  <button
+                    type="button"
+                    className="nr-row-act"
+                    aria-label={`收藏 ${s.name} 到歌单`}
+                    title="收藏到歌单"
+                    onClick={() => onOpenPlaylistPicker(s)}
+                  >
+                    <Icon name="plus" className="nr-icon is-xs" />
+                  </button>
+                )}
+                {canRemoveFromPlaylist && (
+                  <button
+                    type="button"
+                    className="nr-row-act is-danger"
+                    aria-label={`从歌单移出 ${s.name}`}
+                    title="从当前歌单移出"
+                    disabled={isRemoving}
+                    onClick={() => onRemoveFromPlaylist(s)}
+                  >
+                    <Icon name="trash" className="nr-icon is-xs" />
+                  </button>
+                )}
+              </div>
+            )}
+          </div>
         );
       })}
     </div>

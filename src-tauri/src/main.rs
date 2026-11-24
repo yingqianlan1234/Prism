@@ -17,6 +17,7 @@ mod qq_search_candidate;
 #[cfg(windows)]
 mod qq_catalog;
 mod netease_recommendations;
+mod netease_library;
 mod playback_storage;
 use aes::cipher::{block_padding::Pkcs7, BlockEncryptMut, KeyIvInit};
 use base64::{engine::general_purpose::STANDARD, Engine};
@@ -28,7 +29,7 @@ use std::{future::Future, sync::Mutex, time::Duration};
 use tauri::{State, Manager};
 
 #[derive(Debug, Serialize)]
-struct Error { kind: &'static str, message: &'static str }
+struct Error { #[serde(rename = "code")] kind: &'static str, message: &'static str }
 type Result<T> = std::result::Result<T, Error>;
 fn err(kind: &'static str, message: &'static str) -> Error { Error { kind, message } }
 fn business_error(path: &str, code: i64) -> Error {
@@ -82,7 +83,12 @@ where D: FnOnce() -> DF, DF: Future<Output=Result<(Value, Option<String>)>>,
     }
 }
 impl App {
-    fn cookie(&self) -> Result<Option<String>> { let s=self.session.lock().map_err(|_|err("storage","会话不可用"))?; if s.storage_error {return Err(err("storage","无法读取系统凭据"));} Ok(s.cookie.clone()) }
+    fn cookie(&self) -> Result<Option<String>> { self.account_snapshot().map(|(cookie, _)| cookie) }
+    fn account_snapshot(&self) -> Result<(Option<String>, u64)> {
+        let state = self.session.lock().map_err(|_|err("storage", "会话不可用"))?;
+        if state.storage_error { return Err(err("storage", "无法读取系统凭据")); }
+        Ok((state.cookie.clone(), state.generation))
+    }
     async fn request_raw(&self, path: &str, mut data: Value, cookie: Option<&str>, qr: bool) -> Result<(Value, Option<String>)> {
         if let Some(token)=cookie.and_then(|c|c.split(';').map(str::trim).find_map(|v|v.strip_prefix("__csrf="))) {data["csrf_token"]=json!(token);}
         let full_cookie=format!("{}; os=pc; appver=3.1.17.204416; channel=netease; __remember_me=true",cookie.unwrap_or(""));
@@ -172,14 +178,60 @@ fn qq_search_error(e: qq_search_candidate::SearchError) -> Error {
     err(kind, message)
 }
 #[tauri::command]
-async fn netease_search(app: State<'_, App>, query: String) -> Result<Value> {
-    let query = query.trim(); if query.is_empty() || query.chars().count() > 200 { return Err(err("validation","搜索内容无效")); }
-    Ok(app.request("cloudsearch/pc",json!({"s":query,"type":1,"limit":40,"offset":0,"total":true}),app.cookie()?.as_deref(),false).await?.0)
+async fn netease_search(app: State<'_, App>, query: String, offset: Option<Value>, search_type: Option<Value>) -> Result<Value> {
+    let payload = netease_search_payload(&query, offset.as_ref(), search_type.as_ref())?;
+    Ok(app.request("cloudsearch/pc", payload, app.cookie()?.as_deref(), false).await?.0)
+}
+fn netease_search_payload(query: &str, offset: Option<&Value>, search_type: Option<&Value>) -> Result<Value> {
+    let query = query.trim();
+    if query.is_empty() || query.chars().count() > 200 {
+        return Err(err("validation", "搜索内容无效"));
+    }
+    let offset = match offset {
+        None => 0,
+        Some(value) => value.as_u64().filter(|offset| *offset <= 1000).ok_or(err("validation", "搜索偏移须为 0 到 1000 的整数"))?,
+    };
+    let search_type = match search_type {
+        None => 1,
+        Some(value) => value.as_u64().filter(|kind| matches!(kind, 1 | 10 | 100 | 1000)).ok_or(err("validation", "搜索类型无效"))?,
+    };
+    Ok(json!({"s":query,"type":search_type,"limit":40,"offset":offset,"total":true}))
 }
 #[tauri::command]
 async fn netease_lyric(app: State<'_, App>, id: u64) -> Result<Value> { valid_id(id)?; Ok(app.request("song/lyric",json!({"id":id,"tv":-1,"lv":-1,"rv":-1,"kv":-1,"_nmclfl":1}),app.cookie()?.as_deref(),false).await?.0) }
 #[tauri::command]
-async fn netease_url(app: State<'_, App>, id: u64) -> Result<Value> { valid_id(id)?; Ok(app.request("song/enhance/player/url/v1",json!({"ids":format!("[{id}]"),"level":"standard","encodeType":"flac"}),app.cookie()?.as_deref(),false).await?.0) }
+async fn netease_url(app: State<'_, App>, id: u64, level: Option<Value>) -> Result<Value> {
+    valid_id(id)?;
+    let level = netease_playback_level(level.as_ref())?;
+    let (cookie, generation) = app.account_snapshot()?;
+    let request = |level| app.request("song/enhance/player/url/v1", json!({
+        "ids":format!("[{id}]"), "level":level, "encodeType":"flac"
+    }), cookie.as_deref(), false);
+    let (response, _) = request(level).await?;
+    if level != "standard" && netease_should_fallback(&response) {
+        {
+            let state = app.session.lock().map_err(|_|err("storage", "会话不可用"))?;
+            ensure_generation(&state, generation)?;
+        }
+        return Ok(request("standard").await?.0);
+    }
+    // Preserve actual upstream level/br and freeTrialInfo on each track.
+    Ok(response)
+}
+fn netease_playback_level(level: Option<&Value>) -> Result<&str> {
+    match level {
+        None => Ok("standard"),
+        Some(value) => value.as_str()
+            .filter(|level| matches!(*level, "standard" | "exhigh" | "lossless" | "hires"))
+            .ok_or(err("validation", "音质档位无效")),
+    }
+}
+fn netease_should_fallback(response: &Value) -> bool {
+    response.pointer("/data/0").is_some_and(|track| {
+        track.is_object() && (track.get("url").is_some_and(Value::is_null)
+            || track.get("url").and_then(Value::as_str).is_some_and(|url| url.trim().is_empty()))
+    })
+}
 #[tauri::command]
 async fn netease_qr_start(app: State<'_, App>) -> Result<Value> {
     let generation = { let mut s=app.session.lock().map_err(|_|err("storage","会话不可用"))?; s.generation+=1; s.qr=None; s.generation };
@@ -262,13 +314,39 @@ fn main() {
             let result=qq_web_auth::stream_chunk(&state,&handle,range.as_deref()).await;
             responder.respond(result.unwrap_or_else(|_|tauri::http::Response::builder().status(403).body(Vec::new()).unwrap()));
         });
-    }).manage(qq_web_auth::QqWebAuth::new()).manage(App{client,session:Mutex::new(Session{cookie,storage_error,..Default::default()})}).invoke_handler(tauri::generate_handler![reveal_main_window,background::close_behavior_get,background::close_behavior_set,background::close_behavior_finish_exit,qq_web_auth::qq_web_login_open,qq_web_auth::qq_web_login_complete,qq_web_auth::qq_web_login_cancel,qq_web_auth::qq_web_account,qq_web_auth::qq_web_logout,qq_web_auth::qq_web_playlists,qq_web_auth::qq_web_playlist_tracks,qq_web_auth::qq_web_resolve,qq_web_auth::qq_web_restore_previous,qq_web_auth::qq_playback_diagnostic,qq_web_auth::qq_web_lyric,netease_recent::netease_recent_get,netease_recent::netease_recent_add,netease_recent::netease_recent_clear,playback_storage::playback_state_load,playback_storage::playback_state_save,qq_search,netease_search,netease_lyric,netease_url,netease_qr_start,netease_qr_check,netease_qr_cancel,netease_account,netease_playlists,netease_playlist,netease_logout,netease_recommendations::netease_daily_songs,netease_recommendations::netease_recommended_resources,netease_recommendations::netease_personalized_playlists,netease_recommendations::netease_recommended_new_songs,netease_recommendations::netease_private_fm]).run(tauri::generate_context!()).expect("运行失败");
+    }).manage(qq_web_auth::QqWebAuth::new()).manage(App{client,session:Mutex::new(Session{cookie,storage_error,..Default::default()})}).invoke_handler(tauri::generate_handler![reveal_main_window,background::close_behavior_get,background::close_behavior_set,background::close_behavior_finish_exit,qq_web_auth::qq_web_login_open,qq_web_auth::qq_web_login_complete,qq_web_auth::qq_web_login_cancel,qq_web_auth::qq_web_account,qq_web_auth::qq_web_logout,qq_web_auth::qq_web_playlists,qq_web_auth::qq_web_playlist_tracks,qq_web_auth::qq_web_resolve,qq_web_auth::qq_web_restore_previous,qq_web_auth::qq_playback_diagnostic,qq_web_auth::qq_web_lyric,netease_recent::netease_recent_get,netease_recent::netease_recent_add,netease_recent::netease_recent_clear,playback_storage::playback_state_load,playback_storage::playback_state_save,qq_search,netease_search,netease_lyric,netease_url,netease_library::netease_like,netease_library::netease_likelist,netease_library::netease_fm_trash,netease_library::netease_playlist_tracks_op,netease_qr_start,netease_qr_check,netease_qr_cancel,netease_account,netease_playlists,netease_playlist,netease_logout,netease_recommendations::netease_daily_songs,netease_recommendations::netease_recommended_resources,netease_recommendations::netease_personalized_playlists,netease_recommendations::netease_recommended_new_songs,netease_recommendations::netease_private_fm]).run(tauri::generate_context!()).expect("运行失败");
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     #[test] fn playlist_pages_are_bounded_and_validate_ids(){let ids:Vec<Value>=(1..=250).map(|id|json!({"id":id})).collect();assert_eq!(playlist_page_ids(&ids,1).unwrap().len(),100);assert_eq!(playlist_page_ids(&ids,3).unwrap().len(),50);assert!(playlist_page_ids(&ids,0).is_err());assert!(playlist_page_ids(&[json!({})],1).is_err());}
+    #[test]
+    fn netease_p1_search_validates_bounds_and_preserves_defaults() {
+        assert_eq!(netease_search_payload("  合成  ", None, None).unwrap(),
+            json!({"s":"合成","type":1,"limit":40,"offset":0,"total":true}));
+        for kind in [1, 10, 100, 1000] {
+            let payload = netease_search_payload("合成", Some(&json!(1000)), Some(&json!(kind))).unwrap();
+            assert_eq!((payload["offset"].as_u64(), payload["type"].as_i64()), (Some(1000), Some(kind)));
+        }
+        for invalid in [json!(-1), json!(1001), json!(1.5), json!("40")] {
+            assert_eq!(netease_search_payload("合成", Some(&invalid), None).unwrap_err().kind, "validation");
+        }
+        let error = netease_search_payload("合成", None, Some(&json!(1002))).unwrap_err();
+        assert_eq!(serde_json::to_value(error).unwrap(), json!({"code":"validation","message":"搜索类型无效"}));
+    }
+    #[test]
+    fn netease_p1_playback_preserves_trial_and_actual_quality() {
+        assert_eq!(netease_playback_level(None).unwrap(), "standard");
+        for level in ["standard", "exhigh", "lossless", "hires"] {
+            assert_eq!(netease_playback_level(Some(&json!(level))).unwrap(), level);
+        }
+        assert_eq!(netease_playback_level(Some(&json!("vip"))).unwrap_err().kind, "validation");
+        let trial = json!({"data":[{"url":"https://example.invalid/trial","level":"standard","br":128000,"freeTrialInfo":{"start":0,"end":30}}]});
+        assert!(!netease_should_fallback(&trial));
+        assert!(netease_should_fallback(&json!({"data":[{"url":null,"code":404}]})));
+        assert!(!netease_should_fallback(&json!({"data":null})));
+    }
     #[test]
     fn input_and_encryption_contract() {
         let registration = business_error("register/anonimous", 400);

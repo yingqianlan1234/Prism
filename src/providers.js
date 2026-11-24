@@ -1,9 +1,13 @@
 import {invoke} from '@tauri-apps/api/core';
 export const unsupported = (name) => Object.assign(new Error(`${name}暂不支持`), {code:'unsupported'});
 const no = name => async () => { throw unsupported(name); };
+const neteaseLibraryCapabilities = enabled => ({
+ playbackQuality:enabled,searchPagination:enabled,searchCategories:enabled,
+ likeTrack:enabled,getLikedSongIds:enabled,trashFmTrack:enabled,editPlaylistTracks:enabled
+});
 export const capabilities = Object.freeze({
- netease:Object.freeze({login:true,logout:true,restoreSession:true,getUserProfile:true,search:true,getPlaylists:true,getPlaylistTracks:true,getLyrics:true,resolvePlayback:true,getRecommendations:true,reportListening:false}),
- qqmusic:Object.freeze({login:true,logout:true,restoreSession:true,getUserProfile:true,search:true,getPlaylists:true,getPlaylistTracks:true,getLyrics:true,resolvePlayback:true,getRecommendations:false,reportListening:false})
+ netease:Object.freeze({login:true,logout:true,restoreSession:true,getUserProfile:true,search:true,getPlaylists:true,getPlaylistTracks:true,getLyrics:true,resolvePlayback:true,getRecommendations:true,reportListening:false,...neteaseLibraryCapabilities(true)}),
+ qqmusic:Object.freeze({login:true,logout:true,restoreSession:true,getUserProfile:true,search:true,getPlaylists:true,getPlaylistTracks:true,getLyrics:true,resolvePlayback:true,getRecommendations:false,reportListening:false,...neteaseLibraryCapabilities(false)})
 });
 export const platformFlavor=Object.freeze({netease:'netease',qqmusic:'community'});
 export const recommendationCapabilities=Object.freeze({
@@ -14,8 +18,16 @@ const recommendationCommands=Object.freeze({daily:'netease_daily_songs',resource
 export const netease = Object.freeze({
  capabilities:capabilities.netease,recommendationCapabilities:recommendationCapabilities.netease, login:()=>invoke('netease_qr_start'), logout:()=>invoke('netease_logout'),
  restoreSession:()=>invoke('netease_account'), getUserProfile:()=>invoke('netease_account'),
- search:query=>invoke('netease_search',{query}),getPlaylists:()=>invoke('netease_playlists'),getPlaylistTracks:(id,options={})=>invoke('netease_playlist',options.page?{id,page:options.page}:{id}),
- getLyrics:id=>invoke('netease_lyric',{id}),resolvePlayback:id=>invoke('netease_url',{id}),
+ search:(query,{offset,searchType}={})=>invoke('netease_search',{
+  query,...(offset===undefined?{}:{offset}),...(searchType===undefined?{}:{searchType})
+ }),
+ getPlaylists:()=>invoke('netease_playlists'),getPlaylistTracks:(id,options={})=>invoke('netease_playlist',options.page?{id,page:options.page}:{id}),
+ getLyrics:id=>invoke('netease_lyric',{id}),
+ resolvePlayback:(id,options)=>invoke('netease_url',options?.level===undefined?{id}:{id,level:options.level}),
+ likeTrack:(id,like)=>invoke('netease_like',{id,like}),
+ getLikedSongIds:()=>invoke('netease_likelist'),
+ trashFmTrack:id=>invoke('netease_fm_trash',{id}),
+ editPlaylistTracks:(op,pid,trackId)=>invoke('netease_playlist_tracks_op',{op,pid,trackId}),
  getRecommendations:async kind=>{if(!Object.hasOwn(recommendationCommands,kind))throw unsupported('该推荐类型');return invoke(recommendationCommands[kind]);},reportListening:no('收听上报'),
  getPrivateFm:()=>invoke('netease_private_fm'),
  qrStart:()=>invoke('netease_qr_start'),qrCheck:()=>invoke('netease_qr_check'),qrCancel:()=>invoke('netease_qr_cancel')

@@ -86,3 +86,51 @@ export function clearSearchHistory(provider) {
   } catch {}
   return [];
 }
+
+// 网易云音质档位与显示标签（默认 standard）
+export const NETEASE_QUALITIES = [
+  { id: 'standard', label: '标准', short: '标准' },
+  { id: 'exhigh', label: '极高', short: '极高' },
+  { id: 'lossless', label: '无损', short: '无损 SQ' },
+  { id: 'hires', label: 'Hi-Res', short: 'Hi-Res' },
+];
+
+export const QUALITY_LABELS = Object.freeze({
+  standard: '标准',
+  exhigh: '极高',
+  lossless: '无损 SQ',
+  hires: 'Hi-Res',
+});
+
+const QUALITY_STORAGE_KEY = 'prism.netease.quality';
+const VALID_QUALITIES = new Set(NETEASE_QUALITIES.map(q => q.id));
+
+export function loadNeteaseQuality() {
+  try {
+    const raw = globalThis.localStorage?.getItem(QUALITY_STORAGE_KEY);
+    return VALID_QUALITIES.has(raw) ? raw : 'standard';
+  } catch {
+    return 'standard';
+  }
+}
+
+export function saveNeteaseQuality(level) {
+  const safe = VALID_QUALITIES.has(level) ? level : 'standard';
+  try {
+    globalThis.localStorage?.setItem(QUALITY_STORAGE_KEY, safe);
+  } catch {}
+  return safe;
+}
+
+export function formatBitrate(br) {
+  const n = Number(br);
+  if (!Number.isFinite(n) || n <= 0) return '';
+  return `${Math.round(n / 1000)} kbps`;
+}
+
+export function isOwnedPlaylist(playlist, userId) {
+  if (!playlist || userId == null) return false;
+  const owner = playlist.creator?.userId ?? playlist.userId;
+  if (owner != null && owner !== '') return String(owner) === String(userId);
+  return playlist.subscribed === false;
+}

@@ -6,18 +6,39 @@ const calls=[];
 globalThis.window={__TAURI_INTERNALS__:{invoke:async(command,args)=>{calls.push({command,args});return {command,args};}}};
 const {getProvider,capabilities,recommendationCapabilities}=await import('./providers.js');
 const features=['login','logout','restoreSession','getUserProfile','search','getPlaylists','getPlaylistTracks','getLyrics','resolvePlayback','getRecommendations','reportListening'];
+const libraryFeatures=['playbackQuality','searchPagination','searchCategories','likeTrack','getLikedSongIds','trashFmTrack','editPlaylistTracks'];
 
-test('两平台均提供独立的 11 项能力与完整方法；未知平台明确拒绝',async()=>{
+test('两平台独立声明基础能力和网易增强能力；未知平台明确拒绝',async()=>{
  for(const id of ['netease','qqmusic']){
   const provider=await getProvider(id);
-  assert.deepEqual(Object.keys(provider.capabilities).sort(),features.toSorted());
+  assert.deepEqual(Object.keys(provider.capabilities).sort(),[...features,...libraryFeatures].sort());
   assert.equal(provider.capabilities,capabilities[id]);
   assert.equal(provider.recommendationCapabilities,recommendationCapabilities[id]);
   assert(Object.isFrozen(provider.recommendationCapabilities));
   for(const feature of features){assert.equal(typeof provider.capabilities[feature],'boolean');assert.equal(typeof provider[feature],'function');}
+  for(const feature of libraryFeatures)assert.equal(provider.capabilities[feature],id==='netease');
  }
  assert.notEqual(capabilities.netease,capabilities.qqmusic);
  await assert.rejects(getProvider('missing'),e=>e.code==='unsupported'&&!!e.message);
+});
+
+test('网易 P1 使用固定 IPC 命令和 camelCase 参数，保留旧播放调用',async()=>{
+ const provider=await getProvider('netease');
+ await provider.search('合成查询',{offset:40,searchType:1000});
+ assert.deepEqual(calls.at(-1),{command:'netease_search',args:{query:'合成查询',offset:40,searchType:1000}});
+ await provider.resolvePlayback(1,{level:'lossless'});
+ assert.deepEqual(calls.at(-1),{command:'netease_url',args:{id:1,level:'lossless'}});
+ await provider.resolvePlayback(1,null);
+ assert.deepEqual(calls.at(-1),{command:'netease_url',args:{id:1}});
+ for(const [method,params,command,args] of [
+  ['likeTrack',[1,false],'netease_like',{id:1,like:false}],
+  ['getLikedSongIds',[],'netease_likelist',{}],
+  ['trashFmTrack',[1],'netease_fm_trash',{id:1}],
+  ['editPlaylistTracks',['del',2,1],'netease_playlist_tracks_op',{op:'del',pid:2,trackId:1}]
+ ]){
+  await provider[method](...params);
+  assert.deepEqual(calls.at(-1),{command,args});
+ }
 });
 
 test('网易能力仍映射原受控 IPC，二维码扩展保留',async()=>{

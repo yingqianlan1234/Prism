@@ -1,6 +1,7 @@
 import React, { useEffect, useRef } from 'react';
-import { artist, album } from '../utils/format.js';
+import { artist, album, QUALITY_LABELS, formatBitrate } from '../utils/format.js';
 import { SongArtwork, SourceTag, PlayButton } from './Artwork.jsx';
+import { Icon } from './Icons.jsx';
 
 // 深夜电台波段核心主舞台：横向错落封面波段 + 实况大歌词 + 待播波段横轨
 export function RadioStage({
@@ -16,6 +17,17 @@ export function RadioStage({
   lyricStatus,
   togglePlayback,
   play,
+  trackQuality,
+  neteaseSignedIn,
+  canLike,
+  canCollect,
+  canTrashFm,
+  isLiked,
+  likeBusy,
+  fmTrashBusy,
+  onToggleLike,
+  onOpenPlaylistPicker,
+  onTrashFm,
 }) {
   const tracks = playingQueue?.tracks || [];
   const curIdx = playingQueue && song ? playingQueue.index : -1;
@@ -51,6 +63,13 @@ export function RadioStage({
   }
 
   const albumName = song ? album(song).name : '';
+  const showNeteaseActions = neteaseSignedIn && song?.provider === 'netease';
+  const qualityText =
+    song?.provider === 'netease' && trackQuality?.level
+      ? QUALITY_LABELS[trackQuality.level] || trackQuality.level
+      : '';
+  const bitrateText =
+    song?.provider === 'netease' && trackQuality?.br ? formatBitrate(trackQuality.br) : '';
 
   return (
     <section
@@ -113,6 +132,19 @@ export function RadioStage({
                 <>
                   <SourceTag provider={song.provider} browsing={activeProvider} />
                   {playingQueue?.type === 'fm' && <span className="nr-fm-chip">私人 FM</span>}
+                  {qualityText && (
+                    <span
+                      className="nr-quality-chip"
+                      title={bitrateText ? `${qualityText} · ${bitrateText}` : qualityText}
+                    >
+                      {qualityText}
+                    </span>
+                  )}
+                  {trackQuality?.isTrial && song?.provider === 'netease' && (
+                    <span className="nr-trial-chip" title="当前播放为试听片段">
+                      试听
+                    </span>
+                  )}
                 </>
               ) : (
                 '尚未播放'
@@ -129,7 +161,49 @@ export function RadioStage({
         {/* 右侧：曲目信息 + 实况大歌词预览 */}
         <div className="lw-stage-info nr-stage-info">
           <div key={songKey} className="nr-stage-heading" data-dir={dir}>
-            <h1>{song?.name || '从一首歌开始'}</h1>
+            <div className="nr-stage-title-row">
+              <h1>{song?.name || '从一首歌开始'}</h1>
+              {showNeteaseActions && (canLike || canCollect || canTrashFm) && (
+                <div className="nr-stage-actions">
+                  {canLike && (
+                    <button
+                      type="button"
+                      className={'nr-stage-act-btn nr-heart-btn' + (isLiked ? ' is-liked' : '')}
+                      aria-label={isLiked ? '取消喜欢' : '喜欢这首歌'}
+                      aria-pressed={isLiked}
+                      title={isLiked ? '取消喜欢' : '喜欢'}
+                      disabled={likeBusy}
+                      onClick={onToggleLike}
+                    >
+                      <Icon name={isLiked ? 'heartFill' : 'heart'} className="nr-icon is-sm" />
+                    </button>
+                  )}
+                  {canCollect && (
+                    <button
+                      type="button"
+                      className="nr-stage-act-btn"
+                      aria-label="收藏到歌单"
+                      title="收藏到歌单"
+                      onClick={onOpenPlaylistPicker}
+                    >
+                      <Icon name="plus" className="nr-icon is-sm" />
+                    </button>
+                  )}
+                  {canTrashFm && (
+                    <button
+                      type="button"
+                      className="nr-stage-act-btn nr-dislike-btn"
+                      aria-label="私人 FM 不喜欢并跳过"
+                      title="不喜欢并跳过"
+                      disabled={fmTrashBusy}
+                      onClick={onTrashFm}
+                    >
+                      <Icon name="dislike" className="nr-icon is-sm" />
+                    </button>
+                  )}
+                </div>
+              )}
+            </div>
             <p>
               {song
                 ? [artist(song), albumName].filter(Boolean).join(' · ')

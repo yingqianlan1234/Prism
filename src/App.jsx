@@ -25,11 +25,21 @@ import {
   loadSearchHistory,
   saveSearchHistory,
   clearSearchHistory,
+  QUALITY_LABELS,
+  loadNeteaseQuality,
+  saveNeteaseQuality,
+  isOwnedPlaylist,
 } from './utils/format.js';
 import { PlaylistCover, InlineNotice } from './components/Artwork.jsx';
 import { AppHeader } from './components/AppHeader.jsx';
 import { LibraryBar } from './components/LibraryBar.jsx';
-import { SongList, EmptyState, NowPanel } from './components/LibraryContent.jsx';
+import {
+  SongList,
+  EmptyState,
+  NowPanel,
+  SearchCategoryBar,
+  SearchCategoryResults,
+} from './components/LibraryContent.jsx';
 import { RadioStage } from './components/RadioStage.jsx';
 import { FloatingDock } from './components/FloatingDock.jsx';
 import { LyricPanel } from './components/LyricPanel.jsx';
@@ -39,6 +49,7 @@ import {
   QqAuthDialog,
   CloseBehaviorDialog,
   QrDialog,
+  PlaylistPickerDialog,
 } from './components/Overlays.jsx';
 
 if (typeof window !== 'undefined') window.__extractAccent = extractAccent;
@@ -58,6 +69,9 @@ const makeWorkspace = () => ({
   identityUnknown: true,
   page: 0,
   searchQuery: '',
+  searchType: 1,
+  searchTotal: null,
+  searchItems: [],
   searching: false,
   fmView: false,
   trackOrigin: 'unknown',
@@ -124,6 +138,18 @@ export function App({
   const [playbackRate, setPlaybackRate] = useState(1);
   const [sleepMode, setSleepMode] = useState('off');
   const sleepRef = useRef({ mode: 'off', timer: null });
+
+  // 网易云 P1 增强能力状态：音质档位、红心喜欢集合、FM 跳过、歌单收藏与移出
+  const [neteaseQuality, setNeteaseQuality] = useState(() => loadNeteaseQuality());
+  const qualityRef = useRef(neteaseQuality);
+  const [trackQuality, setTrackQuality] = useState(null);
+  const [likedIds, setLikedIds] = useState(() => new Set());
+  const [likedBusyIds, setLikedBusyIds] = useState(() => new Set());
+  const [fmTrashBusy, setFmTrashBusy] = useState(false);
+  const [pickerTrack, setPickerTrack] = useState(null);
+  const [pickerBusyId, setPickerBusyId] = useState(null);
+  const [pickerError, setPickerError] = useState('');
+  const [removingTrackKey, setRemovingTrackKey] = useState(null);
 
   const [reportAllowed, setReportAllowed] = useState(false);
   const [showDiagnostics, setShowDiagnostics] = useState(false);
@@ -201,11 +227,13 @@ export function App({
   useEffect(() => {
     const selector = showQueue
       ? '.queue-dialog'
-      : qr
-        ? '.qr-dialog'
-        : qqWebOpen
-          ? '.qq-auth-dialog'
-          : null;
+      : pickerTrack
+        ? '.nr-picker-dialog'
+        : qr
+          ? '.qr-dialog'
+          : qqWebOpen
+            ? '.qq-auth-dialog'
+            : null;
     if (!selector) return;
     const previous = document.activeElement;
     const box = document.querySelector(selector);
@@ -238,7 +266,7 @@ export function App({
       box?.removeEventListener('keydown', trap);
       if (previous?.isConnected) previous.focus();
     };
-  }, [showQueue, !!qr, qqWebOpen]);
+  }, [showQueue, !!pickerTrack, !!qr, qqWebOpen]);
 
   const clearFocus = useRef(false);
   useEffect(() => {
@@ -332,6 +360,9 @@ export function App({
   const qrRequest = useRef(latestRequest());
 
   const errorText = e => e?.message || '操作失败，请稍后重试';
+  const isPlayInterruptedError = e =>
+    e?.name === 'AbortError' ||
+    /interrupted by a call to pause|interrupted by a new load request/i.test(String(e?.message || ''));
 
   const syncLyric = position => {
     let index = -1;
@@ -732,6 +763,13 @@ export function App({
         error: '',
         generation: fm.current.generation + 1,
       };
+      setLikedIds(new Set());
+      setLikedBusyIds(new Set());
+      setFmTrashBusy(false);
+      setPickerTrack(null);
+      setPickerBusyId(null);
+      setPickerError('');
+      setRemovingTrackKey(null);
     }
     identity.current[id].next();
     browse.current[id].next();
@@ -746,6 +784,7 @@ export function App({
       audio.current.load();
       songRef.current = null;
       setSong(null);
+      setTrackQuality(null);
       replaceLyrics([]);
       setRestoredProgress(null);
     }
@@ -760,12 +799,34 @@ export function App({
       qqPlaylist: null,
       qqTrackPage: 0,
       qqHasMore: null,
+      searchType: 1,
+      searchTotal: null,
+      searchItems: [],
       storageStatus: '',
       title: '发现音乐',
     });
   };
 
   const tagged = (items, id, accountId) => items.map(item => ({ ...item, provider: id, accountId }));
+
+  const loadLikedIds = async (token, userId) => {
+    if (!capabilities.netease.getLikedSongIds || userId == null) return;
+    try {
+      const p = await getProvider('netease');
+      if (typeof p.getLikedSongIds !== 'function') return;
+      const d = await p.getLikedSongIds();
+      if (
+        !account.current.netease.isCurrent(token) ||
+        String(workRef.current.netease.profile?.userId ?? '') !== String(userId)
+      )
+        return;
+      if (Array.isArray(d?.ids)) {
+        setLikedIds(new Set(d.ids.map(Number).filter(Number.isFinite)));
+      }
+    } catch {
+      // 红心同步属于附加信息，失败不阻断账号恢复或主列表加载
+    }
+  };
 
   const loadLists = async (id, token, page = 1, append = false) => {
     update(id, { ...(append ? {} : { lists: [] }), listsBusy: true, listStatus: '正在加载歌单…' });
@@ -839,6 +900,7 @@ export function App({
           identity.current.netease.current(),
           playback.current.current()
         );
+        void loadLikedIds(token, next.userId);
       }
       if (id === 'qqmusic' && next?.userId) {
         await restoreQq(next.userId, identity.current.qqmusic.current());
@@ -921,7 +983,7 @@ export function App({
     if (workRef.current[id].identityUnknown && !workRef.current[id].accountBusy) restore(id);
   };
 
-  const search = async (e, page = 1, explicitTerm = null) => {
+  const search = async (e, page = 1, explicitTerm = null, explicitType = null) => {
     e?.preventDefault();
     const id = activeRef.current;
     const w = workRef.current[id];
@@ -934,6 +996,15 @@ export function App({
     if (explicitTerm != null) update(id, { query: q });
     setSearchHistory(prev => ({ ...prev, [id]: saveSearchHistory(id, q) }));
     recommendationPending.current = false;
+    const nextType =
+      id === 'netease' && capabilities[id].searchCategories
+        ? (explicitType ?? w.searchType ?? 1)
+        : 1;
+    const safePage = Math.max(1, Number(page) || 1);
+    const offset =
+      id === 'netease' && capabilities[id].searchPagination
+        ? Math.max(0, Math.min(1000, (safePage - 1) * 40))
+        : 0;
     const token = browse.current[id].next();
     const generation = identity.current[id].current();
     update(id, {
@@ -941,23 +1012,84 @@ export function App({
       searching: true,
       fmView: false,
       trackOrigin: 'search',
+      searchType: nextType,
       qqPlaylist: null,
       qqTrackPage: 0,
     });
     try {
       const p = await getProvider(id);
-      const d = await p.search(q, { page, pageSize: id === 'qqmusic' ? 5 : 40 });
+      let d;
+      if (id === 'netease') {
+        const opts = {};
+        if (offset > 0) opts.offset = offset;
+        if (nextType !== 1) opts.searchType = nextType;
+        d = await p.search(q, Object.keys(opts).length ? opts : undefined);
+      } else {
+        d = await p.search(q, { page: safePage, pageSize: 5 });
+      }
       if (!browse.current[id].isCurrent(token) || !identity.current[id].isCurrent(generation))
         return;
+
+      if (id === 'netease' && nextType !== 1) {
+        const res = d.result || {};
+        if (nextType === 10) {
+          const items = Array.isArray(res.albums) ? res.albums : [];
+          const total = res.albumCount ?? null;
+          update(id, {
+            songs: [],
+            searchItems: items,
+            searchTotal: total,
+            recommendLists: null,
+            title: '搜索专辑：' + q,
+            page: safePage,
+            searchQuery: q,
+            searching: false,
+            message: items.length ? '' : '没有找到专辑',
+          });
+        } else if (nextType === 100) {
+          const items = Array.isArray(res.artists) ? res.artists : [];
+          const total = res.artistCount ?? null;
+          update(id, {
+            songs: [],
+            searchItems: items,
+            searchTotal: total,
+            recommendLists: null,
+            title: '搜索歌手：' + q,
+            page: safePage,
+            searchQuery: q,
+            searching: false,
+            message: items.length ? '' : '没有找到歌手',
+          });
+        } else if (nextType === 1000) {
+          const items = Array.isArray(res.playlists) ? res.playlists : [];
+          const total = res.playlistCount ?? null;
+          update(id, {
+            songs: [],
+            searchItems: items,
+            searchTotal: total,
+            recommendLists: null,
+            title: '搜索歌单：' + q,
+            page: safePage,
+            searchQuery: q,
+            searching: false,
+            message: items.length ? '' : '没有找到歌单',
+          });
+        }
+        return;
+      }
+
       if (!Array.isArray(d.result?.songs) && d.result?.songCount !== 0)
         throw Error('搜索结果数据不完整');
       const found = tagged(d.result?.songs || [], id, w.profile?.userId || null);
       const total = d.result?.songCount;
+      const maxPage = total != null ? Math.min(26, Math.max(1, Math.ceil(total / 40))) : null;
       update(id, {
         songs: found,
+        searchItems: [],
+        searchTotal: total ?? null,
         recommendLists: null,
         title: '搜索：' + q,
-        page,
+        page: safePage,
         searchQuery: q,
         searching: false,
         message:
@@ -966,9 +1098,11 @@ export function App({
               ? '总数未知，可继续请求下一页'
               : '本页没有找到歌曲'
             : total == null
-              ? '搜索结果数量未知，最多显示 40 首'
+              ? found.length
+                ? `第 ${safePage} 页 · 共 ${found.length} 首`
+                : '没有找到歌曲'
               : total > found.length
-                ? `仅显示 ${found.length} 首，共 ${total} 首；暂不支持翻页`
+                ? `共 ${total} 首 · 第 ${safePage}/${maxPage} 页`
                 : found.length
                   ? ''
                   : '没有找到歌曲',
@@ -989,6 +1123,8 @@ export function App({
     update(id, {
       title: '本地最近播放',
       songs: [],
+      searchItems: [],
+      searchTotal: null,
       fmView: false,
       recommendLists: null,
       trackOrigin: 'recent',
@@ -1095,6 +1231,8 @@ export function App({
     update(id, {
       title: list.name,
       songs: [],
+      searchItems: [],
+      searchTotal: null,
       recommendLists: null,
       fmView: false,
       trackOrigin: 'playlist',
@@ -1164,6 +1302,8 @@ export function App({
     update(id, {
       title: names[kind],
       songs: [],
+      searchItems: [],
+      searchTotal: null,
       recommendLists: null,
       fmView: false,
       trackOrigin: 'recommendation',
@@ -1282,10 +1422,222 @@ export function App({
       trackOrigin: 'fm',
       title: '私人 FM',
       songs: [...fm.current.tracks],
+      searchItems: [],
+      searchTotal: null,
       recommendLists: null,
       message: fm.current.error || (!fm.current.tracks.length ? '正在加载…' : ''),
     });
     if (!fm.current.tracks.length && !fm.current.pending) loadFm();
+  };
+
+  const changeNeteaseQuality = level => {
+    const savedLevel = saveNeteaseQuality(level);
+    qualityRef.current = savedLevel;
+    setNeteaseQuality(savedLevel);
+    if (songRef.current?.provider === 'netease') {
+      update('netease', {
+        message: `已设为${QUALITY_LABELS[savedLevel] || savedLevel}音质，下首歌或重载后生效`,
+      });
+    }
+  };
+
+  const toggleLike = async targetSong => {
+    if (!targetSong || targetSong.provider !== 'netease' || !capabilities.netease.likeTrack) return;
+    const w = workRef.current.netease;
+    if (w.identityUnknown || !w.profile?.userId) {
+      update('netease', { message: '请先登录网易云音乐后再操作喜欢' });
+      return;
+    }
+    const numericId = Number(targetSong.id);
+    if (!Number.isFinite(numericId) || numericId <= 0 || likedBusyIds.has(numericId)) return;
+    const generation = identity.current.netease.current();
+    const nextLike = !likedIds.has(numericId);
+    setLikedBusyIds(prev => new Set([...prev, numericId]));
+    try {
+      const p = await getProvider('netease');
+      await p.likeTrack(numericId, nextLike);
+      if (!identity.current.netease.isCurrent(generation)) return;
+      setLikedIds(prev => {
+        const next = new Set(prev);
+        if (nextLike) next.add(numericId);
+        else next.delete(numericId);
+        return next;
+      });
+      update('netease', {
+        message: nextLike ? '已加入「我喜欢的音乐」' : '已取消喜欢',
+      });
+    } catch (err) {
+      if (identity.current.netease.isCurrent(generation)) {
+        update('netease', { message: errorText(err) });
+      }
+    } finally {
+      setLikedBusyIds(prev => {
+        if (!prev.has(numericId)) return prev;
+        const next = new Set(prev);
+        next.delete(numericId);
+        return next;
+      });
+    }
+  };
+
+  const trashCurrentFmTrack = async () => {
+    const current = songRef.current;
+    if (!current || current.provider !== 'netease' || !capabilities.netease.trashFmTrack) return;
+    const w = workRef.current.netease;
+    if (w.identityUnknown || !w.profile?.userId || fmTrashBusy) return;
+    const queue = w.queue;
+    if (!queue || queue.type !== 'fm') return;
+    const generation = identity.current.netease.current();
+    const fmGen = fm.current.generation;
+    const numericId = Number(current.id);
+    setFmTrashBusy(true);
+    try {
+      const p = await getProvider('netease');
+      await p.trashFmTrack(numericId);
+      if (!identity.current.netease.isCurrent(generation) || fm.current.generation !== fmGen) return;
+      const nextTracks = fm.current.tracks.filter(t => Number(t.id) !== numericId);
+      fm.current.tracks = nextTracks;
+      const curIndex = queue.index ?? 0;
+      const nextIdx = Math.min(curIndex, Math.max(0, nextTracks.length - 1));
+      const nextQueue = nextTracks.length ? { ...queue, tracks: [...nextTracks], index: nextIdx } : null;
+      saved.current.fm = nextQueue;
+      update('netease', {
+        ...(workRef.current.netease.fmView ? { songs: [...nextTracks] } : {}),
+        queue: nextQueue,
+      });
+      if (nextTracks.length - nextIdx <= 2 && !fm.current.error) void loadFm();
+      if (nextQueue && nextTracks[nextIdx]) {
+        await play(nextTracks[nextIdx], nextQueue);
+      } else {
+        listening.current.settle();
+        listening.current.clear();
+        audio.current.pause();
+        audio.current.removeAttribute('src');
+        audio.current.load();
+        songRef.current = null;
+        setSong(null);
+        setTrackQuality(null);
+        setPlaying(false);
+        replaceLyrics([]);
+        setLyricStatus('idle');
+        setRestoredProgress(null);
+        update('netease', { message: '已从私人 FM 移除，正在获取新推荐' });
+      }
+      scheduleSave(true);
+    } catch (err) {
+      if (identity.current.netease.isCurrent(generation)) {
+        update('netease', { message: errorText(err) });
+      }
+    } finally {
+      setFmTrashBusy(false);
+    }
+  };
+
+  const openPlaylistPicker = track => {
+    if (!track || track.provider !== 'netease' || !capabilities.netease.editPlaylistTracks) return;
+    const w = workRef.current.netease;
+    if (w.identityUnknown || !w.profile?.userId) {
+      update('netease', { message: '请先登录网易云音乐' });
+      return;
+    }
+    setPickerError('');
+    setPickerTrack(track);
+  };
+
+  const addTrackToPlaylist = async playlist => {
+    if (!pickerTrack || !playlist || pickerBusyId != null) return;
+    const w = workRef.current.netease;
+    if (w.identityUnknown || !w.profile?.userId) {
+      setPickerError('请先登录网易云音乐');
+      return;
+    }
+    const generation = identity.current.netease.current();
+    setPickerBusyId(playlist.id);
+    setPickerError('');
+    try {
+      const p = await getProvider('netease');
+      await p.editPlaylistTracks('add', Number(playlist.id), Number(pickerTrack.id));
+      if (!identity.current.netease.isCurrent(generation)) return;
+      const curList = workRef.current.netease;
+      const isViewingTarget =
+        curList.trackOrigin === 'playlist' &&
+        String(curList.qqPlaylist?.id ?? '') === String(playlist.id);
+      update('netease', {
+        lists: curList.lists.map(item =>
+          String(item.id) === String(playlist.id) && Number.isFinite(Number(item.trackCount))
+            ? { ...item, trackCount: Number(item.trackCount) + 1 }
+            : item
+        ),
+        ...(isViewingTarget && curList.playlistMeta?.total != null
+          ? {
+              playlistMeta: {
+                ...curList.playlistMeta,
+                total: Number(curList.playlistMeta.total) + 1,
+              },
+            }
+          : {}),
+        message: `已收藏到「${playlist.name}」`,
+      });
+      setPickerTrack(null);
+    } catch (err) {
+      if (identity.current.netease.isCurrent(generation)) {
+        setPickerError(errorText(err));
+      }
+    } finally {
+      setPickerBusyId(null);
+    }
+  };
+
+  const removeTrackFromCurrentPlaylist = async track => {
+    const w = workRef.current.netease;
+    if (
+      !track ||
+      w.identityUnknown ||
+      !w.profile?.userId ||
+      w.trackOrigin !== 'playlist' ||
+      !isOwnedPlaylist(w.qqPlaylist, w.profile.userId)
+    )
+      return;
+    const pid = w.qqPlaylist.id;
+    const key = `${pid}:${track.id}`;
+    if (removingTrackKey === key) return;
+    const generation = identity.current.netease.current();
+    setRemovingTrackKey(key);
+    try {
+      const p = await getProvider('netease');
+      await p.editPlaylistTracks('del', Number(pid), Number(track.id));
+      if (!identity.current.netease.isCurrent(generation)) return;
+      const cur = workRef.current.netease;
+      const stillSame =
+        cur.trackOrigin === 'playlist' && String(cur.qqPlaylist?.id ?? '') === String(pid);
+      update('netease', {
+        lists: cur.lists.map(item =>
+          String(item.id) === String(pid) && Number(item.trackCount) > 0
+            ? { ...item, trackCount: Number(item.trackCount) - 1 }
+            : item
+        ),
+        ...(stillSame
+          ? {
+              songs: cur.songs.filter(item => Number(item.id) !== Number(track.id)),
+              ...(cur.playlistMeta?.total != null
+                ? {
+                    playlistMeta: {
+                      ...cur.playlistMeta,
+                      total: Math.max(0, Number(cur.playlistMeta.total) - 1),
+                    },
+                  }
+                : {}),
+            }
+          : {}),
+        message: `已从「${w.qqPlaylist.name}」移出`,
+      });
+    } catch (err) {
+      if (identity.current.netease.isCurrent(generation)) {
+        update('netease', { message: errorText(err) });
+      }
+    } finally {
+      setRemovingTrackKey(null);
+    }
   };
 
   const play = async (s, queueSnapshot) => {
@@ -1330,6 +1682,7 @@ export function App({
     pendingPlay.current = { provider: id, generation };
     const valid = () => playback.current.isCurrent(token) && identity.current[id].isCurrent(generation);
     let prior = rollbackRef.current;
+    let trialBanner = '';
     update(id, { message: '正在获取歌曲…' });
     try {
       const p = await getProvider(id);
@@ -1348,11 +1701,30 @@ export function App({
               data => ({ data }),
               () => ({ failed: true })
             );
-      const url = await p.resolvePlayback(s.id, s.mediaMid);
+      const url =
+        id === 'netease'
+          ? await p.resolvePlayback(
+              s.id,
+              capabilities[id].playbackQuality && qualityRef.current !== 'standard'
+                ? { level: qualityRef.current }
+                : undefined
+            )
+          : await p.resolvePlayback(s.id, s.mediaMid);
       if (!valid()) return;
       const info = url.data?.[0];
       if (!info?.url || (info.code != null && info.code !== 200))
         throw Error('未获取到播放资源，请稍后重试');
+      trialBanner = info.freeTrialInfo ? '当前为试听片段' : '';
+      const trial = info.freeTrialInfo;
+      const isTrial = !!(trial && Number(trial.end) > Number(trial.start));
+      const nextTrackQuality =
+        id === 'netease' && (info.level || info.br || isTrial)
+          ? {
+              level: typeof info.level === 'string' ? info.level : null,
+              br: Number.isFinite(Number(info.br)) && Number(info.br) > 0 ? Number(info.br) : null,
+              isTrial,
+            }
+          : null;
       const previousSong = songRef.current;
       if (previousSong && !prior) {
         prior = {
@@ -1381,6 +1753,7 @@ export function App({
           lyrics: [...lyricsRef.current],
           lyricStatus,
           restoredProgress,
+          trackQuality,
         };
       }
       if (prior) rollbackRef.current = prior;
@@ -1420,6 +1793,7 @@ export function App({
         }
       }
       setSong(s);
+      setTrackQuality(nextTrackQuality);
       if (!skipResumedLyric) {
         replaceLyrics([]);
         setLyricStatus('loading');
@@ -1467,10 +1841,20 @@ export function App({
       scheduleSave(true);
       if (valid()) {
         rollbackRef.current = null;
-        update(id, { message: info.freeTrialInfo ? '当前为试听片段' : '' });
+        update(id, { message: trialBanner });
       }
     } catch (e) {
       if (valid()) {
+        if (isPlayInterruptedError(e)) {
+          rollbackRef.current = null;
+          setBuffering(false);
+          setPlaying(false);
+          const curMsg = workRef.current[id].message;
+          if (trialBanner || curMsg === '正在获取歌曲…') {
+            update(id, { message: trialBanner });
+          }
+          return;
+        }
         prior = prior || rollbackRef.current;
         const canRestore =
           prior &&
@@ -1506,6 +1890,7 @@ export function App({
           audio.current.pause();
           songRef.current = prior.song;
           setSong(prior.song);
+          setTrackQuality(prior.trackQuality ?? null);
           settings.current = { ...prior.settings };
           setMode(prior.settings.mode);
           setVolume(prior.settings.volume);
@@ -1600,30 +1985,38 @@ export function App({
   const togglePlayback = () => {
     const current = songRef.current;
     if (!current) return;
-    if (!audio.current.paused) audio.current.pause();
-    else if (
+    if (!audio.current.paused) {
+      audio.current.pause();
+      return;
+    }
+    if (
       (saved.current.resume && current.provider === 'netease') ||
-      (qqSaved.current.resume && current.provider === 'qqmusic')
+      (qqSaved.current.resume && current.provider === 'qqmusic') ||
+      !audio.current.getAttribute('src')
     ) {
+      if (pendingPlay.current) return;
       const q = workRef.current[current.provider].queue;
       if (q) play(current, q);
-    } else {
-      audio.current
-        .play()
-        .then(() => {
-          if (
-            songRef.current === current &&
-            workRef.current[current.provider].message.startsWith('播放失败：')
-          ) {
-            update(current.provider, { message: '' });
-          }
-        })
-        .catch(e => {
-          if (songRef.current === current) {
-            update(current.provider, { message: '播放失败：' + errorText(e) });
-          }
-        });
+      return;
     }
+    audio.current
+      .play()
+      .then(() => {
+        if (
+          songRef.current === current &&
+          workRef.current[current.provider].message.startsWith('播放失败：')
+        ) {
+          update(current.provider, { message: '' });
+        }
+      })
+      .catch(e => {
+        if (songRef.current !== current) return;
+        if (isPlayInterruptedError(e)) {
+          setBuffering(false);
+          return;
+        }
+        update(current.provider, { message: '播放失败：' + errorText(e) });
+      });
   };
 
   const editQueue = (removeIndex, clear = false) => {
@@ -1655,6 +2048,7 @@ export function App({
       audio.current.load();
       songRef.current = null;
       setSong(null);
+      setTrackQuality(null);
       setPlaying(false);
       replaceLyrics([]);
       setLyricStatus('idle');
@@ -1908,6 +2302,7 @@ export function App({
               identity.current.netease.current(),
               playback.current.current()
             );
+            void loadLikedIds(accountToken, userId);
           }
           if (userId && capabilities[id].getPlaylists) loadLists(id, accountToken);
           return;
@@ -1979,6 +2374,10 @@ export function App({
         } else if (showQueue) {
           setShowQueue(false);
           e.preventDefault();
+        } else if (pickerTrack) {
+          setPickerTrack(null);
+          setPickerError('');
+          e.preventDefault();
         } else if (qr) {
           closeQr();
           e.preventDefault();
@@ -2019,7 +2418,12 @@ export function App({
       }
       if (editable || e.altKey || e.metaKey) return;
       if (!e.ctrlKey && e.code === 'Space') {
-        if (showQueue || qr || qqWebOpen || showLyrics || confirmRecent || closeDialog) return;
+        if (e.repeat) {
+          e.preventDefault();
+          return;
+        }
+        if (showQueue || pickerTrack || qr || qqWebOpen || showLyrics || confirmRecent || closeDialog)
+          return;
         e.preventDefault();
         togglePlayback();
         return;
@@ -2123,9 +2527,37 @@ export function App({
   const diagnosticText = d =>
     `会话 ${d.sessionId} · 媒体前进 ${d.mediaSeconds.toFixed(1)} 秒 · 有效收听 ${d.validSeconds.toFixed(1)} 秒 · 暂停 ${d.pauses} 次 · 缓冲 ${d.buffering} 次 · 拖动 ${d.seeks} 次 · 全曲${d.thresholdReached ? '达到' : '未达到'} 30 秒候选阈值`;
 
-  const messageRole = /失败|无法|不可用|超时|过期|未获取|请先登录/.test(message) ? 'alert' : 'status';
+  const messageRole = /失败|无法|不可用|超时|过期|未获取|请先登录|只能修改|权限/.test(message)
+    ? 'alert'
+    : 'status';
   const noSearchResults =
-    ws.trackOrigin === 'search' && !ws.searching && ['没有找到歌曲', '本页没有找到歌曲'].includes(message);
+    ws.trackOrigin === 'search' &&
+    !ws.searching &&
+    ['没有找到歌曲', '本页没有找到歌曲', '没有找到专辑', '没有找到歌手', '没有找到歌单'].includes(
+      message
+    );
+  const neteaseSignedIn = !!(
+    workspaces.netease.profile?.userId && !workspaces.netease.identityUnknown
+  );
+  const ownedPlaylists = workspaces.netease.lists.filter(l =>
+    isOwnedPlaylist(l, workspaces.netease.profile?.userId)
+  );
+  const canRemoveFromPlaylist =
+    activeProvider === 'netease' &&
+    capabilities.netease.editPlaylistTracks &&
+    ws.trackOrigin === 'playlist' &&
+    isOwnedPlaylist(ws.qqPlaylist, profile?.userId);
+  const neteaseMaxPage =
+    ws.searchTotal != null ? Math.min(26, Math.max(1, Math.ceil(ws.searchTotal / 40))) : null;
+  const showNeteasePagination =
+    activeProvider === 'netease' &&
+    capabilities.netease.searchPagination &&
+    ws.trackOrigin === 'search' &&
+    ws.page > 0 &&
+    !ws.searching &&
+    ((neteaseMaxPage != null && neteaseMaxPage > 1) ||
+      ws.page > 1 ||
+      (ws.searchType === 1 ? songs.length >= 40 : (ws.searchItems?.length || 0) >= 40));
 
   const lwLyrics = lyricalLines(lyrics);
   const lwCur = lwLyrics.findIndex(l => line && l.at >= line.at);
@@ -2198,6 +2630,8 @@ export function App({
           update(activeProvider, {
             title: '发现音乐',
             songs: [],
+            searchItems: [],
+            searchTotal: null,
             recommendLists: null,
             fmView: false,
             trackOrigin: 'unknown',
@@ -2346,6 +2780,20 @@ export function App({
               </div>
             )}
 
+            {activeProvider === 'netease' &&
+              capabilities.netease.searchCategories &&
+              ws.trackOrigin === 'search' && (
+                <SearchCategoryBar
+                  searchType={ws.searchType}
+                  disabled={ws.searching}
+                  onSelectType={typeId => {
+                    if (typeId !== ws.searchType && ws.searchQuery) {
+                      search(null, 1, ws.searchQuery, typeId);
+                    }
+                  }}
+                />
+              )}
+
             {recommendLists !== null ? (
               <div className="recommend-lists">
                 {recommendLists.map(l => (
@@ -2361,6 +2809,16 @@ export function App({
                 ))}
                 {message && <p role="status">{message}</p>}
               </div>
+            ) : activeProvider === 'netease' &&
+              ws.trackOrigin === 'search' &&
+              ws.searchType !== 1 &&
+              ws.searchItems?.length ? (
+              <SearchCategoryResults
+                searchType={ws.searchType}
+                items={ws.searchItems}
+                onOpenPlaylist={list => openList(list)}
+                onSearchKeyword={term => search(null, 1, term, 1)}
+              />
             ) : songs.length ? (
               <SongList
                 songs={songs}
@@ -2372,6 +2830,16 @@ export function App({
                 buffering={buffering}
                 play={play}
                 setSelectedTrack={setSelectedTrack}
+                neteaseSignedIn={neteaseSignedIn}
+                canLike={!!capabilities.netease.likeTrack}
+                canCollect={!!capabilities.netease.editPlaylistTracks && ownedPlaylists.length > 0}
+                canRemoveFromPlaylist={canRemoveFromPlaylist}
+                likedIds={likedIds}
+                likedBusyIds={likedBusyIds}
+                removingTrackKey={removingTrackKey}
+                onToggleLike={toggleLike}
+                onOpenPlaylistPicker={openPlaylistPicker}
+                onRemoveFromPlaylist={removeTrackFromCurrentPlaylist}
               />
             ) : (
               <EmptyState
@@ -2451,6 +2919,34 @@ export function App({
               </div>
             )}
 
+            {showNeteasePagination && (
+              <div className="pagination" aria-label="网易云搜索分页">
+                <button
+                  type="button"
+                  className="nr-soft-btn"
+                  disabled={ws.page <= 1 || ws.searching}
+                  onClick={() => search(null, ws.page - 1, ws.searchQuery, ws.searchType)}
+                >
+                  上一页
+                </button>
+                <span>
+                  {neteaseMaxPage != null ? `第 ${ws.page} / ${neteaseMaxPage} 页` : `第 ${ws.page} 页`}
+                </span>
+                <button
+                  type="button"
+                  className="nr-soft-btn"
+                  disabled={
+                    ws.searching ||
+                    ws.page >= 26 ||
+                    (neteaseMaxPage != null && ws.page >= neteaseMaxPage)
+                  }
+                  onClick={() => search(null, ws.page + 1, ws.searchQuery, ws.searchType)}
+                >
+                  下一页
+                </button>
+              </div>
+            )}
+
             {activeProvider === 'qqmusic' && ws.page > 0 && (
               <div className="pagination" aria-label="搜索分页">
                 <button
@@ -2490,6 +2986,17 @@ export function App({
           lyricStatus={lyricStatus}
           togglePlayback={togglePlayback}
           play={play}
+          trackQuality={trackQuality}
+          neteaseSignedIn={neteaseSignedIn}
+          canLike={!!capabilities.netease.likeTrack}
+          canCollect={!!capabilities.netease.editPlaylistTracks && ownedPlaylists.length > 0}
+          canTrashFm={!!capabilities.netease.trashFmTrack && playingQueue?.type === 'fm'}
+          isLiked={song?.provider === 'netease' && likedIds.has(Number(song.id))}
+          likeBusy={song?.provider === 'netease' && likedBusyIds.has(Number(song.id))}
+          fmTrashBusy={fmTrashBusy}
+          onToggleLike={() => toggleLike(song)}
+          onOpenPlaylistPicker={() => openPlaylistPicker(song)}
+          onTrashFm={trashCurrentFmTrack}
         />
       )}
 
@@ -2500,6 +3007,17 @@ export function App({
         onChangeRate={changePlaybackRate}
         sleepMode={sleepMode}
         onSelectSleep={selectSleepMode}
+        canSelectQuality={!!capabilities.netease.playbackQuality}
+        neteaseQuality={neteaseQuality}
+        onChangeQuality={changeNeteaseQuality}
+        song={song}
+        trackQuality={trackQuality}
+        onReloadWithQuality={() => {
+          if (song?.provider === 'netease' && playingQueue) {
+            setShowMore(false);
+            play(song, playingQueue);
+          }
+        }}
         reportAllowed={reportAllowed}
         onToggleReport={() => {
           const next = !reportAllowed;
@@ -2573,6 +3091,15 @@ export function App({
         playbackRate={playbackRate}
         sleepLabel={sleepLabel}
         queueCount={ws.queue?.tracks?.length || 0}
+        trackQuality={trackQuality}
+        neteaseSignedIn={neteaseSignedIn}
+        canLike={!!capabilities.netease.likeTrack}
+        canTrashFm={!!capabilities.netease.trashFmTrack && playingQueue?.type === 'fm'}
+        isLiked={song?.provider === 'netease' && likedIds.has(Number(song.id))}
+        likeBusy={song?.provider === 'netease' && likedBusyIds.has(Number(song.id))}
+        fmTrashBusy={fmTrashBusy}
+        onToggleLike={() => toggleLike(song)}
+        onTrashFm={trashCurrentFmTrack}
       />
 
       {/* 全应用唯一 <audio> 实例，绝不因切换视图或平台重建 */}
@@ -2593,7 +3120,9 @@ export function App({
             }
           }
         }}
-        onPlay={() => setBuffering(true)}
+        onPlay={e => {
+          if (e.currentTarget.readyState < 3) setBuffering(true);
+        }}
         onPlaying={e => {
           setBuffering(false);
           setPlaying(true);
@@ -2753,6 +3282,18 @@ export function App({
         closeError={closeError}
         onChoose={chooseClose}
         onCancel={() => setCloseDialog(null)}
+      />
+
+      <PlaylistPickerDialog
+        track={pickerTrack}
+        playlists={ownedPlaylists}
+        busyId={pickerBusyId}
+        error={pickerError}
+        onSelect={addTrackToPlaylist}
+        onClose={() => {
+          setPickerTrack(null);
+          setPickerError('');
+        }}
       />
 
       <QrDialog qr={qr} onClose={closeQr} />

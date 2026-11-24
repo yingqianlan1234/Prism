@@ -1,6 +1,7 @@
 import React from 'react';
-import { artist } from '../utils/format.js';
+import { artist, NETEASE_QUALITIES, QUALITY_LABELS } from '../utils/format.js';
 import { Icon } from './Icons.jsx';
+import { PlaylistCover } from './Artwork.jsx';
 
 const PLAYBACK_RATES = [0.75, 1, 1.25, 1.5, 2];
 const SLEEP_OPTIONS = [
@@ -18,6 +19,12 @@ export function MoreSettingsPanel({
   onChangeRate,
   sleepMode,
   onSelectSleep,
+  canSelectQuality,
+  neteaseQuality,
+  onChangeQuality,
+  song,
+  trackQuality,
+  onReloadWithQuality,
   reportAllowed,
   onToggleReport,
   showDiagnostics,
@@ -29,6 +36,11 @@ export function MoreSettingsPanel({
   closeMode,
   onOpenCloseSettings,
 }) {
+  const canReloadQuality =
+    canSelectQuality &&
+    song?.provider === 'netease' &&
+    trackQuality?.level &&
+    trackQuality.level !== neteaseQuality;
   return (
     <div id="lw-more-panel" className="lw-more" role="dialog" aria-label="更多设置" hidden={!showMore}>
       <div className="nr-more-group">
@@ -64,6 +76,37 @@ export function MoreSettingsPanel({
           ))}
         </div>
       </div>
+
+      {canSelectQuality && (
+        <div className="nr-more-group">
+          <div className="nr-more-label-row">
+            <span className="nr-more-label">网易云音质</span>
+            {song?.provider === 'netease' && trackQuality?.level && (
+              <span className="nr-more-sub">
+                当前：{QUALITY_LABELS[trackQuality.level] || trackQuality.level}
+              </span>
+            )}
+          </div>
+          <div className="nr-seg-pills" role="group" aria-label="网易云音质">
+            {NETEASE_QUALITIES.map(q => (
+              <button
+                key={q.id}
+                type="button"
+                className={'nr-seg-btn' + (neteaseQuality === q.id ? ' is-on' : '')}
+                aria-pressed={neteaseQuality === q.id}
+                onClick={() => onChangeQuality(q.id)}
+              >
+                {q.label}
+              </button>
+            ))}
+          </div>
+          {canReloadQuality && (
+            <button type="button" className="nr-more-reload" onClick={onReloadWithQuality}>
+              按当前设置重载本首
+            </button>
+          )}
+        </div>
+      )}
 
       <div className="nr-more-divider" />
 
@@ -409,6 +452,66 @@ export function QrDialog({ qr, onClose }) {
           </div>
         )}
         <small>登录信息由本机安全保存</small>
+      </div>
+    </div>
+  );
+}
+
+export function PlaylistPickerDialog({ track, playlists, busyId, error, onSelect, onClose }) {
+  if (!track) return null;
+  return (
+    <div className="overlay" onClick={onClose}>
+      <div
+        className="dialog nr-picker-dialog"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="picker-heading"
+        onClick={e => e.stopPropagation()}
+      >
+        <div className="queue-header">
+          <h2 id="picker-heading">收藏到歌单</h2>
+          <button
+            type="button"
+            className="nr-close-btn"
+            aria-label="关闭收藏弹窗"
+            onClick={onClose}
+          >
+            <Icon name="close" />
+          </button>
+        </div>
+        <p className="nr-picker-track">
+          <b>{track.name}</b> · {artist(track) || '未知歌手'}
+        </p>
+        {error && (
+          <p className="nr-dialog-error" role="alert">
+            {error}
+          </p>
+        )}
+        {playlists.length ? (
+          <div className="nr-picker-list">
+            {playlists.map(pl => {
+              const busy = String(busyId ?? '') === String(pl.id);
+              return (
+                <button
+                  key={pl.id}
+                  type="button"
+                  className="nr-picker-item"
+                  disabled={busyId != null}
+                  onClick={() => onSelect(pl)}
+                >
+                  <PlaylistCover className="nr-picker-thumb" url={pl.coverImgUrl} />
+                  <span className="nr-picker-copy">
+                    <b>{pl.name}</b>
+                    <small>{pl.trackCount ?? '——'} 首</small>
+                  </span>
+                  <span className="nr-picker-state">{busy ? '收藏中…' : '加入'}</span>
+                </button>
+              );
+            })}
+          </div>
+        ) : (
+          <p className="nr-queue-empty">暂无可编辑的自建歌单。</p>
+        )}
       </div>
     </div>
   );

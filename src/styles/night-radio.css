@@ -175,6 +175,11 @@ button:disabled {
   height: 13px;
 }
 
+.nr-icon.is-sm {
+  width: 15px;
+  height: 15px;
+}
+
 .nr-soft-btn,
 .nr-primary-btn,
 .nr-danger-btn,
@@ -1041,52 +1046,122 @@ button:disabled {
   text-align: right;
 }
 
+.nr-song-row-wrap {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid transparent;
+  border-radius: var(--r-row);
+  background: rgba(255, 255, 255, 0.045);
+  content-visibility: auto;
+  contain-intrinsic-size: 62px;
+  transition: background var(--dur-ui) var(--ease-out), border-color var(--dur-ui), transform var(--dur-press);
+}
+
+.nr-song-row-wrap.has-actions {
+  padding-right: 12px;
+}
+
+.nr-song-row-wrap:nth-child(-n + 9) {
+  animation: nr-row-in 220ms var(--ease-out) both;
+}
+.nr-song-row-wrap:nth-child(2) { animation-delay: 0ms; }
+.nr-song-row-wrap:nth-child(3) { animation-delay: 22ms; }
+.nr-song-row-wrap:nth-child(4) { animation-delay: 44ms; }
+.nr-song-row-wrap:nth-child(5) { animation-delay: 66ms; }
+.nr-song-row-wrap:nth-child(6) { animation-delay: 88ms; }
+.nr-song-row-wrap:nth-child(7) { animation-delay: 110ms; }
+.nr-song-row-wrap:nth-child(8) { animation-delay: 132ms; }
+.nr-song-row-wrap:nth-child(9) { animation-delay: 154ms; }
+
+.nr-song-row-wrap:hover {
+  background: rgba(255, 255, 255, 0.09);
+  transform: translateY(-1.5px);
+}
+
+.nr-song-row-wrap.is-picked {
+  background: rgba(255, 255, 255, 0.11);
+  border-color: var(--nr-border-hi);
+}
+
+.nr-song-row-wrap.is-selected {
+  background: rgba(242, 166, 90, 0.14);
+  border-color: var(--nr-accent-border);
+}
+
 .row.song {
+  flex: 1;
+  min-width: 0;
   display: grid;
   grid-template-columns: 44px minmax(0, 1.55fr) minmax(0, 0.9fr) minmax(0, 0.95fr) 68px;
   align-items: center;
   gap: 14px;
   width: 100%;
   padding: 10px 18px;
-  border: 1px solid transparent;
+  border: none;
   border-radius: var(--r-row);
-  background: rgba(255, 255, 255, 0.045);
+  background: transparent;
   color: var(--nr-ink);
   text-align: left;
-  content-visibility: auto;
-  contain-intrinsic-size: 62px;
-  transition: background var(--dur-ui) var(--ease-out), border-color var(--dur-ui), transform var(--dur-press);
+  transition: transform var(--dur-press);
 }
 
-.row.song:nth-child(-n + 9) {
-  animation: nr-row-in 220ms var(--ease-out) both;
-}
-.row.song:nth-child(2) { animation-delay: 0ms; }
-.row.song:nth-child(3) { animation-delay: 22ms; }
-.row.song:nth-child(4) { animation-delay: 44ms; }
-.row.song:nth-child(5) { animation-delay: 66ms; }
-.row.song:nth-child(6) { animation-delay: 88ms; }
-.row.song:nth-child(7) { animation-delay: 110ms; }
-.row.song:nth-child(8) { animation-delay: 132ms; }
-.row.song:nth-child(9) { animation-delay: 154ms; }
-
-.row.song:hover {
-  background: rgba(255, 255, 255, 0.09);
-  transform: translateY(-1.5px);
+.nr-song-row-wrap.has-actions .row.song {
+  padding-right: 6px;
 }
 
 .row.song:active {
-  transform: scale(0.992);
+  transform: scale(0.994);
 }
 
-.row.song.picked {
-  background: rgba(255, 255, 255, 0.11);
-  border-color: var(--nr-border-hi);
+.nr-row-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
 }
 
-.row.song.selected {
-  background: rgba(242, 166, 90, 0.14);
-  border-color: var(--nr-accent-border);
+.nr-row-act {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  border: none;
+  background: transparent;
+  color: var(--nr-muted);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0.42;
+  transition: opacity var(--dur-ui), background var(--dur-ui), color var(--dur-ui), transform var(--dur-press);
+}
+
+.nr-song-row-wrap:hover .nr-row-act,
+.nr-song-row-wrap:focus-within .nr-row-act,
+.nr-row-act.is-liked {
+  opacity: 1;
+}
+
+.nr-row-act:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.12);
+  color: var(--nr-ink);
+}
+
+.nr-row-act:active:not(:disabled) {
+  transform: scale(0.9);
+}
+
+.nr-row-act.is-danger:hover:not(:disabled) {
+  background: var(--nr-danger-soft);
+  color: #FFD2D5;
+}
+
+.nr-heart-btn.is-liked {
+  color: #F27D83;
+  animation: nr-heart-pop 280ms var(--ease-out);
+}
+
+.nr-heart-btn.is-liked:hover:not(:disabled) {
+  color: #FF9499;
 }
 
 .row.song .number {
@@ -1102,6 +1177,54 @@ button:disabled {
 .row.song.selected .number {
   color: var(--nr-accent);
   font-weight: 700;
+}
+
+/* 搜索分类胶囊条与专辑/歌手画廊 */
+.nr-search-tabs {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  width: fit-content;
+  padding: 4px;
+  border-radius: var(--r-pill);
+  background: var(--nr-surface-pill);
+  border: 1px solid var(--nr-border);
+}
+
+.nr-search-tab {
+  height: 28px;
+  padding: 0 14px;
+  border: none;
+  border-radius: var(--r-pill);
+  background: transparent;
+  color: var(--nr-muted);
+  font-size: 12px;
+  font-weight: 500;
+  transition: background var(--dur-ui), color var(--dur-ui);
+}
+
+.nr-search-tab:hover:not(:disabled):not(.is-active) {
+  color: var(--nr-ink);
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.nr-search-tab.is-active {
+  background: var(--nr-accent);
+  color: var(--nr-accent-ink);
+  font-weight: 700;
+}
+
+.nr-artist-cover {
+  border-radius: 50%;
+}
+
+.nr-artist-cover .lw-card-img {
+  border-radius: 50%;
+}
+
+.nr-artist-card {
+  text-align: center;
+  align-items: center;
 }
 
 /* 正在播放行极简跳动音波柱（仅动 scaleY） */
@@ -1691,6 +1814,13 @@ button:disabled {
   animation: nr-heading-prev 300ms var(--ease-out) 50ms both;
 }
 
+.nr-stage-title-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 14px;
+}
+
 .nr-stage-heading h1 {
   margin: 0;
   font-family: var(--font-serif);
@@ -1699,6 +1829,65 @@ button:disabled {
   line-height: 1.22;
   color: var(--nr-ink);
   word-break: break-word;
+  min-width: 0;
+}
+
+.nr-stage-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding-top: 4px;
+  flex-shrink: 0;
+}
+
+.nr-stage-act-btn {
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  border: 1px solid var(--nr-border);
+  background: var(--nr-surface-pill);
+  color: var(--nr-muted);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: background var(--dur-ui), color var(--dur-ui), border-color var(--dur-ui), transform var(--dur-press);
+}
+
+.nr-stage-act-btn:hover:not(:disabled) {
+  background: var(--nr-surface-hover);
+  color: var(--nr-ink);
+  border-color: var(--nr-border-hi);
+}
+
+.nr-stage-act-btn:active:not(:disabled) {
+  transform: scale(0.92);
+}
+
+.nr-stage-act-btn.nr-heart-btn.is-liked {
+  background: rgba(242, 125, 131, 0.16);
+  border-color: rgba(242, 125, 131, 0.45);
+  color: #F27D83;
+}
+
+.nr-quality-chip,
+.nr-trial-chip {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border-radius: var(--r-pill);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.nr-quality-chip {
+  background: rgba(123, 201, 181, 0.16);
+  color: #8DE0CB;
+}
+
+.nr-trial-chip {
+  background: rgba(242, 166, 90, 0.18);
+  color: var(--nr-accent);
 }
 
 .nr-stage-heading p {
@@ -1956,10 +2145,23 @@ button:disabled {
 }
 
 .nr-current-copy {
+  flex: 1;
   display: flex;
   flex-direction: column;
   gap: 2px;
   min-width: 0;
+}
+
+.nr-dock-track-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  flex-shrink: 0;
+}
+
+.nr-dock-track-actions .lw-icon-btn {
+  width: 30px;
+  height: 30px;
 }
 
 .nr-current-copy b {
@@ -2353,6 +2555,35 @@ button:disabled {
   font-size: 12px;
 }
 
+.nr-more-label-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.nr-more-sub {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--nr-accent);
+}
+
+.nr-more-reload {
+  align-self: flex-start;
+  margin-top: 2px;
+  border: none;
+  background: transparent;
+  padding: 2px 4px;
+  font-size: 12px;
+  color: var(--nr-accent);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.nr-more-reload:hover {
+  filter: brightness(1.1);
+}
+
 .nr-seg-btn.is-on {
   background: var(--nr-accent);
   border-color: var(--nr-accent);
@@ -2591,6 +2822,88 @@ button:disabled {
   font-size: 13px;
 }
 
+/* 收藏到歌单弹窗 */
+.nr-picker-dialog {
+  width: min(410px, 100%);
+  max-height: min(76dvh, 520px);
+}
+
+.nr-picker-track {
+  font-size: 13px;
+  color: var(--nr-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.nr-picker-track b {
+  color: var(--nr-ink);
+}
+
+.nr-picker-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 300px;
+  overflow-y: auto;
+  padding-right: 2px;
+}
+
+.nr-picker-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 8px 12px 8px 8px;
+  border-radius: 14px;
+  border: 1px solid transparent;
+  background: rgba(255, 255, 255, 0.045);
+  text-align: left;
+  transition: background var(--dur-ui), border-color var(--dur-ui);
+}
+
+.nr-picker-item:hover:not(:disabled) {
+  background: var(--nr-surface-hover);
+  border-color: var(--nr-border);
+}
+
+.nr-picker-thumb {
+  width: 36px;
+  height: 36px;
+  border-radius: 9px;
+  object-fit: cover;
+  flex-shrink: 0;
+}
+
+.nr-picker-copy {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.nr-picker-copy b {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--nr-ink);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.nr-picker-copy small {
+  font-size: 12px;
+  color: var(--nr-faint);
+}
+
+.nr-picker-state {
+  font-size: 12px;
+  color: var(--nr-accent);
+  font-weight: 600;
+  flex-shrink: 0;
+}
+
 .qr-dialog {
   align-items: center;
   text-align: center;
@@ -2693,7 +3006,12 @@ button:disabled {
 
   .row.table-head,
   .row.song {
-    grid-template-columns: 36px 1fr 64px;
+    grid-template-columns: 36px 1fr 56px;
+  }
+
+  .nr-song-row-wrap .row.song {
+    padding: 8px 10px 8px 12px;
+    gap: 8px;
   }
 
   .row.table-head span:nth-child(3),
@@ -2708,18 +3026,40 @@ button:disabled {
   }
 
   .nr-dock-island {
-    grid-template-columns: minmax(136px, 180px) 1fr auto;
-    gap: 12px;
+    grid-template-columns: minmax(136px, 196px) minmax(0, 1fr) auto;
+    gap: 10px;
     padding: 0 12px;
   }
 
+  .nr-dock-island .nr-quality-chip {
+    display: none;
+  }
+
+  .nr-status-chip {
+    white-space: nowrap;
+  }
+
   .player {
-    gap: 10px;
+    min-width: 0;
+    gap: 8px;
+  }
+
+  .nr-transport-keys {
+    gap: 4px;
   }
 
   .progress {
-    min-width: 100px;
-    gap: 7px;
+    min-width: 0;
+    gap: 6px;
+  }
+
+  .progress-time {
+    min-width: 34px;
+    font-size: 11px;
+  }
+
+  .progress input[type='range'] {
+    min-width: 48px;
   }
 
   .lw-icon-btn {
@@ -2877,6 +3217,12 @@ button:disabled {
 @keyframes nr-eq-bounce {
   0%, 100% { transform: scaleY(0.28); }
   50% { transform: scaleY(0.96); }
+}
+
+@keyframes nr-heart-pop {
+  0% { transform: scale(1); }
+  45% { transform: scale(1.24); }
+  100% { transform: scale(1); }
 }
 
 /* 缩小到托盘或窗口隐藏时暂停全部动画，保持零消耗 */

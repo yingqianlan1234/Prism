@@ -32,7 +32,7 @@ await search('旧搜索');await search('新搜索');
 req('netease_search','新搜索').resolve({result:{songs:[{id:2,name:'新歌曲'}],songCount:5}});
 await wait(()=>document.body.textContent.includes('新歌曲'));
 req('netease_search','旧搜索').resolve({result:{songs:[{id:1,name:'旧歌曲'}],songCount:1}});
-await new Promise(r=>setTimeout(r,20));assert(!document.body.textContent.includes('旧歌曲'));assert.match(document.body.textContent,/暂不支持翻页/);
+await new Promise(r=>setTimeout(r,20));assert(!document.body.textContent.includes('旧歌曲'));assert.match(document.body.textContent,/共 5 首/);
 button('歌单一').click();button('歌单二').click();await wait(()=>req('netease_playlist',20));
 req('netease_playlist',20).resolve({songs:[{id:4,name:'第二首'},{id:5,name:'第三首'}],total:3,hasMore:true});await wait(()=>button('第二首'));
 req('netease_playlist',10).resolve({songs:[{id:3,name:'第一首'}],total:1,hasMore:false});await new Promise(r=>setTimeout(r,20));assert(![...document.querySelectorAll('.song')].some(x=>x.textContent.includes('第一首')));

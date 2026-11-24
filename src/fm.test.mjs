@@ -17,6 +17,7 @@ window.__TAURI_INTERNALS__={invoke:async(command,args)=>{calls.push(command);
  if(command==='netease_account')return {profile};
  if(command==='qq_web_account')return {profile:null};
  if(command==='netease_playlists')return {playlist:[],more:false};
+ if(command==='netease_likelist')return {code:200,ids:[]};
  if(command==='netease_private_fm'){count++;if(count===1)return {items:[{id:1,name:'合成 FM 一',album:{name:'合成专辑',picUrl:'http://p1.music.126.net/synthetic-fm.jpg'}},{id:2,name:'合成 FM 二'}]};if(count===2)throw Error('模拟续取失败');if(count===5)return new Promise(resolve=>{finishOld=resolve});return {items:[{id:2,name:'重复歌曲'},{id:3,name:'合成 FM 三'}]};}
  if(command==='netease_lyric')return {lrc:{lyric:''}};
  if(command==='netease_url')return {data:[{code:200,url:'https://example.invalid/'+args.id}]};
@@ -36,5 +37,5 @@ try{
  const audio=document.querySelector('audio');assert(audio.src.endsWith('/1'));button('QQ 社区匿名搜索').click();await wait(()=>document.body.textContent.includes('登录后可查看 QQ 歌单'));assert(audio.src.endsWith('/1'));audio.dispatchEvent(new Event('ended'));await wait(()=>audio.src.endsWith('/2'));audio.dispatchEvent(new Event('ended'));await wait(()=>audio.src.endsWith('/3'));
  assert.equal(count,4); // New track near tail permits one additional refill, never an automatic retry loop.
  button('网易云').click();await wait(()=>button('账号甲 · 刷新'));await wait(()=>button('重试私人 FM'));button('重试私人 FM').click();await wait(()=>finishOld);profile={userId:2,nickname:'账号乙'};button('账号甲 · 刷新').click();await wait(()=>button('账号乙 · 刷新'));finishOld({items:[{id:9,name:'旧账号迟到歌曲'}]});await new Promise(r=>setTimeout(r,20));assert(!audio.getAttribute('src'));assert(!document.body.textContent.includes('合成 FM 三'));assert(!document.body.textContent.includes('旧账号迟到歌曲'));
- assert.equal(document.querySelectorAll('audio').length,1);assert(!calls.some(c=>/report|scrobble|like|trash/.test(c)));console.log('通过：FM 首批、去重、失败手动重试、续播、平台切换及单音频');
+ assert.equal(document.querySelectorAll('audio').length,1);assert(!calls.some(c=>/report|scrobble|netease_like$|trash/.test(c)));console.log('通过：FM 首批、去重、失败手动重试、续播、平台切换及单音频');
 }finally{dom.window.close();if(resolve(temp).startsWith(resolve(tmpdir(),'music-fm-test-')))await rm(temp,{recursive:true,force:true});}

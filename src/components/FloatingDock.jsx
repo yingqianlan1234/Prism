@@ -1,5 +1,5 @@
 import React from 'react';
-import { artist } from '../utils/format.js';
+import { artist, QUALITY_LABELS, formatBitrate } from '../utils/format.js';
 import { SongArtwork, SourceTag, PlayButton } from './Artwork.jsx';
 import { PlaybackProgress } from './PlaybackProgress.jsx';
 import { Icon } from './Icons.jsx';
@@ -39,8 +39,24 @@ export function FloatingDock({
   playbackRate,
   sleepLabel,
   queueCount,
+  trackQuality,
+  neteaseSignedIn,
+  canLike,
+  canTrashFm,
+  isLiked,
+  likeBusy,
+  fmTrashBusy,
+  onToggleLike,
+  onTrashFm,
 }) {
   const modeText = MODE_LABELS[mode] || '顺序播放';
+  const showNeteaseActions = neteaseSignedIn && song?.provider === 'netease';
+  const qualityText =
+    song?.provider === 'netease' && trackQuality?.level
+      ? QUALITY_LABELS[trackQuality.level] || trackQuality.level
+      : '';
+  const bitrateText =
+    song?.provider === 'netease' && trackQuality?.br ? formatBitrate(trackQuality.br) : '';
 
   const currentTrackBlock = (
     <div className="current">
@@ -57,6 +73,33 @@ export function FloatingDock({
           )}
         </small>
       </div>
+      {showNeteaseActions && canLike && (
+        <div className="nr-dock-track-actions">
+          <button
+            type="button"
+            className={'lw-icon-btn tool nr-heart-btn' + (isLiked ? ' is-liked' : '')}
+            aria-label={isLiked ? '取消喜欢' : '喜欢当前歌曲'}
+            aria-pressed={isLiked}
+            title={isLiked ? '取消喜欢' : '喜欢'}
+            disabled={likeBusy}
+            onClick={onToggleLike}
+          >
+            <Icon name={isLiked ? 'heartFill' : 'heart'} className="nr-icon is-sm" />
+          </button>
+          {canTrashFm && (
+            <button
+              type="button"
+              className="lw-icon-btn tool nr-dislike-btn"
+              aria-label="私人 FM 不喜欢并跳过"
+              title="不喜欢并跳过"
+              disabled={fmTrashBusy}
+              onClick={onTrashFm}
+            >
+              <Icon name="dislike" className="nr-icon is-sm" />
+            </button>
+          )}
+        </div>
+      )}
     </div>
   );
 
@@ -73,6 +116,19 @@ export function FloatingDock({
 
   const auxBlock = (
     <div className="footer-right">
+      {trackQuality?.isTrial && song?.provider === 'netease' && (
+        <span className="nr-status-chip nr-trial-chip" title="当前播放为试听片段">
+          试听
+        </span>
+      )}
+      {qualityText && trackQuality?.level !== 'standard' && (
+        <span
+          className="nr-status-chip nr-quality-chip"
+          title={bitrateText ? `${qualityText} · ${bitrateText}` : qualityText}
+        >
+          {qualityText}
+        </span>
+      )}
       {playbackRate !== 1 && (
         <span className="nr-status-chip" title="当前播放倍速">
           {playbackRate}×
