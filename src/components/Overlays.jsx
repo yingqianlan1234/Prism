@@ -38,14 +38,8 @@ export function MoreSettingsPanel({
   song,
   trackQuality,
   onReloadWithQuality,
-  reportAllowed,
-  onToggleReport,
-  showDiagnostics,
-  onToggleDiagnostics,
-  diagnostic,
-  diagnosticText,
-  showNowDetails,
-  setShowNowDetails,
+  isStageActive,
+  onOpenNowPlaying,
   closeMode,
   onOpenCloseSettings,
   canDesktopLyric,
@@ -178,33 +172,8 @@ export function MoreSettingsPanel({
       <button
         type="button"
         className="lw-more-item"
-        aria-pressed={reportAllowed}
-        onClick={onToggleReport}
-        title="目前仅本地统计，不发送记录"
-      >
-        听歌上报：{reportAllowed ? '开启偏好' : '关闭'}（未开放）
-      </button>
-
-      <button
-        type="button"
-        className="lw-more-item"
-        aria-pressed={showDiagnostics}
-        onClick={onToggleDiagnostics}
-      >
-        本地计时诊断{showDiagnostics ? '：开' : '：关'}
-      </button>
-
-      {showDiagnostics && (
-        <p className="lw-more-note" role="status" aria-label="本地计时诊断结果">
-          {diagnostic ? diagnosticText(diagnostic) : '尚无播放会话'}
-        </p>
-      )}
-
-      <button
-        type="button"
-        className="lw-more-item"
-        aria-pressed={showNowDetails}
-        onClick={() => setShowNowDetails(!showNowDetails)}
+        aria-pressed={Boolean(isStageActive)}
+        onClick={onOpenNowPlaying}
       >
         播放详情
       </button>

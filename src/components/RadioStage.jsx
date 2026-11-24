@@ -25,6 +25,8 @@ export function RadioStage({
   isLiked,
   likeBusy,
   fmTrashBusy,
+  fmError,
+  onRetryFm,
   onToggleLike,
   onOpenPlaylistPicker,
   onTrashFm,
@@ -210,6 +212,15 @@ export function RadioStage({
                 : '选择一首歌，拨通今晚的电台'}
             </p>
           </div>
+
+          {(playingQueue?.type === 'fm' || (!song && fmError)) && fmError && (
+            <div className="nr-stage-fm-alert" role="alert">
+              <span>{fmError}</span>
+              <button type="button" className="nr-soft-btn" onClick={onRetryFm}>
+                重试私人 FM
+              </button>
+            </div>
+          )}
 
           <div
             className="lw-stage-lyrics nr-stage-lyrics"

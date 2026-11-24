@@ -402,6 +402,7 @@ export function App({
     error: '',
     generation: 0,
   });
+  const fmAutoStartRef = useRef(null);
   const audio = useRef(null);
   const searchInput = useRef(null);
   const songRef = useRef(null);
@@ -872,6 +873,7 @@ export function App({
     }
     if (id === 'netease') {
       recommendationPending.current = false;
+      fmAutoStartRef.current = null;
       fm.current = {
         accountId: null,
         tracks: [],
@@ -1309,6 +1311,7 @@ export function App({
   const switchProvider = id => {
     if (activeRef.current !== id) {
       const prevId = activeRef.current;
+      fmAutoStartRef.current = null;
       recommendation.current.next();
       if (recommendationPending.current) {
         recommendationPending.current = false;
@@ -1729,15 +1732,42 @@ export function App({
         const q = current.queue;
         const patch = {};
         if (current.fmView) {
-          patch.songs = [...state.tracks];
           patch.message = state.error;
         }
         if (q?.type === 'fm' && q.accountId === state.accountId) {
           patch.queue = { ...q, tracks: [...state.tracks] };
         }
         update('netease', patch);
+        const autoTarget = fmAutoStartRef.current;
+        if (
+          autoTarget &&
+          autoTarget.accountId === state.accountId &&
+          autoTarget.generation === generation &&
+          state.tracks.length
+        ) {
+          fmAutoStartRef.current = null;
+          const curSong = songRef.current;
+          const curQueue = workRef.current.netease.queue;
+          const alreadyPlayingFm =
+            curSong?.provider === 'netease' &&
+            curQueue?.type === 'fm' &&
+            String(curSong.accountId) === String(state.accountId);
+          if (!alreadyPlayingFm && !pendingPlay.current) {
+            const idx = Math.min(saved.current.fm?.index ?? 0, state.tracks.length - 1);
+            const fmQueue = {
+              type: 'fm',
+              source: 'fm',
+              tracks: [...state.tracks],
+              index: idx,
+              provider: 'netease',
+              accountId: state.accountId,
+            };
+            void play(state.tracks[idx], fmQueue);
+          }
+        }
       } catch (e) {
         if (fm.current === state) {
+          fmAutoStartRef.current = null;
           state.error = '私人 FM 加载失败：' + errorText(e);
           if (workRef.current.netease.fmView) update('netease', { message: state.error });
         }
@@ -1747,6 +1777,18 @@ export function App({
     })();
     state.pending = promise;
     return promise;
+  };
+
+  const retryFm = () => {
+    const w = workRef.current.netease;
+    if (!w.profile?.userId || w.identityUnknown) return;
+    if (!fm.current.tracks.length) {
+      fmAutoStartRef.current = {
+        accountId: w.profile.userId,
+        generation: fm.current.generation,
+      };
+    }
+    if (!fm.current.pending) void loadFm();
   };
 
   const openFm = () => {
@@ -1769,13 +1811,42 @@ export function App({
       fmView: true,
       trackOrigin: 'fm',
       title: '私人 FM',
-      songs: [...fm.current.tracks],
+      songs: [],
       searchItems: [],
       searchTotal: null,
       recommendLists: null,
-      message: fm.current.error || (!fm.current.tracks.length ? '正在加载…' : ''),
+      qqPlaylist: null,
+      qqTrackPage: 0,
+      message: fm.current.error || (!fm.current.tracks.length ? '正在调频私人 FM…' : ''),
     });
-    if (!fm.current.tracks.length && !fm.current.pending) loadFm();
+    setShowMore(false);
+    setView('stage');
+    setShowLyrics(true);
+    const curSong = songRef.current;
+    const alreadyPlayingFm =
+      curSong?.provider === 'netease' &&
+      workRef.current.netease.queue?.type === 'fm' &&
+      String(curSong.accountId) === String(w.profile.userId);
+    if (alreadyPlayingFm) return;
+    if (fm.current.tracks.length) {
+      fmAutoStartRef.current = null;
+      const idx = Math.min(saved.current.fm?.index ?? 0, fm.current.tracks.length - 1);
+      const fmQueue = {
+        type: 'fm',
+        source: 'fm',
+        tracks: [...fm.current.tracks],
+        index: idx,
+        provider: 'netease',
+        accountId: w.profile.userId,
+      };
+      void play(fm.current.tracks[idx], fmQueue);
+    } else {
+      fmAutoStartRef.current = {
+        accountId: w.profile.userId,
+        generation: fm.current.generation,
+      };
+      if (!fm.current.pending) void loadFm();
+    }
   };
 
   const changeNeteaseQuality = level => {
@@ -2025,6 +2096,7 @@ export function App({
             provider: id,
             accountId: s.accountId,
           });
+    if (snapshot.type !== 'fm') fmAutoStartRef.current = null;
     const token = playback.current.next();
     const generation = identity.current[id].current();
     pendingPlay.current = { provider: id, generation };
@@ -3337,11 +3409,11 @@ export function App({
             <div className="section-label">
               <span>音乐库</span>
               <span>
-                {songs.length
-                  ? ws.fmView
-                    ? `最近 ${Math.min(songs.length, 200)} 首`
-                    : `当前页 ${songs.length} 首`
-                  : '搜索与收藏'}
+                {ws.fmView
+                  ? '私人电台流'
+                  : songs.length
+                    ? `当前页 ${songs.length} 首`
+                    : '搜索与收藏'}
               </span>
             </div>
 
@@ -3354,7 +3426,7 @@ export function App({
             <div className="heading">
               <div>
                 <h1>{title}</h1>
-                {songs.length > 0 && (
+                {songs.length > 0 && !(activeProvider === 'netease' && ws.fmView) && (
                   <p>
                     {capabilities[activeProvider].resolvePlayback
                       ? activeProvider === 'netease'
@@ -3378,16 +3450,18 @@ export function App({
                 </div>
               )}
 
-              {songs.length > 0 && capabilities[activeProvider].resolvePlayback && (
-                <button
-                  type="button"
-                  className="primary"
-                  aria-label="播放第一首"
-                  onClick={() => play(songs[0])}
-                >
-                  ▶ <span>播放第一首</span>
-                </button>
-              )}
+              {songs.length > 0 &&
+                !(activeProvider === 'netease' && ws.fmView) &&
+                capabilities[activeProvider].resolvePlayback && (
+                  <button
+                    type="button"
+                    className="primary"
+                    aria-label="播放第一首"
+                    onClick={() => play(songs[0])}
+                  >
+                    ▶ <span>播放第一首</span>
+                  </button>
+                )}
             </div>
 
             {activeProvider === 'netease' && ws.trackOrigin === 'recent' && (
@@ -3468,6 +3542,39 @@ export function App({
                 onOpenPlaylist={list => openList(list)}
                 onSearchKeyword={term => search(null, 1, term, 1)}
               />
+            ) : activeProvider === 'netease' && ws.fmView ? (
+              <div className="nr-fm-card" role="region" aria-label="私人 FM 沉浸电台">
+                <span className="nr-fm-card-kicker">ON AIR · 私人电台</span>
+                <h2>
+                  {song?.provider === 'netease' && playingQueue?.type === 'fm'
+                    ? song.name
+                    : '私人 FM 正在调频'}
+                </h2>
+                <p>
+                  {fm.current.error ||
+                    (song?.provider === 'netease' && playingQueue?.type === 'fm'
+                      ? `${artist(song)} · 专注电台播放中，无需翻找完整歌单`
+                      : message || '私人 FM 会自动起播并直接跳转歌词界面')}
+                </p>
+                <div className="nr-fm-card-actions">
+                  <button
+                    type="button"
+                    className="nr-primary-btn"
+                    onClick={() => {
+                      setShowMore(false);
+                      setView('stage');
+                      setShowLyrics(true);
+                    }}
+                  >
+                    进入歌词舞台
+                  </button>
+                  {fm.current.error && (
+                    <button type="button" className="nr-soft-btn" onClick={retryFm}>
+                      重试私人 FM
+                    </button>
+                  )}
+                </div>
+              </div>
             ) : songs.length ? (
               <SongList
                 songs={songs}
@@ -3567,12 +3674,6 @@ export function App({
                   重试歌单
                 </button>
               )}
-
-            {activeProvider === 'netease' && ws.fmView && fm.current.error && (
-              <button type="button" className="nr-soft-btn" onClick={loadFm}>
-                重试私人 FM
-              </button>
-            )}
 
             {ws.trackOrigin === 'playlist' && ws.qqPlaylist && ws.qqTrackPage > 0 && (
               <div className="pagination" aria-label="歌单歌曲分页">
@@ -3674,6 +3775,10 @@ export function App({
           isLiked={song?.provider === 'netease' && likedIds.has(Number(song.id))}
           likeBusy={song?.provider === 'netease' && likedBusyIds.has(Number(song.id))}
           fmTrashBusy={fmTrashBusy}
+          fmError={
+            activeProvider === 'netease' || song?.provider === 'netease' ? fm.current.error : ''
+          }
+          onRetryFm={retryFm}
           onToggleLike={() => toggleLike(song)}
           onOpenPlaylistPicker={() => openPlaylistPicker(song)}
           onTrashFm={trashCurrentFmTrack}
@@ -3698,24 +3803,13 @@ export function App({
             play(song, playingQueue);
           }
         }}
-        reportAllowed={reportAllowed}
-        onToggleReport={() => {
-          const next = !reportAllowed;
-          listening.current.setReportingAllowed(next);
-          setReportAllowed(next);
+        isStageActive={view === 'stage' && !showLyrics}
+        onOpenNowPlaying={() => {
+          setShowMore(false);
+          setShowNowDetails(false);
+          setView('stage');
+          setShowLyrics(false);
         }}
-        showDiagnostics={showDiagnostics}
-        onToggleDiagnostics={() => {
-          const next = !diagnosticsOn.current;
-          diagnosticsOn.current = next;
-          listening.current.setDiagnosticsEnabled(next);
-          setLastDiagnostic(null);
-          setShowDiagnostics(next);
-        }}
-        diagnostic={diagnostic}
-        diagnosticText={diagnosticText}
-        showNowDetails={showNowDetails}
-        setShowNowDetails={setShowNowDetails}
         closeMode={closeMode}
         onOpenCloseSettings={() => {
           setShowMore(false);
@@ -3746,6 +3840,12 @@ export function App({
         activeProvider={activeProvider}
         audio={audio}
         restoredProgress={restoredProgress}
+        onOpenLyrics={() => {
+          if (!song) return;
+          setShowMore(false);
+          setView('stage');
+          setShowLyrics(true);
+        }}
         onSeekEnd={() => scheduleSave(true)}
         onSeek={value => {
           if (

@@ -221,14 +221,15 @@ try {
   await wait(() => document.body.textContent.includes('搜索到他人歌单'));
   assert.equal(calls.filter(c => c.cmd === 'netease_search').at(-1).args.searchType, 1000);
 
-  // 6. 私人 FM 不喜欢并跳过
+  // 6. 私人 FM 不喜欢并跳过（直达歌词舞台并自动起播）
   buttonByText('私人 FM').click();
-  await wait(() => document.body.textContent.includes('FM 首曲'));
-  activateSong([...document.querySelectorAll('.song')][0]);
   await wait(() => document.querySelector('[aria-label="私人 FM 不喜欢并跳过"]'));
+  await wait(() => document.querySelector('.nr-stage-heading h1')?.textContent === 'FM 首曲');
   document.querySelector('[aria-label="私人 FM 不喜欢并跳过"]').click();
-  await wait(() => document.querySelector('.nr-current-copy b')?.textContent === 'FM 次曲');
+  await wait(() => document.querySelector('.nr-stage-heading h1')?.textContent === 'FM 次曲');
   assert.deepEqual(calls.filter(c => c.cmd === 'netease_fm_trash').at(-1).args, { id: 301 });
+  buttonByText('曲库').click();
+  await wait(() => document.querySelector('.app')?.dataset.view === 'library');
 
   // 7. AbortError（play() 在途被 pause() 打断）与 Space 长按 repeat 不应报错或误回滚
   const audio = document.querySelector('audio');

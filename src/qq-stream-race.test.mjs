@@ -43,7 +43,7 @@ const button=text=>[...document.querySelectorAll('button')].find(b=>b.textConten
 try{
  const built=await build({configFile:false,logLevel:'error',plugins:[react()],build:{outDir:temp,emptyOutDir:false,rollupOptions:{input:process.env.PRISM_TEST_ENTRY||resolve('src/main.jsx')}}});
  await import(pathToFileURL(join(temp,built.output.find(x=>x.type==='chunk'&&x.isEntry).fileName)));
- await wait(()=>button('合成网易歌单'),'网易初始化');button('QQ 社区匿名搜索').click();await wait(()=>button('合成 QQ 歌单'),'QQ 歌单');button('合成 QQ 歌单').click();await wait(()=>document.querySelectorAll('.song').length===2,'QQ 曲目');
+ await wait(()=>button('合成网易歌单'),'网易初始化');button('QQ 音乐').click();await wait(()=>button('合成 QQ 歌单'),'QQ 歌单');button('合成 QQ 歌单').click();await wait(()=>document.querySelectorAll('.song').length===2,'QQ 曲目');
  activateSong(document.querySelectorAll('.song')[0]);await wait(()=>playingStream===qqa&&playCount===1,'QQ A 播放');const audio=document.querySelector('audio');assert.equal(audio.src,qqa);
  activateSong(document.querySelectorAll('.song')[1]);await wait(()=>bRequested,'QQ B 解析在途');button('网易云').click();await wait(()=>button('合成网易歌单'),'网易工作区');button('合成网易歌单').click();await wait(()=>document.querySelectorAll('.song').length===1,'网易 C 曲目');activateSong(document.querySelector('.song'));await wait(()=>cRequests===1,'网易 C 请求在途');
  pendingB.resolve();await wait(()=>candidateStream===qqb,'QQ B 返回候选');await new Promise(r=>setTimeout(r,30));assert.equal(audio.src,qqa,'过期 QQ B 不得覆盖 audio');assert.equal(playingStream,qqa,'QQ B 候选不得替换当前流');assert.equal(playCount,1);

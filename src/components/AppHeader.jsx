@@ -109,7 +109,7 @@ export function AppHeader({
             aria-pressed={activeProvider === 'qqmusic'}
             onClick={() => switchProvider('qqmusic')}
           >
-            {platformFlavor.qqmusic === 'mock' ? 'QQ 模拟' : 'QQ 社区匿名搜索'}
+            {platformFlavor.qqmusic === 'mock' ? 'QQ 模拟' : 'QQ 音乐'}
           </button>
           {canLocalLibrary && (
             <button

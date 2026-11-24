@@ -36,7 +36,7 @@ try{
  await wait(()=>button('扫码登录'));await search('网易查询');await wait(()=>document.body.textContent.includes('网易合成'));
  activateSong(document.querySelector('.song'));await wait(()=>document.querySelector('audio').src.includes('audio'));
  const audio=document.querySelector('audio'),src=audio.src,playing=play,paused=pause;
- button('QQ 社区匿名搜索').click();await wait(()=>document.body.textContent.includes('登录后可查看 QQ 歌单'));
+ button('QQ 音乐').click();await wait(()=>document.body.textContent.includes('登录后可查看 QQ 歌单'));
  assert(button('QQ 登录'));await search('合成查询');await wait(()=>document.body.textContent.includes('QQ合成'));
  assert(!document.querySelector('.song.selected'));assert.equal(audio.src,src);assert.equal(play,playing);assert.equal(pause,paused);
  activateSong(document.querySelector('.song'));await wait(()=>document.body.textContent.includes('请先登录 QQ 音乐'));assert.equal(audio.src,src);

@@ -290,10 +290,13 @@ button:disabled {
   font-weight: 700;
   letter-spacing: 0.04em;
   color: var(--nr-ink);
-  transition: background var(--dur-ui);
+  transition: background var(--dur-ui), transform var(--dur-press);
 }
 .brand:hover {
-  background: rgba(255, 255, 255, 0.06);
+  background: rgba(255, 255, 255, 0.07);
+}
+.brand:active {
+  transform: scale(0.96);
 }
 
 .nr-lamp-dot {
@@ -351,7 +354,9 @@ button:disabled {
 }
 
 .provider-switch[data-animate='true'] .nr-prov-slider {
-  transition: transform 220ms var(--ease-out), width 220ms var(--ease-out);
+  transition:
+    transform 260ms cubic-bezier(0.34, 1.2, 0.64, 1),
+    width 240ms var(--ease-out);
 }
 
 .provider-switch button {
@@ -419,7 +424,9 @@ button:disabled {
 }
 
 .lw-nav[data-animate='true'] .nr-nav-slider {
-  transition: transform 240ms var(--ease-out), width 240ms var(--ease-out);
+  transition:
+    transform 280ms cubic-bezier(0.34, 1.2, 0.64, 1),
+    width 240ms var(--ease-out);
 }
 
 .lw-nav button {
@@ -653,12 +660,21 @@ button:disabled {
   font-size: 12px;
   padding: 6px 12px;
   border-radius: var(--r-pill);
-  transition: background var(--dur-ui), color var(--dur-ui), border-color var(--dur-ui);
+  transition:
+    background var(--dur-ui),
+    color var(--dur-ui),
+    border-color var(--dur-ui),
+    transform var(--dur-press);
 }
 
 .recommend-nav button:hover {
   background: var(--nr-surface-hover);
   color: var(--nr-ink);
+  transform: translateY(-1.5px);
+}
+
+.recommend-nav button:active {
+  transform: scale(0.95);
 }
 
 .recommend-nav button.is-active {
@@ -696,12 +712,17 @@ button:disabled {
   color: var(--nr-muted);
   text-align: left;
   font-size: 13px;
-  transition: background var(--dur-ui), color var(--dur-ui);
+  transition: background var(--dur-ui), color var(--dur-ui), transform var(--dur-ui) var(--ease-out);
 }
 
 .lists .playlist:hover {
   background: var(--nr-surface-pill);
   color: var(--nr-ink);
+  transform: translateX(3px);
+}
+
+.lists .playlist:active {
+  transform: translateX(1px) scale(0.985);
 }
 
 .lists .playlist.is-active {
@@ -716,6 +737,11 @@ button:disabled {
   border-radius: 9px;
   object-fit: cover;
   flex-shrink: 0;
+  transition: transform var(--dur-ui) var(--ease-out);
+}
+
+.lists .playlist:hover .playlist-thumb {
+  transform: scale(1.07);
 }
 
 .nr-pl-name {
@@ -1062,20 +1088,27 @@ button:disabled {
   padding-right: 12px;
 }
 
-.nr-song-row-wrap:nth-child(-n + 9) {
-  animation: nr-row-in 220ms var(--ease-out) both;
+.nr-song-row-wrap:nth-child(-n + 15) {
+  animation: nr-row-in 240ms var(--ease-out) both;
 }
 .nr-song-row-wrap:nth-child(2) { animation-delay: 0ms; }
-.nr-song-row-wrap:nth-child(3) { animation-delay: 22ms; }
-.nr-song-row-wrap:nth-child(4) { animation-delay: 44ms; }
-.nr-song-row-wrap:nth-child(5) { animation-delay: 66ms; }
-.nr-song-row-wrap:nth-child(6) { animation-delay: 88ms; }
-.nr-song-row-wrap:nth-child(7) { animation-delay: 110ms; }
-.nr-song-row-wrap:nth-child(8) { animation-delay: 132ms; }
-.nr-song-row-wrap:nth-child(9) { animation-delay: 154ms; }
+.nr-song-row-wrap:nth-child(3) { animation-delay: 18ms; }
+.nr-song-row-wrap:nth-child(4) { animation-delay: 36ms; }
+.nr-song-row-wrap:nth-child(5) { animation-delay: 54ms; }
+.nr-song-row-wrap:nth-child(6) { animation-delay: 72ms; }
+.nr-song-row-wrap:nth-child(7) { animation-delay: 90ms; }
+.nr-song-row-wrap:nth-child(8) { animation-delay: 108ms; }
+.nr-song-row-wrap:nth-child(9) { animation-delay: 126ms; }
+.nr-song-row-wrap:nth-child(10) { animation-delay: 144ms; }
+.nr-song-row-wrap:nth-child(11) { animation-delay: 162ms; }
+.nr-song-row-wrap:nth-child(12) { animation-delay: 180ms; }
+.nr-song-row-wrap:nth-child(13) { animation-delay: 198ms; }
+.nr-song-row-wrap:nth-child(14) { animation-delay: 216ms; }
+.nr-song-row-wrap:nth-child(15) { animation-delay: 234ms; }
 
 .nr-song-row-wrap:hover {
   background: rgba(255, 255, 255, 0.09);
+  border-color: rgba(255, 255, 255, 0.08);
   transform: translateY(-1.5px);
 }
 
@@ -1200,12 +1233,17 @@ button:disabled {
   color: var(--nr-muted);
   font-size: 12px;
   font-weight: 500;
-  transition: background var(--dur-ui), color var(--dur-ui);
+  transition: background var(--dur-ui), color var(--dur-ui), transform var(--dur-press);
 }
 
 .nr-search-tab:hover:not(:disabled):not(.is-active) {
   color: var(--nr-ink);
   background: rgba(255, 255, 255, 0.06);
+  transform: translateY(-1px);
+}
+
+.nr-search-tab:active:not(:disabled) {
+  transform: scale(0.95);
 }
 
 .nr-search-tab.is-active {
@@ -1274,6 +1312,11 @@ button:disabled {
   border-radius: var(--r-thumb);
   object-fit: cover;
   flex-shrink: 0;
+  transition: transform 220ms var(--ease-out);
+}
+
+.nr-song-row-wrap:hover .song-placeholder {
+  transform: scale(1.06);
 }
 
 .lw-track-copy {
@@ -1458,12 +1501,18 @@ button:disabled {
   background: rgba(255, 255, 255, 0.05);
   color: var(--nr-muted);
   font-size: 12px;
-  transition: background var(--dur-ui), color var(--dur-ui);
+  transition: background var(--dur-ui), color var(--dur-ui), transform var(--dur-press), border-color var(--dur-ui);
 }
 
 .nr-history-chip:hover {
   background: var(--nr-surface-hover);
+  border-color: var(--nr-border-hi);
   color: var(--nr-ink);
+  transform: translateY(-1.5px);
+}
+
+.nr-history-chip:active {
+  transform: scale(0.95);
 }
 
 .nr-history-clear {
@@ -1522,14 +1571,29 @@ button:disabled {
   border-radius: 22px;
   background: rgba(255, 255, 255, 0.045);
   text-align: left;
-  transition: transform var(--dur-ui) var(--ease-out), background var(--dur-ui), border-color var(--dur-ui);
+  transition:
+    transform 240ms var(--ease-out),
+    background var(--dur-ui),
+    border-color var(--dur-ui),
+    box-shadow var(--dur-ui);
+}
+
+.lw-card:nth-child(-n + 12),
+.nr-rec-card:nth-child(-n + 12) {
+  animation: nr-row-in 260ms var(--ease-out) both;
 }
 
 .lw-card:hover,
 .nr-rec-card:hover {
-  transform: translateY(-3px);
-  background: rgba(255, 255, 255, 0.09);
-  border-color: var(--nr-border);
+  transform: translateY(-4px);
+  background: rgba(255, 255, 255, 0.095);
+  border-color: var(--nr-border-hi);
+  box-shadow: 0 14px 28px -12px rgba(4, 9, 18, 0.56);
+}
+
+.lw-card:active,
+.nr-rec-card:active {
+  transform: translateY(-1px) scale(0.985);
 }
 
 .lw-card-cover {
@@ -1549,6 +1613,12 @@ button:disabled {
   border-radius: 16px;
   object-fit: cover;
   display: block;
+  transition: transform 300ms var(--ease-out);
+}
+
+.lw-card:hover .lw-card-img,
+.nr-rec-card:hover .nr-rec-cover {
+  transform: scale(1.06);
 }
 
 .lw-card-play {
@@ -1564,14 +1634,14 @@ button:disabled {
   align-items: center;
   justify-content: center;
   opacity: 0;
-  transform: translateY(6px);
-  transition: opacity var(--dur-ui), transform var(--dur-ui) var(--ease-out);
+  transform: translateY(8px) scale(0.86);
+  transition: opacity var(--dur-ui), transform 260ms cubic-bezier(0.34, 1.3, 0.64, 1);
 }
 
 .lw-card:hover .lw-card-play,
 .lw-card:focus-visible .lw-card-play {
   opacity: 1;
-  transform: translateY(0);
+  transform: translateY(0) scale(1);
 }
 
 .lw-card-name,
@@ -1801,9 +1871,16 @@ button:disabled {
 .lw-stage-source {
   display: inline-flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 6px;
+  min-width: 0;
   font-size: 12px;
   color: var(--nr-muted);
+}
+
+.lw-stage-source > * {
+  white-space: nowrap;
+  flex-shrink: 0;
 }
 
 .nr-fm-chip {
@@ -1813,12 +1890,15 @@ button:disabled {
   color: var(--nr-ok);
   font-size: 12px;
   font-weight: 600;
+  white-space: nowrap;
 }
 
 .nr-wave-pos {
   font-family: var(--font-mono);
   font-size: 12px;
   color: var(--nr-faint);
+  white-space: nowrap;
+  flex-shrink: 0;
 }
 
 /* 右侧：曲目信息与实况大歌词 */
@@ -1875,17 +1955,36 @@ button:disabled {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  transition: background var(--dur-ui), color var(--dur-ui), border-color var(--dur-ui), transform var(--dur-press);
+  transition:
+    background var(--dur-ui),
+    color var(--dur-ui),
+    border-color var(--dur-ui),
+    transform var(--dur-press);
 }
 
 .nr-stage-act-btn:hover:not(:disabled) {
   background: var(--nr-surface-hover);
   color: var(--nr-ink);
   border-color: var(--nr-border-hi);
+  transform: scale(1.08);
 }
 
 .nr-stage-act-btn:active:not(:disabled) {
-  transform: scale(0.92);
+  transform: scale(0.9);
+}
+
+.nr-stage-fm-alert {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 14px;
+  border-radius: 16px;
+  background: var(--nr-danger-soft);
+  border: 1px solid rgba(242, 125, 131, 0.38);
+  color: #FFD2D5;
+  font-size: 13px;
+  animation: nr-fade-in 180ms var(--ease-out) both;
 }
 
 .nr-stage-act-btn.nr-heart-btn.is-liked {
@@ -1925,9 +2024,19 @@ button:disabled {
   display: flex;
   flex-direction: column;
   gap: 13px;
-  padding: 10px 0;
+  padding: 10px 12px;
+  margin: 0 -12px;
   cursor: pointer;
   border-radius: 18px;
+  transition: background var(--dur-ui), transform var(--dur-press);
+}
+
+.nr-stage-lyrics:hover {
+  background: rgba(255, 255, 255, 0.035);
+}
+
+.nr-stage-lyrics:active {
+  transform: scale(0.992);
 }
 
 .nr-stage-lyrics p {
@@ -1993,16 +2102,20 @@ button:disabled {
   background: rgba(255, 255, 255, 0.055);
   text-align: left;
   min-width: 0;
-  transition: background var(--dur-ui), border-color var(--dur-ui), transform var(--dur-press);
+  transition:
+    background var(--dur-ui),
+    border-color var(--dur-ui),
+    transform 220ms var(--ease-out);
 }
 
 .nr-next-pill:hover {
-  background: rgba(255, 255, 255, 0.1);
-  transform: translateY(-2px);
+  background: rgba(255, 255, 255, 0.11);
+  border-color: rgba(255, 255, 255, 0.08);
+  transform: translateY(-2.5px);
 }
 
 .nr-next-pill:active {
-  transform: scale(0.985);
+  transform: scale(0.975);
 }
 
 .nr-next-pill.is-active {
@@ -2016,6 +2129,11 @@ button:disabled {
   border-radius: 10px;
   object-fit: cover;
   flex-shrink: 0;
+  transition: transform 220ms var(--ease-out);
+}
+
+.nr-next-pill:hover .nr-next-thumb {
+  transform: scale(1.07);
 }
 
 .nr-next-txt {
@@ -2121,16 +2239,23 @@ button:disabled {
 .nr-dock-island {
   pointer-events: auto;
   width: min(1140px, 100%);
+  max-width: 100%;
+  box-sizing: border-box;
   height: 68px;
-  padding: 0 18px 0 14px;
+  padding: 0 16px 0 12px;
   border-radius: var(--r-pill);
   background: var(--nr-surface-hi);
   border: 1px solid var(--nr-border-hi);
   box-shadow: var(--shadow-island);
   display: grid;
-  grid-template-columns: minmax(190px, 250px) 1fr auto;
+  grid-template-columns: minmax(144px, 236px) minmax(168px, 1fr) minmax(0, auto);
   align-items: center;
-  gap: 18px;
+  gap: 14px;
+  transition: transform 240ms var(--ease-out), border-color var(--dur-ui);
+}
+
+.nr-dock-island > * {
+  min-width: 0;
 }
 
 .nr-dock-island.is-stage {
@@ -2141,17 +2266,80 @@ button:disabled {
 
 .lw-stage-tools {
   display: grid;
-  grid-template-columns: auto 1fr auto;
+  grid-template-columns: auto minmax(160px, 1fr) minmax(0, auto);
   align-items: center;
-  gap: 18px;
+  gap: 16px;
   width: 100%;
 }
 
 .current {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 8px;
   min-width: 0;
+}
+
+.nr-current-trigger {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  padding: 4px 8px 4px 4px;
+  margin: -4px 0 -4px -4px;
+  border: none;
+  border-radius: var(--r-pill);
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  transition: background var(--dur-ui), transform var(--dur-press);
+}
+
+.nr-current-trigger:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.07);
+}
+
+.nr-current-trigger:active:not(:disabled) {
+  transform: scale(0.975);
+}
+
+.nr-current-trigger:disabled {
+  cursor: default;
+}
+
+.nr-cover-wrap {
+  position: relative;
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  overflow: hidden;
+  transition: transform 220ms var(--ease-out), box-shadow 220ms var(--ease-out);
+}
+
+.nr-current-trigger:hover:not(:disabled) .nr-cover-wrap {
+  transform: scale(1.07);
+  box-shadow: 0 0 0 2px rgba(242, 166, 90, 0.52);
+}
+
+.nr-cover-hint {
+  position: absolute;
+  inset: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(14, 22, 36, 0.68);
+  color: var(--nr-accent);
+  opacity: 0;
+  transform: scale(0.84);
+  transition: opacity 180ms var(--ease-out), transform 200ms var(--ease-out);
+  pointer-events: none;
+}
+
+.nr-current-trigger:hover:not(:disabled) .nr-cover-hint,
+.nr-current-trigger:focus-visible:not(:disabled) .nr-cover-hint {
+  opacity: 1;
+  transform: scale(1);
 }
 
 .current .cover {
@@ -2159,6 +2347,7 @@ button:disabled {
   height: 44px;
   border-radius: 50%;
   object-fit: cover;
+  display: block;
   flex-shrink: 0;
   border: 1px solid rgba(255, 255, 255, 0.14);
   animation: nr-vinyl-spin 22s linear infinite;
@@ -2237,6 +2426,10 @@ button:disabled {
   transition: background var(--dur-ui), color var(--dur-ui), transform var(--dur-press);
 }
 
+.lw-icon-btn svg {
+  transition: transform 220ms var(--ease-out);
+}
+
 .lw-icon-btn.tool {
   background: transparent;
   color: var(--nr-muted);
@@ -2245,6 +2438,19 @@ button:disabled {
 .lw-icon-btn:hover:not(:disabled) {
   background: rgba(255, 255, 255, 0.13);
   color: var(--nr-ink);
+  transform: scale(1.06);
+}
+
+.lw-icon-btn.transport.is-prev:hover:not(:disabled) svg {
+  transform: translateX(-2px);
+}
+
+.lw-icon-btn.transport.is-next:hover:not(:disabled) svg {
+  transform: translateX(2px);
+}
+
+.lw-icon-btn.nr-settings-btn:hover:not(:disabled) svg {
+  transform: rotate(42deg);
 }
 
 .lw-icon-btn.is-active {
@@ -2258,7 +2464,7 @@ button:disabled {
 }
 
 .lw-icon-btn:active:not(:disabled) {
-  transform: scale(0.94);
+  transform: scale(0.9);
 }
 
 .lw-dot {
@@ -2269,6 +2475,7 @@ button:disabled {
   border-radius: 50%;
   background: var(--nr-accent);
   opacity: 0;
+  transition: opacity var(--dur-ui), transform var(--dur-ui) var(--ease-out);
 }
 
 .lw-dot[data-on='true'] {
@@ -2278,10 +2485,10 @@ button:disabled {
 /* 发光进度条与音量条 */
 .progress {
   flex: 1;
-  min-width: 120px;
+  min-width: 72px;
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 8px;
 }
 
 .progress-time {
@@ -2297,6 +2504,7 @@ button:disabled {
   -webkit-appearance: none;
   appearance: none;
   flex: 1;
+  min-width: 48px;
   height: 6px;
   border-radius: var(--r-pill);
   background: linear-gradient(
@@ -2319,11 +2527,13 @@ button:disabled {
   border-radius: 50%;
   background: #FFFFFF;
   box-shadow: 0 0 10px rgba(242, 166, 90, 0.72);
-  transition: transform var(--dur-press);
+  transition: transform var(--dur-press), box-shadow var(--dur-ui);
 }
 
-.progress input[type='range']:hover::-webkit-slider-thumb {
-  transform: scale(1.18);
+.progress input[type='range']:hover::-webkit-slider-thumb,
+.nr-volume-slider:hover::-webkit-slider-thumb {
+  transform: scale(1.22);
+  box-shadow: 0 0 14px rgba(242, 166, 90, 0.92);
 }
 
 .footer-right {
@@ -2427,6 +2637,20 @@ button:disabled {
   background: var(--nr-surface-pill);
   color: var(--nr-muted);
   font-size: 12px;
+  transition:
+    background var(--dur-ui),
+    color var(--dur-ui),
+    border-color var(--dur-ui),
+    transform var(--dur-press);
+}
+
+.nr-pill-toggle:hover {
+  background: var(--nr-surface-hover);
+  color: var(--nr-ink);
+}
+
+.nr-pill-toggle:active {
+  transform: scale(0.94);
 }
 
 .nr-pill-toggle.is-on {
@@ -2488,6 +2712,11 @@ button:disabled {
 .lyric-line:hover {
   background: rgba(255, 255, 255, 0.06);
   color: var(--nr-ink);
+  transform: translateX(4px);
+}
+
+.lyric-line:active {
+  transform: translateX(2px) scale(0.992);
 }
 
 .lyric-line[data-depth='1'] {
@@ -2604,6 +2833,21 @@ button:disabled {
   background: var(--nr-surface-pill);
   color: var(--nr-muted);
   font-size: 12px;
+  transition:
+    background var(--dur-ui),
+    color var(--dur-ui),
+    border-color var(--dur-ui),
+    transform var(--dur-press);
+}
+
+.nr-seg-btn:hover:not(:disabled):not(.is-on) {
+  background: var(--nr-surface-hover);
+  color: var(--nr-ink);
+  transform: translateY(-1px);
+}
+
+.nr-seg-btn:active:not(:disabled) {
+  transform: scale(0.94);
 }
 
 .nr-more-label-row {
@@ -2657,11 +2901,61 @@ button:disabled {
   color: var(--nr-ink);
   text-align: left;
   font-size: 13px;
-  transition: background var(--dur-ui);
+  transition: background var(--dur-ui), transform var(--dur-press);
 }
 
 .lw-more-item:hover {
   background: var(--nr-surface-hover);
+  transform: translateX(3px);
+}
+
+.lw-more-item:active {
+  transform: scale(0.985);
+}
+
+/* 私人 FM 沉浸电台卡（不再展示完整歌单） */
+.nr-fm-card {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 28px 30px;
+  border-radius: 26px;
+  background:
+    radial-gradient(420px 240px at 90% 16%, rgba(242, 166, 90, 0.16), transparent 72%),
+    var(--nr-surface);
+  border: 1px solid var(--nr-border-hi);
+  animation: nr-rise-in 240ms var(--ease-out) both;
+}
+
+.nr-fm-card-kicker {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  color: var(--nr-accent);
+}
+
+.nr-fm-card h2 {
+  margin: 0;
+  font-family: var(--font-serif);
+  font-size: 26px;
+  font-weight: 700;
+  color: var(--nr-ink);
+}
+
+.nr-fm-card p {
+  margin: 0;
+  font-size: 14px;
+  color: var(--nr-muted);
+  line-height: 1.6;
+}
+
+.nr-fm-card-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 4px;
 }
 
 .lw-more-item.is-close {
@@ -3335,6 +3629,31 @@ button:disabled {
 }
 
 /* ==================== 响应式：850×600 窄窗 & 宽屏适配 ==================== */
+@media (max-width: 1180px) {
+  .nr-dock-island {
+    gap: 10px;
+    padding: 0 12px 0 10px;
+    grid-template-columns: minmax(136px, 198px) minmax(132px, 1fr) minmax(0, auto);
+  }
+
+  .player {
+    gap: 10px;
+  }
+
+  .nr-volume-slider {
+    width: 52px;
+  }
+
+  .footer-right {
+    gap: 4px;
+  }
+
+  .nr-status-chip {
+    padding: 2px 7px;
+    font-size: 11px;
+  }
+}
+
 @media (max-width: 1040px) {
   .topbar {
     grid-template-columns: auto 1fr auto;
@@ -3508,7 +3827,16 @@ button:disabled {
   }
 
   .nr-wave-caption {
-    width: 236px;
+    width: 268px;
+    gap: 6px;
+  }
+
+  .nr-wave-caption .lw-source-tag,
+  .nr-wave-caption .nr-fm-chip,
+  .nr-wave-caption .nr-quality-chip,
+  .nr-wave-caption .nr-trial-chip {
+    padding: 2px 7px;
+    font-size: 11px;
   }
 
   .nr-wave-card.is-prev-2 {

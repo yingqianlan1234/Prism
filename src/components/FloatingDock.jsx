@@ -41,6 +41,7 @@ export function FloatingDock({
   onOpenQueue,
   showLyrics,
   onToggleLyrics,
+  onOpenLyrics,
   showMore,
   onToggleMore,
   playbackRate,
@@ -73,19 +74,33 @@ export function FloatingDock({
 
   const currentTrackBlock = (
     <div className="current">
-      <SongArtwork song={song} size={100} className="cover" />
-      <div className="nr-current-copy">
-        <b title={song?.name || ''}>{song?.name || '还没有播放歌曲'}</b>
-        <small>
-          {song ? (
-            <>
-              <SourceTag provider={song.provider} browsing={activeProvider} /> · {artist(song)}
-            </>
-          ) : (
-            '选一首歌，开始聆听'
-          )}
-        </small>
-      </div>
+      <button
+        type="button"
+        className="nr-current-trigger"
+        aria-label={song ? `打开 ${song.name} 的歌词` : '打开歌词'}
+        title={song ? '点击跳转到歌词' : undefined}
+        disabled={!song}
+        onClick={onOpenLyrics}
+      >
+        <span className="nr-cover-wrap">
+          <SongArtwork song={song} size={100} className="cover" />
+          <span className="nr-cover-hint" aria-hidden="true">
+            <Icon name="lyrics" className="nr-icon is-xs" />
+          </span>
+        </span>
+        <span className="nr-current-copy">
+          <b title={song?.name || ''}>{song?.name || '还没有播放歌曲'}</b>
+          <small>
+            {song ? (
+              <>
+                <SourceTag provider={song.provider} browsing={activeProvider} /> · {artist(song)}
+              </>
+            ) : (
+              '选一首歌，开始聆听'
+            )}
+          </small>
+        </span>
+      </button>
       {showNeteaseActions && canLike && (
         <div className="nr-dock-track-actions">
           <button
@@ -243,7 +258,7 @@ export function FloatingDock({
       )}
       <button
         type="button"
-        className={'lw-icon-btn tool' + (showMore ? ' is-active' : '')}
+        className={'lw-icon-btn tool nr-settings-btn' + (showMore ? ' is-active' : '')}
         aria-label="更多设置"
         title="更多设置"
         aria-expanded={showMore}
@@ -264,7 +279,7 @@ export function FloatingDock({
             <div className="nr-transport-keys">
               <button
                 type="button"
-                className="lw-icon-btn transport"
+                className="lw-icon-btn transport is-prev"
                 aria-label="上一首"
                 title="上一首"
                 onClick={() => skipTrack(-1)}
@@ -281,7 +296,7 @@ export function FloatingDock({
               />
               <button
                 type="button"
-                className="lw-icon-btn transport"
+                className="lw-icon-btn transport is-next"
                 aria-label="下一首"
                 title="下一首"
                 onClick={() => skipTrack(1)}
@@ -304,7 +319,7 @@ export function FloatingDock({
           <div className="nr-transport-keys">
             <button
               type="button"
-              className="lw-icon-btn transport"
+              className="lw-icon-btn transport is-prev"
               aria-label="上一首"
               title="上一首"
               onClick={() => skipTrack(-1)}
@@ -313,7 +328,7 @@ export function FloatingDock({
             </button>
             <button
               type="button"
-              className="lw-icon-btn transport"
+              className="lw-icon-btn transport is-next"
               aria-label="下一首"
               title="下一首"
               onClick={() => skipTrack(1)}
