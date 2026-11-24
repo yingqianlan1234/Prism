@@ -14,10 +14,10 @@ const fn colorref(hex: u32) -> u32 {
     ((hex & 0x0000_00FF) << 16) | (hex & 0x0000_FF00) | ((hex & 0x00FF_0000) >> 16)
 }
 
-/// 暖炭 #120D0B：标题栏背景与边框同色，让系统标题栏和 Lumen 页面连成一片。
-pub(crate) const CAPTION: u32 = colorref(0x120D0B);
-/// #F2E9E2：标题栏文字沿用 Lumen 的墨色。
-pub(crate) const TEXT: u32 = colorref(0xF2E9E2);
+/// 深靛夜色 #0E1624：标题栏背景与边框同色，让系统标题栏和深夜电台页面连成一片。
+pub(crate) const CAPTION: u32 = colorref(0x0E1624);
+/// #F0F4FA：标题栏文字沿用深夜电台主字色。
+pub(crate) const TEXT: u32 = colorref(0xF0F4FA);
 
 fn paint(hwnd: HWND) {
     for (attribute, value) in [
@@ -59,9 +59,9 @@ mod tests {
 
     #[test]
     fn colorref_matches_dwm_byte_order() {
-        // #120D0B 的 RGB 是 0x12/0x0D/0x0B，COLORREF 是 0x00BBGGRR。
-        assert_eq!(CAPTION, 0x000B_0D12);
-        assert_eq!(TEXT, 0x00E2_E9F2);
+        // #0E1624 的 RGB 是 0x0E/0x16/0x24，COLORREF 是 0x00BBGGRR。
+        assert_eq!(CAPTION, 0x0024_160E);
+        assert_eq!(TEXT, 0x00FA_F4F0);
         assert_eq!(colorref(0x000000), 0);
         assert_eq!(colorref(0xFF0000), 0x0000_00FF);
         assert_eq!(colorref(0x00FF00), 0x0000_FF00);

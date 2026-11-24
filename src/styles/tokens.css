@@ -1,0 +1,72 @@
+/* Prism · Night Radio（深夜电台波段）设计变量 */
+@property --nr-glow {
+  syntax: '<color>';
+  inherits: true;
+  initial-value: #F2A65A;
+}
+
+:root {
+  color-scheme: dark;
+
+  /* 夜空与表面层次 */
+  --nr-night-0: #0E1624;
+  --nr-night-1: #132033;
+  --nr-night-2: #18263C;
+  --nr-surface: rgba(22, 34, 54, 0.78);
+  --nr-surface-hi: rgba(30, 46, 72, 0.90);
+  --nr-surface-pill: rgba(255, 255, 255, 0.065);
+  --nr-surface-hover: rgba(255, 255, 255, 0.11);
+  --nr-border: rgba(255, 255, 255, 0.09);
+  --nr-border-hi: rgba(255, 255, 255, 0.16);
+
+  /* 文字层级（对比度全部实测 ≥ 4.5:1） */
+  --nr-ink: #F0F4FA;
+  --nr-muted: #A4B4C9;
+  --nr-faint: #8FA2BC;
+
+  /* 暖灯强调色 + 封面动态漫反射色 */
+  --nr-accent: #F2A65A;
+  --nr-accent-soft: rgba(242, 166, 90, 0.16);
+  --nr-accent-border: rgba(242, 166, 90, 0.42);
+  --nr-accent-ink: #161C26;
+  --nr-glow: #F2A65A;
+  --nr-danger: #F27D83;
+  --nr-danger-soft: rgba(242, 125, 131, 0.16);
+  --nr-ok: #7BD4AE;
+
+  /* 兼容旧变量引用 */
+  --lw-a: var(--nr-accent);
+  --lw-on: var(--nr-accent-ink);
+  --lw-ink: var(--nr-ink);
+
+  /* 字体体系（脱离个人网站霞鹜漫黑，利落现代 + 唱片衬线 + 等宽数字） */
+  --font-serif: 'Noto Serif SC', 'STZhongsong', 'Songti SC', serif;
+  --font-sans: 'MiSans', 'Noto Sans SC', 'Microsoft YaHei UI', system-ui, sans-serif;
+  --font-mono: 'Cascadia Mono', 'IBM Plex Mono', Consolas, monospace;
+
+  /* 圆润触感圆角 */
+  --r-pill: 999px;
+  --r-dialog: 26px;
+  --r-cover-lg: 32px;
+  --r-cover-md: 22px;
+  --r-row: 18px;
+  --r-thumb: 12px;
+  --r-sm: 10px;
+
+  /* 阴影层次 */
+  --shadow-island: 0 20px 44px -12px rgba(4, 9, 18, 0.72), inset 0 1px 0 rgba(255, 255, 255, 0.12);
+  --shadow-cover: 0 28px 56px -14px rgba(4, 9, 18, 0.78), 0 0 0 1px rgba(255, 255, 255, 0.12);
+  --shadow-card: 0 14px 32px -10px rgba(4, 9, 18, 0.52);
+
+  /* 动效节奏（事件驱动，无常驻重循环） */
+  --dur-press: 120ms;
+  --dur-ui: 220ms;
+  --dur-stage: 360ms;
+  --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+
+  /* 层级 */
+  --z-dock: 30;
+  --z-drawer: 40;
+  --z-more: 50;
+  --z-overlay: 70;
+}
