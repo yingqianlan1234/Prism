@@ -11,6 +11,13 @@ const MODE_LABELS = {
   shuffle: '随机播放',
 };
 
+const MODE_ICONS = {
+  sequential: 'modeSequential',
+  'list-loop': 'modeLoop',
+  'repeat-one': 'modeRepeatOne',
+  shuffle: 'modeShuffle',
+};
+
 export function FloatingDock({
   view,
   song,
@@ -48,6 +55,12 @@ export function FloatingDock({
   fmTrashBusy,
   onToggleLike,
   onTrashFm,
+  canDesktopLyric,
+  desktopLyricEnabled,
+  desktopLyricLocked,
+  desktopLyricBusy,
+  onToggleDesktopLyric,
+  onToggleDesktopLyricLock,
 }) {
   const modeText = MODE_LABELS[mode] || '顺序播放';
   const showNeteaseActions = neteaseSignedIn && song?.provider === 'netease';
@@ -142,12 +155,12 @@ export function FloatingDock({
       )}
       <button
         type="button"
-        className="lw-icon-btn tool"
+        className={'lw-icon-btn tool nr-mode-btn' + (mode !== 'sequential' ? ' is-nondefault' : '')}
         aria-label={'播放模式：' + modeText}
         title={'播放模式：' + modeText}
         onClick={onCycleMode}
       >
-        <Icon name="mode" />
+        <Icon name={MODE_ICONS[mode] || 'modeSequential'} />
         <span className="sr-only">{modeText}</span>
         <span className="lw-dot" data-on={mode === 'sequential' ? 'false' : 'true'} aria-hidden="true" />
       </button>
@@ -158,7 +171,7 @@ export function FloatingDock({
         title={muted ? '取消静音' : '静音'}
         onClick={onToggleMute}
       >
-        <Icon name={muted ? 'mute' : 'volume'} />
+        <Icon name={muted || volume <= 0 ? 'mute' : volume < 0.5 ? 'volumeLow' : 'volume'} />
         <span className="sr-only">{muted ? '已静音' : '音量'}</span>
       </button>
       <input
@@ -192,6 +205,42 @@ export function FloatingDock({
       >
         <Icon name="lyrics" />
       </button>
+      {canDesktopLyric && (
+        <button
+          type="button"
+          className={'lw-icon-btn tool nr-dlyric-btn' + (desktopLyricEnabled ? ' is-active' : '')}
+          aria-label={desktopLyricEnabled ? '关闭桌面歌词' : '开启桌面歌词'}
+          aria-pressed={desktopLyricEnabled}
+          title={
+            desktopLyricEnabled
+              ? desktopLyricLocked
+                ? '桌面歌词已开启（已锁定穿透）'
+                : '关闭桌面歌词'
+              : '开启桌面歌词'
+          }
+          disabled={desktopLyricBusy}
+          onClick={onToggleDesktopLyric}
+        >
+          <Icon name="desktopLyric" />
+          <span
+            className="lw-dot"
+            data-on={desktopLyricEnabled ? 'true' : 'false'}
+            aria-hidden="true"
+          />
+        </button>
+      )}
+      {canDesktopLyric && desktopLyricEnabled && desktopLyricLocked && (
+        <button
+          type="button"
+          className="lw-icon-btn tool nr-dlyric-unlock is-active"
+          aria-label="解除桌面歌词锁定"
+          title="桌面歌词已锁定穿透，点击解除锁定"
+          disabled={desktopLyricBusy}
+          onClick={onToggleDesktopLyricLock}
+        >
+          <Icon name="lock" className="nr-icon is-sm" />
+        </button>
+      )}
       <button
         type="button"
         className={'lw-icon-btn tool' + (showMore ? ' is-active' : '')}

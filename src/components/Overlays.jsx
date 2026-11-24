@@ -1,5 +1,18 @@
-import React from 'react';
-import { artist, NETEASE_QUALITIES, QUALITY_LABELS } from '../utils/format.js';
+import React, { useEffect, useState } from 'react';
+import {
+  artist,
+  providerLabel,
+  NETEASE_QUALITIES,
+  QUALITY_LABELS,
+  SHORTCUT_MODIFIERS,
+  SHORTCUT_KEY_GROUPS,
+  SHORTCUT_ACTIONS,
+  DEFAULT_SHORTCUT_BINDINGS,
+  parseShortcutBinding,
+  formatShortcutBinding,
+  findDuplicateShortcutActions,
+  hasTextSelectionShortcutWarning,
+} from '../utils/format.js';
 import { Icon } from './Icons.jsx';
 import { PlaylistCover } from './Artwork.jsx';
 
@@ -35,6 +48,15 @@ export function MoreSettingsPanel({
   setShowNowDetails,
   closeMode,
   onOpenCloseSettings,
+  canDesktopLyric,
+  desktopLyric,
+  desktopLyricBusy,
+  desktopLyricError,
+  onToggleDesktopLyric,
+  onToggleDesktopLyricLock,
+  canGlobalShortcuts,
+  globalShortcuts,
+  onOpenShortcuts,
 }) {
   const canReloadQuality =
     canSelectQuality &&
@@ -108,7 +130,50 @@ export function MoreSettingsPanel({
         </div>
       )}
 
+      {canDesktopLyric && (
+        <div className="nr-more-group">
+          <div className="nr-more-label-row">
+            <span className="nr-more-label">桌面歌词</span>
+            {desktopLyric?.enabled && (
+              <span className="nr-more-sub">{desktopLyric.locked ? '已锁定穿透' : '可拖拽位置'}</span>
+            )}
+          </div>
+          <div className="nr-more-desktop-row" role="group" aria-label="桌面歌词控制">
+            <button
+              type="button"
+              className={'nr-seg-btn' + (desktopLyric?.enabled ? ' is-on' : '')}
+              aria-pressed={Boolean(desktopLyric?.enabled)}
+              disabled={desktopLyricBusy}
+              onClick={onToggleDesktopLyric}
+            >
+              桌面歌词：{desktopLyric?.enabled ? '已开启' : '未开启'}
+            </button>
+            <button
+              type="button"
+              className={'nr-seg-btn' + (desktopLyric?.locked ? ' is-on' : '')}
+              aria-pressed={Boolean(desktopLyric?.locked)}
+              disabled={desktopLyricBusy}
+              onClick={onToggleDesktopLyricLock}
+            >
+              穿透锁定：{desktopLyric?.locked ? '已锁定' : '未锁定'}
+            </button>
+          </div>
+          {desktopLyricError && (
+            <p className="nr-dialog-error" role="alert">
+              {desktopLyricError}
+            </p>
+          )}
+        </div>
+      )}
+
       <div className="nr-more-divider" />
+
+      {canGlobalShortcuts && (
+        <button type="button" className="lw-more-item" onClick={onOpenShortcuts}>
+          全局快捷键：{globalShortcuts?.enabled ? '已开启' : '已关闭'}
+          {globalShortcuts?.error ? '（有冲突）' : ''}
+        </button>
+      )}
 
       <button
         type="button"
@@ -191,7 +256,7 @@ export function QueueDrawer({
       >
         <div className="queue-header">
           <h2 id="queue-heading">
-            {activeProvider === 'netease' ? '网易云' : 'QQ 音乐'}播放队列 · {tracks.length} 首
+            {providerLabel(activeProvider)}播放队列 · {tracks.length} 首
             {tracks.length ? ` · 接下来 ${Math.max(0, tracks.length - ws.queue.index - 1)} 首` : ''}
           </h2>
           <button
@@ -209,8 +274,8 @@ export function QueueDrawer({
 
         {song && song.provider !== activeProvider && (
           <p className="nr-queue-note">
-            正在播放的歌曲来自{song.provider === 'netease' ? '网易云' : 'QQ 音乐'}，这里显示的是
-            {activeProvider === 'netease' ? '网易云' : 'QQ 音乐'}的队列。
+            正在播放的歌曲来自{providerLabel(song.provider)}，这里显示的是
+            {providerLabel(activeProvider)}的队列。
           </p>
         )}
 
@@ -512,6 +577,176 @@ export function PlaylistPickerDialog({ track, playlists, busyId, error, onSelect
         ) : (
           <p className="nr-queue-empty">暂无可编辑的自建歌单。</p>
         )}
+      </div>
+    </div>
+  );
+}
+
+export function GlobalShortcutsDialog({
+  open,
+  status,
+  busy,
+  error,
+  onToggleEnabled,
+  onSaveBindings,
+  onClose,
+}) {
+  const activeBindings = { ...DEFAULT_SHORTCUT_BINDINGS, ...(status?.bindings || {}) };
+  const [draftBindings, setDraftBindings] = useState(activeBindings);
+
+  useEffect(() => {
+    if (!open) return;
+    setDraftBindings({ ...DEFAULT_SHORTCUT_BINDINGS, ...(status?.bindings || {}) });
+  }, [open, status?.bindings]);
+
+  if (!open) return null;
+
+  const duplicateActions = findDuplicateShortcutActions(draftBindings);
+  const textSelectionWarning = hasTextSelectionShortcutWarning(draftBindings);
+  const dirty = SHORTCUT_ACTIONS.some(a => draftBindings[a.id] !== activeBindings[a.id]);
+  const isDefault = SHORTCUT_ACTIONS.every(a => draftBindings[a.id] === a.defaultKey);
+
+  const updateKeyPart = (actionId, part, value) => {
+    setDraftBindings(prev => {
+      const parsed = parseShortcutBinding(prev[actionId]);
+      const nextModifier = part === 'modifier' ? value : parsed.modifier;
+      const nextKey = part === 'key' ? value : parsed.key;
+      return { ...prev, [actionId]: formatShortcutBinding(nextModifier, nextKey) };
+    });
+  };
+
+  return (
+    <div className="overlay" onClick={onClose}>
+      <div
+        className="dialog nr-shortcuts-dialog"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="shortcuts-heading"
+        onClick={e => e.stopPropagation()}
+      >
+        <div className="queue-header">
+          <h2 id="shortcuts-heading" className="nr-shortcuts-title">
+            <Icon name="keyboard" className="nr-icon" />
+            全局快捷键
+          </h2>
+          <button
+            type="button"
+            className="nr-close-btn"
+            aria-label="关闭全局快捷键设置"
+            onClick={onClose}
+          >
+            <Icon name="close" />
+          </button>
+        </div>
+
+        <div className="nr-shortcut-master">
+          <div className="nr-shortcut-master-copy">
+            <strong>系统级热键响应</strong>
+            <small>
+              开启后在后台或托盘也可使用；支持 Ctrl+Alt 或 Ctrl+Shift 加方向键、Space、A–Z 或 F1–F11。
+            </small>
+          </div>
+          <button
+            type="button"
+            className={'nr-shortcut-toggle' + (status?.enabled ? ' is-on' : '')}
+            aria-pressed={Boolean(status?.enabled)}
+            disabled={busy || duplicateActions.size > 0}
+            onClick={() => onToggleEnabled(!status?.enabled, draftBindings)}
+          >
+            {status?.enabled ? '已开启' : '已关闭'}
+          </button>
+        </div>
+
+        {(error || duplicateActions.size > 0) && (
+          <p className="nr-dialog-error" role="alert">
+            {duplicateActions.size > 0
+              ? '存在重复的快捷键组合，请调整后再保存或开启。'
+              : `${error} · 请更换被占用的按键后重试。`}
+          </p>
+        )}
+
+        {textSelectionWarning && (
+          <p className="nr-shortcut-hint" role="status">
+            提示：Ctrl+Shift+左右方向键在文本编辑软件中常用于选中文字，如影响日常打字建议改用 Ctrl+Alt。
+          </p>
+        )}
+
+        <div className="nr-shortcut-rows">
+          {SHORTCUT_ACTIONS.map(action => {
+            const { modifier, key } = parseShortcutBinding(draftBindings[action.id]);
+            const isDup = duplicateActions.has(action.id);
+            return (
+              <div
+                key={action.id}
+                className={'nr-shortcut-row' + (isDup ? ' is-conflict' : '')}
+              >
+                <span className="nr-shortcut-name">
+                  {action.label}
+                  {isDup && <em className="nr-shortcut-dup">重复</em>}
+                </span>
+                <div className="nr-shortcut-pickers">
+                  <select
+                    className="nr-shortcut-select"
+                    aria-label={`${action.label} 修饰键`}
+                    value={modifier}
+                    disabled={busy}
+                    onChange={e => updateKeyPart(action.id, 'modifier', e.target.value)}
+                  >
+                    {SHORTCUT_MODIFIERS.map(mod => (
+                      <option key={mod} value={mod}>
+                        {mod}
+                      </option>
+                    ))}
+                  </select>
+                  <span className="nr-shortcut-plus" aria-hidden="true">+</span>
+                  <select
+                    className="nr-shortcut-select is-key"
+                    aria-label={`${action.label} 主键`}
+                    value={key}
+                    disabled={busy}
+                    onChange={e => updateKeyPart(action.id, 'key', e.target.value)}
+                  >
+                    {SHORTCUT_KEY_GROUPS.map(group => (
+                      <optgroup key={group.label} label={group.label}>
+                        {group.items.map(item => (
+                          <option key={item.value} value={item.value}>
+                            {item.label}
+                          </option>
+                        ))}
+                      </optgroup>
+                    ))}
+                  </select>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+
+        <div className="nr-shortcuts-foot">
+          <div className="nr-shortcuts-foot-left">
+            <button
+              type="button"
+              className="nr-ghost-btn"
+              disabled={busy || isDefault}
+              onClick={() => setDraftBindings({ ...DEFAULT_SHORTCUT_BINDINGS })}
+            >
+              恢复默认
+            </button>
+          </div>
+          <div className="nr-dialog-actions">
+            <button type="button" className="nr-soft-btn" onClick={onClose}>
+              取消
+            </button>
+            <button
+              type="button"
+              className="nr-primary-btn"
+              disabled={busy || duplicateActions.size > 0 || !dirty}
+              onClick={() => onSaveBindings(draftBindings)}
+            >
+              {busy ? '保存中…' : '保存快捷键'}
+            </button>
+          </div>
+        </div>
       </div>
     </div>
   );

@@ -6,8 +6,31 @@ const neteaseLibraryCapabilities = enabled => ({
  likeTrack:enabled,getLikedSongIds:enabled,trashFmTrack:enabled,editPlaylistTracks:enabled
 });
 export const capabilities = Object.freeze({
+ desktop:Object.freeze({globalShortcuts:true,desktopLyric:true}),
+ local:Object.freeze({manageFolders:true,scanLibrary:true,getTracks:true,resolvePlayback:true,getLyrics:true,persistQueue:true}),
  netease:Object.freeze({login:true,logout:true,restoreSession:true,getUserProfile:true,search:true,getPlaylists:true,getPlaylistTracks:true,getLyrics:true,resolvePlayback:true,getRecommendations:true,reportListening:false,...neteaseLibraryCapabilities(true)}),
  qqmusic:Object.freeze({login:true,logout:true,restoreSession:true,getUserProfile:true,search:true,getPlaylists:true,getPlaylistTracks:true,getLyrics:true,resolvePlayback:true,getRecommendations:false,reportListening:false,...neteaseLibraryCapabilities(false)})
+});
+export const local = Object.freeze({
+ capabilities:capabilities.local,
+ getFolders:()=>invoke('local_library_folders_get'),
+ pickFolder:()=>invoke('local_library_folder_pick'),
+ removeFolder:id=>invoke('local_library_folder_remove',{id}),
+ scan:()=>invoke('local_library_scan'),
+ getTracks:({offset=0,limit=100}={})=>invoke('local_library_tracks_get',{offset,limit}),
+ resolvePlayback:id=>invoke('local_track_resolve',{id}),
+ getLyrics:id=>invoke('local_track_lyric',{id}),
+ getQueue:()=>invoke('local_queue_get'),
+ setQueue:queue=>invoke('local_queue_set',{queue})
+});
+export const desktop = Object.freeze({
+ capabilities:capabilities.desktop,
+ globalShortcutsGet:()=>invoke('global_shortcuts_get'),
+ globalShortcutsSet:({enabled,bindings})=>invoke('global_shortcuts_set',{enabled,bindings}),
+ desktopLyricGet:()=>invoke('desktop_lyric_get'),
+ desktopLyricSet:({enabled,locked})=>invoke('desktop_lyric_set',locked===undefined?{enabled}:{enabled,locked}),
+ desktopLyricUpdate:({text,translation,romaji,title,playing})=>invoke('desktop_lyric_update',{text,translation,romaji,title,playing}),
+ events:Object.freeze({globalShortcut:'prism:global-shortcut',desktopLyricState:'prism:desktop-lyric-state'})
 });
 export const platformFlavor=Object.freeze({netease:'netease',qqmusic:'community'});
 export const recommendationCapabilities=Object.freeze({
@@ -32,5 +55,5 @@ export const netease = Object.freeze({
  getPrivateFm:()=>invoke('netease_private_fm'),
  qrStart:()=>invoke('netease_qr_start'),qrCheck:()=>invoke('netease_qr_check'),qrCancel:()=>invoke('netease_qr_cancel')
 });
-export const getProvider = async id => id==='netease'?netease:id==='qqmusic'?(await import('./qq-community.js')).qq:Promise.reject(unsupported('该平台'));
+export const getProvider = async id => id==='netease'?netease:id==='local'?local:id==='qqmusic'?(await import('./qq-community.js')).qq:Promise.reject(unsupported('该平台'));
 export function latestRequest(){let generation=0;return {next:()=>++generation,current:()=>generation,isCurrent:value=>value===generation};}

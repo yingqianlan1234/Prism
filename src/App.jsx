@@ -29,13 +29,18 @@ import {
   loadNeteaseQuality,
   saveNeteaseQuality,
   isOwnedPlaylist,
+  DEFAULT_SHORTCUT_BINDINGS,
+  clipLyricField,
+  normalizeLocalTrack,
 } from './utils/format.js';
 import { PlaylistCover, InlineNotice } from './components/Artwork.jsx';
 import { AppHeader } from './components/AppHeader.jsx';
 import { LibraryBar } from './components/LibraryBar.jsx';
 import {
   SongList,
+  TrackListSkeleton,
   EmptyState,
+  LocalEmptyState,
   NowPanel,
   SearchCategoryBar,
   SearchCategoryResults,
@@ -50,6 +55,7 @@ import {
   CloseBehaviorDialog,
   QrDialog,
   PlaylistPickerDialog,
+  GlobalShortcutsDialog,
 } from './components/Overlays.jsx';
 
 if (typeof window !== 'undefined') window.__extractAccent = extractAccent;
@@ -86,7 +92,10 @@ export function App({
   providers = defaultProviders,
   ListeningTracker = DefaultListeningTracker,
 } = {}) {
-  const { netease, getProvider, capabilities, platformFlavor, latestRequest } = providers;
+  const { netease, getProvider, capabilities, platformFlavor, latestRequest, desktop, local } = providers;
+  const canGlobalShortcuts = Boolean(capabilities?.desktop?.globalShortcuts && desktop?.globalShortcutsGet);
+  const canDesktopLyric = Boolean(capabilities?.desktop?.desktopLyric && desktop?.desktopLyricGet);
+  const canLocalLibrary = Boolean(capabilities?.local?.getTracks && local?.getFolders);
   const [closeMode, setCloseMode] = useState('ask');
   const [trayAvailable, setTrayAvailable] = useState(false);
   const [closeDialog, setCloseDialog] = useState(null);
@@ -99,11 +108,21 @@ export function App({
   const [sideExpanded, setSideExpanded] = useState(false);
   const [selectedTrack, setSelectedTrack] = useState(null);
 
+  const makeLocalWorkspace = () => ({
+    ...makeWorkspace(),
+    title: '全部本地歌曲',
+    profile: { userId: 'local', nickname: '本地曲库' },
+    identityUnknown: false,
+    message: '',
+    trackOrigin: 'local',
+  });
+
   const [activeProvider, setActiveProvider] = useState('netease');
   const activeRef = useRef('netease');
   const [workspaces, setWorkspaces] = useState(() => ({
     netease: makeWorkspace(),
     qqmusic: makeWorkspace(),
+    local: makeLocalWorkspace(),
   }));
   const workRef = useRef(workspaces);
 
@@ -126,12 +145,19 @@ export function App({
     accountBusy,
     identityUnknown,
   } = ws;
-  const setQuery = value => update(activeRef.current, { query: value });
+  const setQuery = value => {
+    if (activeRef.current === 'local') {
+      applyLocalView(localTracksRef.current, localActiveFolderRef.current, value);
+    } else {
+      update(activeRef.current, { query: value });
+    }
+  };
 
   // 本地搜索历史（按平台隔离）
   const [searchHistory, setSearchHistory] = useState(() => ({
     netease: loadSearchHistory('netease'),
     qqmusic: loadSearchHistory('qqmusic'),
+    local: [],
   }));
 
   // 播放倍速与睡眠定时（纯前端实用辅助，事件/单次定时器驱动）
@@ -172,8 +198,22 @@ export function App({
     resume: null,
   });
   const qqSaved = useRef({ queue: null, position: 0, resume: null, cleared: false });
-  const providerSettings = useRef({ netease: null, qqmusic: null });
+  const localSaved = useRef({ resume: null, position: 0, cleared: false, lastKey: '' });
+  const providerSettings = useRef({ netease: null, qqmusic: null, local: null });
   const bootProvider = useRef('netease');
+
+  // P2-B 本地音乐曲库状态
+  const [localFolders, setLocalFolders] = useState([]);
+  const localFoldersRef = useRef([]);
+  const [localActiveFolderId, setLocalActiveFolderId] = useState(null);
+  const localActiveFolderRef = useRef(null);
+  const [localTotal, setLocalTotal] = useState(0);
+  const [localHasMore, setLocalHasMore] = useState(false);
+  const [localTruncated, setLocalTruncated] = useState(false);
+  const [localUnavailableIds, setLocalUnavailableIds] = useState([]);
+  const [localBusy, setLocalBusy] = useState(false);
+  const localTracksRef = useRef([]);
+  const localInitRef = useRef({ started: false, ready: false });
 
   const [qqWebOpen, setQqWebOpen] = useState(false);
   const [qr, setQr] = useState(null);
@@ -189,6 +229,22 @@ export function App({
   const [lyricStatus, setLyricStatus] = useState('idle');
   const [showQueue, setShowQueue] = useState(false);
   const [confirmClear, setConfirmClear] = useState(false);
+
+  // P2-A 全局系统快捷键与桌面悬浮歌词状态
+  const [globalShortcuts, setGlobalShortcuts] = useState(() => ({
+    enabled: false,
+    bindings: { ...DEFAULT_SHORTCUT_BINDINGS },
+    error: null,
+  }));
+  const [showShortcuts, setShowShortcuts] = useState(false);
+  const [shortcutsBusy, setShortcutsBusy] = useState(false);
+  const [shortcutsError, setShortcutsError] = useState('');
+  const [desktopLyric, setDesktopLyric] = useState({ enabled: false, locked: false, position: null });
+  const desktopLyricRef = useRef({ enabled: false, locked: false, position: null });
+  const [desktopLyricBusy, setDesktopLyricBusy] = useState(false);
+  const [desktopLyricError, setDesktopLyricError] = useState('');
+  const lastDesktopLyricKeyRef = useRef(null);
+  const desktopHandlersRef = useRef({});
 
   // 睡眠定时控制：仅使用单次 setTimeout 或 onEnded 触发，无高频轮询
   const selectSleepMode = nextMode => {
@@ -227,13 +283,15 @@ export function App({
   useEffect(() => {
     const selector = showQueue
       ? '.queue-dialog'
-      : pickerTrack
-        ? '.nr-picker-dialog'
-        : qr
-          ? '.qr-dialog'
-          : qqWebOpen
-            ? '.qq-auth-dialog'
-            : null;
+      : showShortcuts
+        ? '.nr-shortcuts-dialog'
+        : pickerTrack
+          ? '.nr-picker-dialog'
+          : qr
+            ? '.qr-dialog'
+            : qqWebOpen
+              ? '.qq-auth-dialog'
+              : null;
     if (!selector) return;
     const previous = document.activeElement;
     const box = document.querySelector(selector);
@@ -266,7 +324,7 @@ export function App({
       box?.removeEventListener('keydown', trap);
       if (previous?.isConnected) previous.focus();
     };
-  }, [showQueue, !!pickerTrack, !!qr, qqWebOpen]);
+  }, [showQueue, showShortcuts, !!pickerTrack, !!qr, qqWebOpen]);
 
   const clearFocus = useRef(false);
   useEffect(() => {
@@ -353,10 +411,22 @@ export function App({
 
   const recommendation = useRef(latestRequest());
   const recommendationPending = useRef(false);
-  const browse = useRef({ netease: latestRequest(), qqmusic: latestRequest() });
+  const browse = useRef({
+    netease: latestRequest(),
+    qqmusic: latestRequest(),
+    local: latestRequest(),
+  });
   const playback = useRef(latestRequest());
-  const account = useRef({ netease: latestRequest(), qqmusic: latestRequest() });
-  const identity = useRef({ netease: latestRequest(), qqmusic: latestRequest() });
+  const account = useRef({
+    netease: latestRequest(),
+    qqmusic: latestRequest(),
+    local: latestRequest(),
+  });
+  const identity = useRef({
+    netease: latestRequest(),
+    qqmusic: latestRequest(),
+    local: latestRequest(),
+  });
   const qrRequest = useRef(latestRequest());
 
   const errorText = e => e?.message || '操作失败，请稍后重试';
@@ -366,8 +436,9 @@ export function App({
 
   const syncLyric = position => {
     let index = -1;
-    for (let i = 0; i < lyricsRef.current.length; i++) {
-      if (lyricsRef.current[i].at <= position) index = i;
+    const list = lyricsRef.current;
+    for (let i = 0; i < list.length; i++) {
+      if (list[i].at <= position + 0.02) index = i;
     }
     if (index !== lyricIndexRef.current) {
       lyricIndexRef.current = index;
@@ -375,10 +446,21 @@ export function App({
     }
   };
 
-  const replaceLyrics = items => {
+  const replaceLyrics = (items, explicitPosition = null) => {
     lyricsRef.current = items;
     setLyrics(items);
-    syncLyric(audio.current?.currentTime || 0);
+    if (!items.length) {
+      lyricIndexRef.current = -1;
+      setLyricIndex(-1);
+      return;
+    }
+    const targetPos =
+      explicitPosition != null
+        ? explicitPosition
+        : audio.current && audio.current.readyState >= 1
+          ? audio.current.currentTime || 0
+          : 0;
+    syncLyric(targetPos);
   };
 
   const diagnosticTick = useRef(null);
@@ -457,8 +539,37 @@ export function App({
       });
   };
 
+  const saveLocalQueue = () => {
+    if (!canLocalLibrary || !capabilities?.local?.persistQueue || !localInitRef.current.ready) return;
+    const q = workRef.current.local.queue;
+    let payload = null;
+    if (q && Array.isArray(q.tracks) && q.tracks.length > 0) {
+      const ids = q.tracks.slice(0, 1000).map(t => String(t.id));
+      const index = Math.max(0, Math.min(q.index ?? 0, ids.length - 1));
+      const a = audio.current;
+      const rawPos =
+        songRef.current?.provider === 'local'
+          ? (localSaved.current.resume?.position ?? a?.currentTime ?? 0)
+          : localSaved.current.position;
+      const position = Number.isFinite(rawPos)
+        ? Math.min(86400, Math.max(0, Math.round(rawPos * 100) / 100))
+        : 0;
+      localSaved.current.position = position;
+      localSaved.current.cleared = false;
+      payload = { ids, index, position };
+    } else if (localSaved.current.cleared) {
+      payload = { ids: [], index: null, position: 0 };
+    }
+    if (!payload) return;
+    const key = JSON.stringify(payload);
+    if (localSaved.current.lastKey === key) return;
+    localSaved.current.lastKey = key;
+    local.setQueue(payload).catch(() => {});
+  };
+
   const saveNow = () => {
     saveQq();
+    saveLocalQueue();
     const user = workRef.current.netease.profile?.userId;
     if (!user || workRef.current.netease.identityUnknown) return;
     const a = audio.current;
@@ -554,12 +665,18 @@ export function App({
           return;
         }
         const data = result.data;
-        const base = parseLrc(data?.lrc?.lyric || '');
-        const withTrans = mergeTranslation(base, parseLrc(data?.tlyric?.lyric || ''));
-        const parsed = mergeRomaji(withTrans, parseLrc(data?.romalrc?.lyric || ''));
-        replaceLyrics(parsed);
+        const rawLrc = typeof data === 'string' ? data : data?.lrc?.lyric || '';
+        const base = parseLrc(rawLrc);
+        const withTrans = mergeTranslation(
+          base,
+          parseLrc(typeof data === 'string' ? '' : data?.tlyric?.lyric || '')
+        );
+        const parsed = mergeRomaji(
+          withTrans,
+          parseLrc(typeof data === 'string' ? '' : data?.romalrc?.lyric || '')
+        );
+        replaceLyrics(parsed, position);
         setLyricStatus(parsed.length ? 'ready' : data?.nolyric ? 'instrumental' : 'empty');
-        if (position != null) syncLyric(position);
       })
     );
   };
@@ -970,6 +1087,225 @@ export function App({
     };
   }, []);
 
+  const applyLocalView = (allTracks, folderId = localActiveFolderRef.current, term = workRef.current.local.query, extraPatch = {}) => {
+    const clean = String(term || '').trim().toLowerCase();
+    const visible = allTracks.filter(t => {
+      if (folderId && t.folderId !== folderId) return false;
+      if (!clean) return true;
+      const hay = [t.name, artist(t), t.album?.name].filter(Boolean).join(' ').toLowerCase();
+      return hay.includes(clean);
+    });
+    const folderObj = folderId ? localFoldersRef.current.find(f => f.id === folderId) : null;
+    update('local', {
+      songs: visible,
+      query: term ?? '',
+      searchQuery: String(term || '').trim(),
+      title: folderObj ? folderObj.name : '全部本地歌曲',
+      ...extraPatch,
+    });
+  };
+
+  const loadLocalTracksPage = async ({ offset = 0, limit = 100, append = false } = {}) => {
+    const page = await local.getTracks({ offset, limit });
+    const items = Array.isArray(page?.tracks) ? page.tracks.map(normalizeLocalTrack).filter(Boolean) : [];
+    let merged;
+    if (append) {
+      const seen = new Set(localTracksRef.current.map(t => t.id));
+      merged = [...localTracksRef.current, ...items.filter(t => !seen.has(t.id))];
+    } else {
+      merged = items;
+    }
+    localTracksRef.current = merged;
+    setLocalTotal(Number(page?.total) || merged.length);
+    setLocalHasMore(Boolean(page?.hasMore));
+    applyLocalView(merged, localActiveFolderRef.current, workRef.current.local.query);
+    return { page, merged };
+  };
+
+  const restoreLocalQueue = async () => {
+    if (!capabilities?.local?.persistQueue || !local?.getQueue) return;
+    try {
+      const savedQueue = await local.getQueue();
+      const ids = Array.isArray(savedQueue?.ids) ? savedQueue.ids.map(String) : [];
+      if (!ids.length) return;
+      const missing = () => ids.some(id => !localTracksRef.current.some(t => t.id === id));
+      let hasMore = true;
+      while (missing() && hasMore) {
+        const res = await loadLocalTracksPage({
+          offset: localTracksRef.current.length,
+          limit: 200,
+          append: true,
+        });
+        hasMore = Boolean(res.page?.hasMore);
+        if (!res.page?.tracks?.length) break;
+      }
+      const byId = new Map(localTracksRef.current.map(t => [t.id, t]));
+      const tracks = ids.map(id => byId.get(id)).filter(Boolean);
+      if (!tracks.length) return;
+      const savedIdx = Number.isInteger(savedQueue?.index) ? savedQueue.index : 0;
+      const index = Math.max(0, Math.min(savedIdx, tracks.length - 1));
+      const restoredQueue = {
+        source: 'local',
+        tracks,
+        index,
+        provider: 'local',
+        accountId: 'local',
+      };
+      update('local', { queue: restoredQueue });
+      if (!songRef.current && !pendingPlay.current) {
+        const track = tracks[index];
+        const position = Number.isFinite(Number(savedQueue?.position))
+          ? Math.max(0, Number(savedQueue.position))
+          : 0;
+        const duration = (track.duration || 0) / 1000;
+        localSaved.current.resume = { id: track.id, position };
+        localSaved.current.position = position;
+        songRef.current = track;
+        setSong(track);
+        setRestoredProgress({ position, duration });
+        if (capabilities.local?.getLyrics) {
+          setLyricStatus('loading');
+          loadLyricsFor(
+            track,
+            () => true,
+            () => setLyricStatus('error'),
+            local,
+            position
+          );
+        }
+        update('local', { message: '已恢复本地播放进度，点击播放继续' });
+      }
+    } catch {}
+  };
+
+  const scanAndReloadLocal = async ({ messageOverride = '' } = {}) => {
+    const scanRes = await local.scan();
+    setLocalTruncated(Boolean(scanRes?.truncated));
+    const unavailable = Array.isArray(scanRes?.unavailableFolderIds) ? scanRes.unavailableFolderIds : [];
+    setLocalUnavailableIds(unavailable);
+    await loadLocalTracksPage({ offset: 0, limit: 100, append: false });
+    let statusMsg = messageOverride;
+    if (!statusMsg) {
+      if (unavailable.length && scanRes?.truncated) {
+        statusMsg = '部分文件夹暂不可用，且本地曲库已达到 5,000 首上限';
+      } else if (unavailable.length) {
+        statusMsg = `有 ${unavailable.length} 个本地文件夹暂不可用，请检查磁盘或路径`;
+      } else if (scanRes?.truncated) {
+        statusMsg = '本地曲库已达到 5,000 首扫描上限，其余文件未计入';
+      }
+    }
+    update('local', { message: statusMsg });
+    return scanRes;
+  };
+
+  const initLocalLibrary = async () => {
+    if (!canLocalLibrary || localInitRef.current.started) return;
+    localInitRef.current.started = true;
+    setLocalBusy(true);
+    try {
+      const folders = (await local.getFolders()) || [];
+      localFoldersRef.current = folders;
+      setLocalFolders(folders);
+      if (folders.length > 0) {
+        await scanAndReloadLocal();
+        await restoreLocalQueue();
+      } else {
+        localTracksRef.current = [];
+        setLocalTotal(0);
+        setLocalHasMore(false);
+        applyLocalView([], null, '');
+      }
+      localInitRef.current.ready = true;
+    } catch (e) {
+      localInitRef.current.ready = true;
+      update('local', { message: errorText(e) });
+    } finally {
+      setLocalBusy(false);
+    }
+  };
+
+  const pickLocalFolder = async () => {
+    if (!canLocalLibrary || localBusy) return;
+    setLocalBusy(true);
+    update('local', { message: '' });
+    try {
+      const picked = await local.pickFolder();
+      if (!picked) return;
+      const folders = (await local.getFolders()) || [];
+      localFoldersRef.current = folders;
+      setLocalFolders(folders);
+      await scanAndReloadLocal();
+      localInitRef.current.ready = true;
+    } catch (e) {
+      update('local', { message: errorText(e) });
+    } finally {
+      setLocalBusy(false);
+    }
+  };
+
+  const removeLocalFolder = async folderId => {
+    if (!canLocalLibrary || localBusy) return;
+    setLocalBusy(true);
+    try {
+      await local.removeFolder(folderId);
+      const folders = (await local.getFolders()) || [];
+      localFoldersRef.current = folders;
+      setLocalFolders(folders);
+      if (localActiveFolderRef.current === folderId) {
+        localActiveFolderRef.current = null;
+        setLocalActiveFolderId(null);
+      }
+      if (folders.length > 0) {
+        await scanAndReloadLocal();
+      } else {
+        localTracksRef.current = [];
+        setLocalTotal(0);
+        setLocalHasMore(false);
+        setLocalTruncated(false);
+        setLocalUnavailableIds([]);
+        applyLocalView([], null, workRef.current.local.query, { message: '' });
+      }
+    } catch (e) {
+      update('local', { message: errorText(e) });
+    } finally {
+      setLocalBusy(false);
+    }
+  };
+
+  const scanLocalLibrary = async () => {
+    if (!canLocalLibrary || localBusy) return;
+    setLocalBusy(true);
+    try {
+      await scanAndReloadLocal();
+    } catch (e) {
+      update('local', { message: errorText(e) });
+    } finally {
+      setLocalBusy(false);
+    }
+  };
+
+  const selectLocalFolder = folderId => {
+    localActiveFolderRef.current = folderId;
+    setLocalActiveFolderId(folderId);
+    applyLocalView(localTracksRef.current, folderId, workRef.current.local.query);
+  };
+
+  const loadMoreLocalTracks = async () => {
+    if (!canLocalLibrary || localBusy || !localHasMore) return;
+    setLocalBusy(true);
+    try {
+      await loadLocalTracksPage({
+        offset: localTracksRef.current.length,
+        limit: 100,
+        append: true,
+      });
+    } catch (e) {
+      update('local', { message: errorText(e) });
+    } finally {
+      setLocalBusy(false);
+    }
+  };
+
   const switchProvider = id => {
     if (activeRef.current !== id) {
       recommendation.current.next();
@@ -980,12 +1316,21 @@ export function App({
     }
     activeRef.current = id;
     setActiveProvider(id);
+    if (id === 'local') {
+      void initLocalLibrary();
+      return;
+    }
     if (workRef.current[id].identityUnknown && !workRef.current[id].accountBusy) restore(id);
   };
 
   const search = async (e, page = 1, explicitTerm = null, explicitType = null) => {
     e?.preventDefault();
     const id = activeRef.current;
+    if (id === 'local') {
+      const term = explicitTerm != null ? explicitTerm : workRef.current.local.query;
+      applyLocalView(localTracksRef.current, localActiveFolderRef.current, term);
+      return;
+    }
     const w = workRef.current[id];
     if (w.identityUnknown) {
       update(id, { message: '请先刷新账号，确认当前身份' });
@@ -1709,16 +2054,26 @@ export function App({
                 ? { level: qualityRef.current }
                 : undefined
             )
-          : await p.resolvePlayback(s.id, s.mediaMid);
+          : id === 'local'
+            ? await p.resolvePlayback(s.id)
+            : await p.resolvePlayback(s.id, s.mediaMid);
       if (!valid()) return;
-      const info = url.data?.[0];
-      if (!info?.url || (info.code != null && info.code !== 200))
-        throw Error('未获取到播放资源，请稍后重试');
-      trialBanner = info.freeTrialInfo ? '当前为试听片段' : '';
-      const trial = info.freeTrialInfo;
+      let streamUrl = '';
+      let info = null;
+      if (id === 'local') {
+        streamUrl = url?.url || '';
+        if (!streamUrl) throw Error('未获取到本地音频地址');
+      } else {
+        info = url.data?.[0];
+        if (!info?.url || (info.code != null && info.code !== 200))
+          throw Error('未获取到播放资源，请稍后重试');
+        streamUrl = info.url;
+      }
+      trialBanner = info?.freeTrialInfo ? '当前为试听片段' : '';
+      const trial = info?.freeTrialInfo;
       const isTrial = !!(trial && Number(trial.end) > Number(trial.start));
       const nextTrackQuality =
-        id === 'netease' && (info.level || info.br || isTrial)
+        id === 'netease' && (info?.level || info?.br || isTrial)
           ? {
               level: typeof info.level === 'string' ? info.level : null,
               br: Number.isFinite(Number(info.br)) && Number(info.br) > 0 ? Number(info.br) : null,
@@ -1739,6 +2094,7 @@ export function App({
           queuesBefore: {
             netease: workRef.current.netease.queue,
             qqmusic: workRef.current.qqmusic.queue,
+            local: workRef.current.local.queue,
           },
           stagedQueues: {},
           settings: { ...settings.current },
@@ -1750,6 +2106,9 @@ export function App({
           qqPosition: qqSaved.current.position,
           qqResume: qqSaved.current.resume,
           qqCleared: qqSaved.current.cleared,
+          localResume: localSaved.current.resume,
+          localPosition: localSaved.current.position,
+          localCleared: localSaved.current.cleared,
           lyrics: [...lyricsRef.current],
           lyricStatus,
           restoredProgress,
@@ -1772,11 +2131,14 @@ export function App({
       const resume =
         id === 'qqmusic' && qqSaved.current.resume?.id === s.id
           ? qqSaved.current.resume.position
-          : saved.current.resume?.provider === id && saved.current.resume?.id === s.id
-            ? saved.current.resume.position
-            : 0;
+          : id === 'local' && localSaved.current.resume?.id === s.id
+            ? localSaved.current.resume.position
+            : saved.current.resume?.provider === id && saved.current.resume?.id === s.id
+              ? saved.current.resume.position
+              : 0;
       saved.current.resume = null;
       qqSaved.current.resume = null;
+      localSaved.current.resume = null;
       const changeSource = songRef.current?.provider !== id;
       songRef.current = s;
       if (changeSource) {
@@ -1812,11 +2174,15 @@ export function App({
           index: snapshot.index,
           position: resume,
         };
+      } else if (id === 'local') {
+        localSaved.current.position = resume;
+        localSaved.current.cleared = false;
       }
       if (snapshot.type === 'fm' && snapshot.tracks.length - snapshot.index <= 2 && !fm.current.error) {
         loadFm();
       }
-      audio.current.src = info.url;
+      audio.current.src = streamUrl;
+      syncLyric(resume);
       if (playbackRate !== 1) audio.current.playbackRate = playbackRate;
       if (resume > 0) {
         const target = audio.current;
@@ -1905,7 +2271,10 @@ export function App({
           qqSaved.current.position = prior.qqPosition;
           qqSaved.current.resume = prior.qqResume;
           qqSaved.current.cleared = prior.qqCleared;
-          for (const provider of ['netease', 'qqmusic']) {
+          localSaved.current.resume = prior.localResume ?? null;
+          localSaved.current.position = prior.localPosition ?? 0;
+          localSaved.current.cleared = prior.localCleared ?? false;
+          for (const provider of ['netease', 'qqmusic', 'local']) {
             if (
               prior.stagedQueues[provider] &&
               workRef.current[provider].queue === prior.stagedQueues[provider]
@@ -1992,6 +2361,7 @@ export function App({
     if (
       (saved.current.resume && current.provider === 'netease') ||
       (qqSaved.current.resume && current.provider === 'qqmusic') ||
+      (localSaved.current.resume && current.provider === 'local') ||
       !audio.current.getAttribute('src')
     ) {
       if (pendingPlay.current) return;
@@ -2017,6 +2387,91 @@ export function App({
         }
         update(current.provider, { message: '播放失败：' + errorText(e) });
       });
+  };
+
+  const adjustVolume = delta => {
+    const a = audio.current;
+    if (!a) return;
+    const next = Math.min(1, Math.max(0, Math.round((a.volume + delta) * 100) / 100));
+    a.volume = next;
+    if (delta > 0 && a.muted) a.muted = false;
+    scheduleSave(true);
+  };
+
+  const setDesktopLyricState = async ({ enabled, locked }) => {
+    if (!canDesktopLyric || desktopLyricBusy) return;
+    setDesktopLyricBusy(true);
+    setDesktopLyricError('');
+    try {
+      const res = await desktop.desktopLyricSet({ enabled, locked });
+      const next = {
+        enabled: Boolean(res?.enabled),
+        locked: Boolean(res?.locked),
+        position: res?.position ?? null,
+      };
+      const turnedOn = next.enabled && !desktopLyricRef.current.enabled;
+      desktopLyricRef.current = next;
+      if (!next.enabled || turnedOn) lastDesktopLyricKeyRef.current = null;
+      setDesktopLyric(next);
+    } catch (e) {
+      setDesktopLyricError(errorText(e));
+    } finally {
+      setDesktopLyricBusy(false);
+    }
+  };
+
+  const toggleDesktopLyric = () => {
+    void setDesktopLyricState({ enabled: !desktopLyricRef.current.enabled });
+  };
+
+  const toggleDesktopLyricLock = () => {
+    void setDesktopLyricState({
+      enabled: desktopLyricRef.current.enabled,
+      locked: !desktopLyricRef.current.locked,
+    });
+  };
+
+  const updateGlobalShortcuts = async ({ enabled, bindings }) => {
+    if (!canGlobalShortcuts || shortcutsBusy) return { ok: false };
+    setShortcutsBusy(true);
+    setShortcutsError('');
+    try {
+      const res = await desktop.globalShortcutsSet({ enabled, bindings });
+      setGlobalShortcuts({
+        enabled: Boolean(res?.enabled),
+        bindings: { ...DEFAULT_SHORTCUT_BINDINGS, ...(res?.bindings || bindings || {}) },
+        error: res?.error || null,
+      });
+      return { ok: true };
+    } catch (e) {
+      setShortcutsError(errorText(e));
+      if (e?.code === 'storage') {
+        desktop
+          .globalShortcutsGet()
+          .then(res => {
+            if (res) {
+              setGlobalShortcuts({
+                enabled: Boolean(res.enabled),
+                bindings: { ...DEFAULT_SHORTCUT_BINDINGS, ...(res.bindings || {}) },
+                error: res.error || null,
+              });
+            }
+          })
+          .catch(() => {});
+      }
+      return { ok: false, error: e };
+    } finally {
+      setShortcutsBusy(false);
+    }
+  };
+
+  desktopHandlersRef.current = {
+    togglePlayback,
+    prevTrack: () => skipTrack(-1),
+    nextTrack: () => skipTrack(1),
+    volumeUp: () => adjustVolume(0.05),
+    volumeDown: () => adjustVolume(-0.05),
+    toggleDesktopLyric,
   };
 
   const editQueue = (removeIndex, clear = false) => {
@@ -2054,7 +2509,8 @@ export function App({
       setLyricStatus('idle');
       setRestoredProgress(null);
       if (id === 'netease') saved.current.resume = null;
-      else qqSaved.current.resume = null;
+      else if (id === 'qqmusic') qqSaved.current.resume = null;
+      else localSaved.current.resume = null;
     }
     update(id, { queue: next });
     if (id === 'netease') {
@@ -2063,10 +2519,13 @@ export function App({
       else if (saved.current.current?.kind === 'normal') {
         saved.current.current = { ...saved.current.current, index: next.index };
       }
-    } else {
+    } else if (id === 'qqmusic') {
       qqSaved.current.queue = next;
       qqSaved.current.cleared = !next;
       if (!next) qqSaved.current.position = 0;
+    } else {
+      localSaved.current.cleared = !next;
+      if (!next) localSaved.current.position = 0;
     }
     setConfirmClear(false);
     scheduleSave(true);
@@ -2273,6 +2732,158 @@ export function App({
     };
   }, []);
 
+  // P2-A 启动状态同步与全局快捷键 / 原生桌面歌词事件监听
+  useEffect(() => {
+    if (!canGlobalShortcuts && !canDesktopLyric) return;
+    let active = true;
+    const offs = [];
+    if (canGlobalShortcuts) {
+      desktop
+        .globalShortcutsGet()
+        .then(res => {
+          if (!active || !res) return;
+          setGlobalShortcuts({
+            enabled: Boolean(res.enabled),
+            bindings: { ...DEFAULT_SHORTCUT_BINDINGS, ...(res.bindings || {}) },
+            error: res.error || null,
+          });
+          if (res.error?.message) setShortcutsError(res.error.message);
+        })
+        .catch(() => {});
+    }
+    if (canDesktopLyric) {
+      desktop
+        .desktopLyricGet()
+        .then(res => {
+          if (!active || !res) return;
+          const next = {
+            enabled: Boolean(res.enabled),
+            locked: Boolean(res.locked),
+            position: res.position ?? null,
+          };
+          desktopLyricRef.current = next;
+          setDesktopLyric(next);
+        })
+        .catch(() => {});
+    }
+    import('@tauri-apps/api/event')
+      .then(async ({ listen }) => {
+        if (canGlobalShortcuts) {
+          const eventName = desktop?.events?.globalShortcut || 'prism:global-shortcut';
+          const unShortcut = await listen(eventName, e => {
+            if (!active) return;
+            const action = e?.payload?.action;
+            if (typeof action === 'string') {
+              desktopHandlersRef.current[action]?.();
+            }
+          });
+          if (!active) unShortcut();
+          else offs.push(unShortcut);
+        }
+        if (canDesktopLyric) {
+          const eventName = desktop?.events?.desktopLyricState || 'prism:desktop-lyric-state';
+          const unLyric = await listen(eventName, e => {
+            if (!active || !e?.payload || typeof e.payload.enabled !== 'boolean') return;
+            const next = {
+              enabled: Boolean(e.payload.enabled),
+              locked: Boolean(e.payload.locked),
+              position: e.payload.position ?? desktopLyricRef.current.position ?? null,
+            };
+            const turnedOn = next.enabled && !desktopLyricRef.current.enabled;
+            desktopLyricRef.current = next;
+            if (!next.enabled || turnedOn) lastDesktopLyricKeyRef.current = null;
+            setDesktopLyric(next);
+          });
+          if (!active) unLyric();
+          else offs.push(unLyric);
+        }
+      })
+      .catch(() => {});
+    return () => {
+      active = false;
+      offs.forEach(fn => fn());
+    };
+  }, []);
+
+  // 事件驱动推送桌面悬浮歌词：仅在桌面歌词开启且当前行、歌名或播放态变化时触发
+  useEffect(() => {
+    if (!canDesktopLyric || !desktopLyric.enabled) {
+      lastDesktopLyricKeyRef.current = null;
+      return;
+    }
+    const currentLine = lyricIndex >= 0 ? lyrics[lyricIndex] : null;
+    const titleText = song
+      ? clipLyricField(artist(song) ? `${song.name} - ${artist(song)}` : song.name, 200)
+      : '';
+    let mainText = '';
+    if (currentLine?.text) {
+      mainText = currentLine.text;
+    } else if (!song) {
+      mainText = '还没有播放歌曲';
+    } else if (lyricStatus === 'loading') {
+      mainText = '正在加载歌词…';
+    } else if (lyricStatus === 'instrumental') {
+      mainText = '纯音乐，暂无歌词';
+    } else if (lyricStatus === 'error') {
+      mainText = '歌词加载失败';
+    } else if (lyrics.length > 0) {
+      mainText = song.name || '…';
+    } else {
+      mainText = '暂无歌词';
+    }
+    const payload = {
+      text: clipLyricField(mainText),
+      translation: clipLyricField(currentLine?.translation || ''),
+      romaji: clipLyricField(currentLine?.romaji || ''),
+      title: titleText,
+      playing: Boolean(playing),
+    };
+    const key = JSON.stringify(payload);
+    if (lastDesktopLyricKeyRef.current === key) return;
+    lastDesktopLyricKeyRef.current = key;
+    desktop.desktopLyricUpdate(payload).catch(() => {});
+  }, [canDesktopLyric, desktopLyric.enabled, song, lyrics, lyricIndex, lyricStatus, playing]);
+
+  // 单次下一句精准唤醒定时器（亚 30ms 节拍同步，零轮询，隐藏/暂停即撤销）
+  useEffect(() => {
+    if (!playing || !lyrics.length) return undefined;
+    let timer = null;
+    const scheduleNext = () => {
+      if (timer) {
+        clearTimeout(timer);
+        timer = null;
+      }
+      if (typeof document !== 'undefined' && document.hidden) return;
+      const a = audio.current;
+      if (!a) return;
+      const next = lyrics[lyricIndex + 1];
+      if (!next) return;
+      const rate = a.playbackRate || playbackRate || 1;
+      const deltaMs = Math.ceil(((next.at - (a.currentTime || 0)) / rate) * 1000) + 12;
+      if (deltaMs <= 0) {
+        syncLyric(a.currentTime || 0);
+        return;
+      }
+      timer = setTimeout(() => {
+        timer = null;
+        if (audio.current) syncLyric(audio.current.currentTime || 0);
+      }, Math.min(delayMsBound(deltaMs), 60000));
+    };
+    const delayMsBound = ms => (Number.isFinite(ms) ? ms : 1000);
+    scheduleNext();
+    const onVisible = () => {
+      if (typeof document !== 'undefined' && !document.hidden && audio.current) {
+        syncLyric(audio.current.currentTime || 0);
+        scheduleNext();
+      }
+    };
+    document?.addEventListener?.('visibilitychange', onVisible);
+    return () => {
+      if (timer) clearTimeout(timer);
+      document?.removeEventListener?.('visibilitychange', onVisible);
+    };
+  }, [playing, lyrics, lyricIndex, playbackRate, song]);
+
   useEffect(() => {
     if (!qr) return;
     const id = qr.provider;
@@ -2374,6 +2985,9 @@ export function App({
         } else if (showQueue) {
           setShowQueue(false);
           e.preventDefault();
+        } else if (showShortcuts) {
+          setShowShortcuts(false);
+          e.preventDefault();
         } else if (pickerTrack) {
           setPickerTrack(null);
           setPickerError('');
@@ -2422,7 +3036,16 @@ export function App({
           e.preventDefault();
           return;
         }
-        if (showQueue || pickerTrack || qr || qqWebOpen || showLyrics || confirmRecent || closeDialog)
+        if (
+          showQueue ||
+          showShortcuts ||
+          pickerTrack ||
+          qr ||
+          qqWebOpen ||
+          showLyrics ||
+          confirmRecent ||
+          closeDialog
+        )
           return;
         e.preventDefault();
         togglePlayback();
@@ -2434,10 +3057,7 @@ export function App({
         skipTrack(e.key === 'ArrowRight' ? 1 : -1);
       } else if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
         e.preventDefault();
-        audio.current.volume = Math.min(
-          1,
-          Math.max(0, Math.round((audio.current.volume + (e.key === 'ArrowUp' ? 0.05 : -0.05)) * 100) / 100)
-        );
+        adjustVolume(e.key === 'ArrowUp' ? 0.05 : -0.05);
       }
     };
     window.addEventListener('keydown', onKey);
@@ -2559,6 +3179,11 @@ export function App({
       ws.page > 1 ||
       (ws.searchType === 1 ? songs.length >= 40 : (ws.searchItems?.length || 0) >= 40));
 
+  const isListLoading =
+    ws.searching ||
+    ['正在加载歌单…', '正在加载…', '正在搜索…', '正在读取本地记录…'].includes(message) ||
+    (activeProvider === 'local' && localBusy);
+
   const lwLyrics = lyricalLines(lyrics);
   const lwCur = lwLyrics.findIndex(l => line && l.at >= line.at);
   const lwPreview = lwCur >= 0 ? lwLyrics.slice(lwCur, lwCur + 2) : lwLyrics.slice(0, 2);
@@ -2606,6 +3231,8 @@ export function App({
       <AppHeader
         capabilities={capabilities}
         platformFlavor={platformFlavor}
+        canLocalLibrary={canLocalLibrary}
+        isListLoading={isListLoading}
         view={view}
         showLyrics={showLyrics}
         setView={setView}
@@ -2625,6 +3252,11 @@ export function App({
         login={login}
         logout={logout}
         onHome={() => {
+          if (activeProvider === 'local') {
+            selectLocalFolder(null);
+            applyLocalView(localTracksRef.current, null, '');
+            return;
+          }
           recommendationPending.current = false;
           browse.current[activeProvider].next();
           update(activeProvider, {
@@ -2660,6 +3292,15 @@ export function App({
         onMore={() =>
           loadLists('qqmusic', account.current.qqmusic.current(), ws.listPage + 1, true)
         }
+        localFolders={localFolders}
+        localActiveFolderId={localActiveFolderId}
+        localTotal={localTotal}
+        localBusy={localBusy}
+        localUnavailableIds={localUnavailableIds}
+        onSelectLocalFolder={selectLocalFolder}
+        onPickLocalFolder={pickLocalFolder}
+        onRemoveLocalFolder={removeLocalFolder}
+        onScanLocalLibrary={scanLocalLibrary}
       />
 
       <main className="lw-library" hidden={view !== 'library'}>
@@ -2841,6 +3482,24 @@ export function App({
                 onOpenPlaylistPicker={openPlaylistPicker}
                 onRemoveFromPlaylist={removeTrackFromCurrentPlaylist}
               />
+            ) : isListLoading ? (
+              <TrackListSkeleton
+                message={
+                  message || (activeProvider === 'local' ? '正在扫描本地曲库…' : '正在加载曲目…')
+                }
+              />
+            ) : activeProvider === 'local' ? (
+              <LocalEmptyState
+                foldersCount={localFolders.length}
+                hasQuery={Boolean(String(query || '').trim())}
+                query={query}
+                busy={localBusy}
+                message={message}
+                messageRole={messageRole}
+                onPickFolder={pickLocalFolder}
+                onScan={scanLocalLibrary}
+                onClearQuery={() => applyLocalView(localTracksRef.current, localActiveFolderRef.current, '')}
+              />
             ) : (
               <EmptyState
                 platformFlavor={platformFlavor}
@@ -2865,6 +3524,19 @@ export function App({
                   }))
                 }
               />
+            )}
+
+            {activeProvider === 'local' && localHasMore && (
+              <div className="nr-local-more">
+                <button
+                  type="button"
+                  className="nr-soft-btn"
+                  disabled={localBusy}
+                  onClick={loadMoreLocalTracks}
+                >
+                  {localBusy ? '加载中…' : `加载更多本地曲目（已加载 ${songs.length} / ${localTotal}）`}
+                </button>
+              </div>
             )}
 
             {songs.length > 0 && message && (
@@ -3042,6 +3714,19 @@ export function App({
           setCloseError('');
           setCloseDialog('settings');
         }}
+        canDesktopLyric={canDesktopLyric}
+        desktopLyric={desktopLyric}
+        desktopLyricBusy={desktopLyricBusy}
+        desktopLyricError={desktopLyricError}
+        onToggleDesktopLyric={toggleDesktopLyric}
+        onToggleDesktopLyricLock={toggleDesktopLyricLock}
+        canGlobalShortcuts={canGlobalShortcuts}
+        globalShortcuts={globalShortcuts}
+        onOpenShortcuts={() => {
+          setShowMore(false);
+          setShortcutsError(globalShortcuts.error?.message || '');
+          setShowShortcuts(true);
+        }}
       />
 
       <FloatingDock
@@ -3057,9 +3742,15 @@ export function App({
         onSeek={value => {
           if (
             (saved.current.resume && song?.provider === 'netease') ||
-            (qqSaved.current.resume && song?.provider === 'qqmusic')
+            (qqSaved.current.resume && song?.provider === 'qqmusic') ||
+            (localSaved.current.resume && song?.provider === 'local')
           ) {
-            const pending = song.provider === 'netease' ? saved.current.resume : qqSaved.current.resume;
+            const pending =
+              song.provider === 'netease'
+                ? saved.current.resume
+                : song.provider === 'qqmusic'
+                  ? qqSaved.current.resume
+                  : localSaved.current.resume;
             pending.position = value;
             setRestoredProgress(p => (p ? { ...p, position: value } : p));
             scheduleSave();
@@ -3100,6 +3791,12 @@ export function App({
         fmTrashBusy={fmTrashBusy}
         onToggleLike={() => toggleLike(song)}
         onTrashFm={trashCurrentFmTrack}
+        canDesktopLyric={canDesktopLyric}
+        desktopLyricEnabled={desktopLyric.enabled}
+        desktopLyricLocked={desktopLyric.locked}
+        desktopLyricBusy={desktopLyricBusy}
+        onToggleDesktopLyric={toggleDesktopLyric}
+        onToggleDesktopLyricLock={toggleDesktopLyricLock}
       />
 
       {/* 全应用唯一 <audio> 实例，绝不因切换视图或平台重建 */}
@@ -3107,7 +3804,7 @@ export function App({
         ref={audio}
         onTimeUpdate={e => {
           const a = e.currentTarget;
-          if (['netease', 'qqmusic'].includes(songRef.current?.provider)) scheduleSave();
+          if (['netease', 'qqmusic', 'local'].includes(songRef.current?.provider)) scheduleSave();
           if (!a.paused && !a.seeking) {
             listening.current.progress(a.currentTime, performance.now(), a.playbackRate);
           }
@@ -3120,6 +3817,9 @@ export function App({
             }
           }
         }}
+        onLoadedMetadata={e => {
+          syncLyric(e.currentTarget.currentTime);
+        }}
         onPlay={e => {
           if (e.currentTarget.readyState < 3) setBuffering(true);
         }}
@@ -3128,6 +3828,7 @@ export function App({
           setPlaying(true);
           recordRecent();
           const a = e.currentTarget;
+          syncLyric(a.currentTime);
           if (!a.seeking) listening.current.resume(a.currentTime, performance.now(), a.playbackRate);
         }}
         onWaiting={e => {
@@ -3258,7 +3959,12 @@ export function App({
           status={lyricStatus}
           onClose={() => setShowLyrics(false)}
           onSeek={at => {
-            if (audio.current && !saved.current.resume && !qqSaved.current.resume) {
+            if (
+              audio.current &&
+              !saved.current.resume &&
+              !qqSaved.current.resume &&
+              !localSaved.current.resume
+            ) {
               audio.current.currentTime = at;
               syncLyric(at);
               scheduleSave();
@@ -3293,6 +3999,23 @@ export function App({
         onClose={() => {
           setPickerTrack(null);
           setPickerError('');
+        }}
+      />
+
+      <GlobalShortcutsDialog
+        open={showShortcuts}
+        status={globalShortcuts}
+        busy={shortcutsBusy}
+        error={shortcutsError}
+        onToggleEnabled={(nextEnabled, bindings) => {
+          void updateGlobalShortcuts({ enabled: nextEnabled, bindings });
+        }}
+        onSaveBindings={bindings => {
+          void updateGlobalShortcuts({ enabled: globalShortcuts.enabled, bindings });
+        }}
+        onClose={() => {
+          setShowShortcuts(false);
+          setShortcutsError('');
         }}
       />
 

@@ -6,3 +6,4 @@ test('媒体会话状态和媒体键绑定均可降级',()=>{const handlers={};c
 
 test('翻译歌词只合并相近时间的行',()=>{const source=parseLrc('[00:01.00]甲\n[00:04.00]乙');const translated=parseLrc('[00:01.10]翻译甲\n[00:07.00]不匹配');const out=mergeTranslation(source,translated);assert.equal(out[0].translation,'翻译甲');assert.equal(out[1].translation,undefined);assert.deepEqual(source[0],{at:1,text:'甲'});});
 test('罗马音歌词只合并相近时间的行且不覆盖译文',()=>{const source=mergeTranslation(parseLrc('[00:01.00]夜车\n[00:05.00]街灯'),parseLrc('[00:01.05]Night Bus'));const out=mergeRomaji(source,parseLrc('[00:01.08]ye che\n[00:09.00]skip'));assert.equal(out[0].translation,'Night Bus');assert.equal(out[0].romaji,'ye che');assert.equal(out[1].romaji,undefined);});
+test('LRC 支持 offset 偏移与冒号毫秒格式',()=>{assert.deepEqual(parseLrc('[offset:500]\n[00:02:50]甲行\n[00:05.125]乙行'),[{at:2,text:'甲行'},{at:4.625,text:'乙行'}]);assert.deepEqual(parseLrc('[offset:-200]\n[00:00.00]开头'),[{at:0.2,text:'开头'}]);});

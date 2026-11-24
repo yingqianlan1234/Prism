@@ -1,12 +1,34 @@
+function parseFractionSeconds(sep, frac) {
+  if (!frac) return 0;
+  if (sep === ':') {
+    const scale = frac.length >= 3 ? 10 ** frac.length : 100;
+    return Number(frac) / scale;
+  }
+  return Number(`0.${frac}`);
+}
+
 export function parseLrc(value) {
   if (typeof value !== 'string') return [];
+  let offsetSeconds = 0;
+  for (const raw of value.split(/\r?\n/)) {
+    const offsetMatch = raw.match(/^\s*\[offset\s*:\s*([+-]?\d+)\s*\]\s*$/i);
+    if (offsetMatch) {
+      const ms = Number(offsetMatch[1]);
+      if (Number.isFinite(ms)) offsetSeconds = ms / 1000;
+    }
+  }
+  const tagPattern = /\[(\d+):(\d{1,2})(?:([.:])(\d+))?\]/g;
   const lines = [];
   for (const raw of value.split(/\r?\n/)) {
-    const stamps = [...raw.matchAll(/\[(\d+):(\d+(?:\.\d+)?)\]/g)];
-    const text = raw.replace(/\[(\d+):(\d+(?:\.\d+)?)\]/g, '').trim();
+    const stamps = [...raw.matchAll(tagPattern)];
+    if (!stamps.length) continue;
+    const text = raw.replace(tagPattern, '').trim();
     if (!text) continue;
     for (const stamp of stamps) {
-      const at = Number(stamp[1]) * 60 + Number(stamp[2]);
+      const min = Number(stamp[1]);
+      const sec = Number(stamp[2]);
+      const frac = parseFractionSeconds(stamp[3], stamp[4]);
+      const at = Math.max(0, min * 60 + sec + frac - offsetSeconds);
       if (Number.isFinite(at)) lines.push({ at, text });
     }
   }

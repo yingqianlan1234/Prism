@@ -4,6 +4,8 @@ import { Icon } from './Icons.jsx';
 export function AppHeader({
   capabilities,
   platformFlavor,
+  canLocalLibrary,
+  isListLoading,
   view,
   showLyrics,
   setView,
@@ -56,7 +58,7 @@ export function AppHeader({
     const ro = new ResizeObserver(syncProvSlider);
     ro.observe(prov);
     return () => ro.disconnect();
-  }, [activeProvider, platformFlavor.qqmusic]);
+  }, [activeProvider, platformFlavor.qqmusic, canLocalLibrary]);
 
   useLayoutEffect(() => {
     const nav = navRef.current;
@@ -109,6 +111,15 @@ export function AppHeader({
           >
             {platformFlavor.qqmusic === 'mock' ? 'QQ 模拟' : 'QQ 社区匿名搜索'}
           </button>
+          {canLocalLibrary && (
+            <button
+              type="button"
+              aria-pressed={activeProvider === 'local'}
+              onClick={() => switchProvider('local')}
+            >
+              本地
+            </button>
+          )}
           <span className="nr-prov-slider" aria-hidden="true" />
         </div>
       </div>
@@ -148,23 +159,24 @@ export function AppHeader({
       </nav>
 
       <div className="nr-top-right">
-        {(songs.length > 0 || recommendLists !== null) && (
+        {(songs.length > 0 || recommendLists !== null || isListLoading || (activeProvider === 'local' && query)) && (
           <form className="nr-top-search" onSubmit={search}>
             <Icon name="search" className="nr-icon nr-search-ico" />
             <input
               ref={searchInput}
               value={query}
               onChange={e => setQuery(e.target.value)}
-              placeholder="搜索歌曲、歌手"
-              aria-label="搜索歌曲、歌手"
+              placeholder={activeProvider === 'local' ? '筛选本地歌曲、歌手、专辑' : '搜索歌曲、歌手'}
+              aria-label={activeProvider === 'local' ? '筛选本地歌曲、歌手、专辑' : '搜索歌曲、歌手'}
             />
-            <button type="submit" aria-label="搜索">
-              搜索
+            <button type="submit" aria-label={activeProvider === 'local' ? '筛选' : '搜索'}>
+              {activeProvider === 'local' ? '筛选' : '搜索'}
             </button>
           </form>
         )}
 
-        <div className="nr-account-cluster">
+        {activeProvider !== 'local' && (
+          <div className="nr-account-cluster">
           {(activeProvider === 'netease' || capabilities[activeProvider].login) &&
             (signedIn ? (
               <>
@@ -206,7 +218,8 @@ export function AppHeader({
               {identityUnknown ? '退出本机账号' : '退出'}
             </button>
           )}
-        </div>
+          </div>
+        )}
       </div>
     </header>
   );

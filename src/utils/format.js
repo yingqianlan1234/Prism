@@ -134,3 +134,118 @@ export function isOwnedPlaylist(playlist, userId) {
   if (owner != null && owner !== '') return String(owner) === String(userId);
   return playlist.subscribed === false;
 }
+
+export function providerLabel(id) {
+  if (id === 'netease') return '网易云';
+  if (id === 'qqmusic') return 'QQ 音乐';
+  if (id === 'local') return '本地音乐';
+  return '';
+}
+
+// P2-A 全局系统快捷键与桌面悬浮歌词纯常量与格式工具
+export const SHORTCUT_MODIFIERS = ['Ctrl+Alt', 'Ctrl+Shift'];
+export const SHORTCUT_FKEYS = ['F1', 'F2', 'F3', 'F4', 'F5', 'F6', 'F7', 'F8', 'F9', 'F10', 'F11'];
+const SHORTCUT_LETTERS = Array.from({ length: 26 }, (_, i) => String.fromCharCode(65 + i));
+export const SHORTCUT_KEY_GROUPS = Object.freeze([
+  Object.freeze({
+    label: '方向与空格',
+    items: Object.freeze([
+      Object.freeze({ value: 'Left', label: '← 左方向' }),
+      Object.freeze({ value: 'Right', label: '→ 右方向' }),
+      Object.freeze({ value: 'Up', label: '↑ 上方向' }),
+      Object.freeze({ value: 'Down', label: '↓ 下方向' }),
+      Object.freeze({ value: 'Space', label: 'Space 空格' }),
+    ]),
+  }),
+  Object.freeze({
+    label: '字母键 A–Z',
+    items: Object.freeze(SHORTCUT_LETTERS.map(ch => Object.freeze({ value: ch, label: ch }))),
+  }),
+  Object.freeze({
+    label: '功能键 F1–F11',
+    items: Object.freeze(SHORTCUT_FKEYS.map(fk => Object.freeze({ value: fk, label: fk }))),
+  }),
+]);
+export const SHORTCUT_ALL_KEYS = new Set(
+  SHORTCUT_KEY_GROUPS.flatMap(group => group.items.map(item => item.value))
+);
+
+export const SHORTCUT_ACTIONS = Object.freeze([
+  Object.freeze({ id: 'togglePlayback', label: '播放 / 暂停', defaultKey: 'Ctrl+Alt+P' }),
+  Object.freeze({ id: 'prevTrack', label: '上一首', defaultKey: 'Ctrl+Alt+Left' }),
+  Object.freeze({ id: 'nextTrack', label: '下一首', defaultKey: 'Ctrl+Alt+Right' }),
+  Object.freeze({ id: 'volumeUp', label: '增大音量', defaultKey: 'Ctrl+Alt+Up' }),
+  Object.freeze({ id: 'volumeDown', label: '减小音量', defaultKey: 'Ctrl+Alt+Down' }),
+  Object.freeze({ id: 'toggleDesktopLyric', label: '开关桌面歌词', defaultKey: 'Ctrl+Alt+D' }),
+]);
+
+export const DEFAULT_SHORTCUT_BINDINGS = Object.freeze(
+  Object.fromEntries(SHORTCUT_ACTIONS.map(item => [item.id, item.defaultKey]))
+);
+
+export function parseShortcutBinding(binding) {
+  if (typeof binding === 'string') {
+    for (const modifier of SHORTCUT_MODIFIERS) {
+      const prefix = `${modifier}+`;
+      if (binding.startsWith(prefix)) {
+        const key = binding.slice(prefix.length);
+        if (SHORTCUT_ALL_KEYS.has(key)) {
+          return { modifier, key, fkey: key };
+        }
+      }
+    }
+  }
+  return { modifier: 'Ctrl+Alt', key: 'P', fkey: 'P' };
+}
+
+export function formatShortcutBinding(modifier, key) {
+  const safeModifier = SHORTCUT_MODIFIERS.includes(modifier) ? modifier : 'Ctrl+Alt';
+  const safeKey = SHORTCUT_ALL_KEYS.has(key) ? key : 'P';
+  return `${safeModifier}+${safeKey}`;
+}
+
+export function findDuplicateShortcutActions(bindings) {
+  const seen = new Map();
+  const duplicates = new Set();
+  for (const { id } of SHORTCUT_ACTIONS) {
+    const key = bindings?.[id];
+    if (!key) continue;
+    if (seen.has(key)) {
+      duplicates.add(seen.get(key));
+      duplicates.add(id);
+    } else {
+      seen.set(key, id);
+    }
+  }
+  return duplicates;
+}
+
+export function hasTextSelectionShortcutWarning(bindings) {
+  for (const { id } of SHORTCUT_ACTIONS) {
+    const value = bindings?.[id];
+    if (value === 'Ctrl+Shift+Left' || value === 'Ctrl+Shift+Right') return true;
+  }
+  return false;
+}
+
+export function clipLyricField(value, max = 480) {
+  if (typeof value !== 'string' || !value) return '';
+  const singleLine = value.replace(/[\r\n\t]+/g, ' ').trim();
+  const chars = Array.from(singleLine);
+  return chars.length > max ? chars.slice(0, max).join('') : singleLine;
+}
+
+// P2-B 本地曲目标准化为通用曲目对象
+export function normalizeLocalTrack(raw) {
+  if (!raw || typeof raw !== 'object') return null;
+  return {
+    id: String(raw.id),
+    folderId: String(raw.folderId || ''),
+    name: raw.title || '未知曲目',
+    artists: raw.artist ? [{ name: raw.artist }] : [],
+    album: { name: raw.album || '' },
+    duration: Number(raw.durationMs) || 0,
+    provider: 'local',
+    accountId: 'local',
+  };
+}

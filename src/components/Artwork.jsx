@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { playlistCoverUrl, coverUrl } from '../cover.js';
+import { providerLabel } from '../utils/format.js';
 
 function useImageFailure(src) {
   const [state, setState] = useState({ src, failed: false });
@@ -59,7 +60,7 @@ export function SongArtwork({ song, size, className, variant = 'small' }) {
 
 export function SourceTag({ provider, browsing }) {
   if (!provider) return null;
-  const label = provider === 'netease' ? '网易云' : 'QQ 音乐';
+  const label = providerLabel(provider);
   return (
     <span className={'lw-source-tag' + (provider !== browsing ? ' is-other' : '')}>
       {provider !== browsing ? '来源：' : ''}

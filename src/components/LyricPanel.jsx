@@ -31,9 +31,14 @@ export function LyricPanel({ lyrics, index, status, onClose, onSeek, stage }) {
     []
   );
 
+  const prevLyricsRef = useRef(lyrics);
+
   useEffect(() => {
+    const changed = prevLyricsRef.current !== lyrics;
+    prevLyricsRef.current = lyrics;
+    if (changed && !following) setFollowing(true);
     const container = box.current;
-    if (!following || index < 0 || !container) return;
+    if ((!following && !changed) || index < 0 || !container) return;
     const current = container.querySelector('[aria-current="true"]');
     if (!current) return;
     const boxRect = container.getBoundingClientRect();
@@ -49,11 +54,11 @@ export function LyricPanel({ lyrics, index, status, onClose, onSeek, stage }) {
       typeof window.matchMedia === 'function' &&
       window.matchMedia('(prefers-reduced-motion: reduce)').matches;
     if (container.scrollTo) {
-      container.scrollTo({ top: target, behavior: reduced ? 'auto' : 'smooth' });
+      container.scrollTo({ top: target, behavior: reduced || changed ? 'auto' : 'smooth' });
     } else {
       container.scrollTop = target;
     }
-  }, [index, following]);
+  }, [index, following, lyrics]);
 
   return (
     <div className="lyric-panel" data-stage={stage ? 'true' : 'false'}>

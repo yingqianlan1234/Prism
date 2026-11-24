@@ -4,7 +4,28 @@ import {readFile} from 'node:fs/promises';
 
 const calls=[];
 globalThis.window={__TAURI_INTERNALS__:{invoke:async(command,args)=>{calls.push({command,args});return {command,args};}}};
-const {getProvider,capabilities,recommendationCapabilities}=await import('./providers.js');
+const {getProvider,capabilities,recommendationCapabilities,desktop}=await import('./providers.js');
+
+test('本地曲库由独立 provider 注入，IPC 参数只包含曲库标识和状态', async () => {
+ const local=await getProvider('local');
+ assert.equal(local.capabilities,capabilities.local);
+ assert.deepEqual(capabilities.local,{manageFolders:true,scanLibrary:true,getTracks:true,resolvePlayback:true,getLyrics:true,persistQueue:true});
+ const queue={ids:['a'.repeat(64)],index:0,position:3};
+ for(const [method,params,command,args] of [
+  ['getFolders',[],'local_library_folders_get',{}],
+  ['pickFolder',[],'local_library_folder_pick',{}],
+  ['removeFolder',['folder'],'local_library_folder_remove',{id:'folder'}],
+  ['scan',[],'local_library_scan',{}],
+  ['getTracks',[{offset:200,limit:20}],'local_library_tracks_get',{offset:200,limit:20}],
+  ['resolvePlayback',['track'],'local_track_resolve',{id:'track'}],
+  ['getLyrics',['track'],'local_track_lyric',{id:'track'}],
+  ['getQueue',[],'local_queue_get',{}],
+  ['setQueue',[queue],'local_queue_set',{queue}]
+ ]){
+  await local[method](...params);
+  assert.deepEqual(calls.at(-1),{command,args});
+ }
+});
 const features=['login','logout','restoreSession','getUserProfile','search','getPlaylists','getPlaylistTracks','getLyrics','resolvePlayback','getRecommendations','reportListening'];
 const libraryFeatures=['playbackQuality','searchPagination','searchCategories','likeTrack','getLikedSongIds','trashFmTrack','editPlaylistTracks'];
 
@@ -132,4 +153,25 @@ test('QQ Mock 与社区适配器分别声明真实能力',async()=>{
  for(const name of ['getRecommendations','reportListening']){assert.equal(mock.capabilities[name],false);assert.equal(community.capabilities[name],false);await assert.rejects(mock[name](),e=>e.code==='unsupported');await assert.rejects(community[name](),e=>e.code==='unsupported');}
  assert.deepEqual(mock.recommendationCapabilities,{daily:false,resources:false,playlists:false,fm:false,newsong:false});
  assert.deepEqual(community.recommendationCapabilities,mock.recommendationCapabilities);
+});
+
+test('桌面功能能力位、事件名与 P2-A IPC 命令参数映射正确',async()=>{
+ assert.deepEqual(capabilities.desktop,{globalShortcuts:true,desktopLyric:true});
+ assert(Object.isFrozen(capabilities.desktop));
+ assert.equal(desktop.capabilities,capabilities.desktop);
+ assert.deepEqual(desktop.events,{globalShortcut:'prism:global-shortcut',desktopLyricState:'prism:desktop-lyric-state'});
+ assert(Object.isFrozen(desktop.events));
+ await desktop.globalShortcutsGet();
+ assert.deepEqual(calls.at(-1),{command:'global_shortcuts_get',args:{}});
+ const bindings={togglePlayback:'Ctrl+Shift+F5',prevTrack:'Ctrl+Alt+F6'};
+ await desktop.globalShortcutsSet({enabled:true,bindings});
+ assert.deepEqual(calls.at(-1),{command:'global_shortcuts_set',args:{enabled:true,bindings}});
+ await desktop.desktopLyricGet();
+ assert.deepEqual(calls.at(-1),{command:'desktop_lyric_get',args:{}});
+ await desktop.desktopLyricSet({enabled:true});
+ assert.deepEqual(calls.at(-1),{command:'desktop_lyric_set',args:{enabled:true}});
+ await desktop.desktopLyricSet({enabled:true,locked:true});
+ assert.deepEqual(calls.at(-1),{command:'desktop_lyric_set',args:{enabled:true,locked:true}});
+ await desktop.desktopLyricUpdate({text:'第一行',translation:'line 1',romaji:'dai ichi',title:'夜车 - 曾轶可',playing:true});
+ assert.deepEqual(calls.at(-1),{command:'desktop_lyric_update',args:{text:'第一行',translation:'line 1',romaji:'dai ichi',title:'夜车 - 曾轶可',playing:true}});
 });

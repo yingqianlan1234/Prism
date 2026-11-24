@@ -264,6 +264,111 @@ export function SongList({
   );
 }
 
+const SKELETON_ROWS = [
+  { titleW: '44%', artistW: '26%' },
+  { titleW: '58%', artistW: '32%' },
+  { titleW: '38%', artistW: '22%' },
+  { titleW: '52%', artistW: '28%' },
+  { titleW: '46%', artistW: '24%' },
+  { titleW: '62%', artistW: '30%' },
+  { titleW: '40%', artistW: '25%' },
+];
+
+export function TrackListSkeleton({ message }) {
+  return (
+    <div className="nr-skeleton-wrap" aria-busy="true">
+      <div className="nr-skeleton-bar" role="status">
+        <span className="nr-skeleton-dot" aria-hidden="true" />
+        <span>{message || '正在加载曲目…'}</span>
+      </div>
+      <div className="table nr-skeleton-table" aria-hidden="true">
+        {SKELETON_ROWS.map((row, idx) => (
+          <div className="nr-skeleton-row" key={idx} style={{ '--sk-i': idx }}>
+            <span className="nr-sk-num" />
+            <span className="nr-sk-cover" />
+            <span className="nr-sk-main">
+              <i className="nr-sk-line" style={{ width: row.titleW }} />
+              <i className="nr-sk-line is-sub" style={{ width: row.artistW }} />
+            </span>
+            <span className="nr-sk-dur" />
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+export function LocalEmptyState({
+  foldersCount,
+  hasQuery,
+  query,
+  busy,
+  message,
+  messageRole,
+  onPickFolder,
+  onScan,
+  onClearQuery,
+}) {
+  return (
+    <div className="empty">
+      <div className="empty-intro nr-local-empty">
+        <span className="nr-empty-kicker">本地音乐工作区</span>
+        <h2>
+          {hasQuery
+            ? `没有匹配“${query}”的本地歌曲`
+            : foldersCount > 0
+              ? '所选目录暂无可播音频'
+              : '把本机音乐放进深夜电台'}
+        </h2>
+        <p>
+          {hasQuery
+            ? '试试更换歌名、歌手或专辑关键词，或切回「全部本地歌曲」。'
+            : '支持 MP3、FLAC、WAV、M4A、OGG 与同名 .lrc 歌词，全程离线播放，不上传任何本机路径。'}
+        </p>
+
+        <div className="nr-local-formats" aria-label="支持格式">
+          <span>MP3</span>
+          <span>FLAC</span>
+          <span>WAV</span>
+          <span>M4A</span>
+          <span>OGG</span>
+          <span>.LRC</span>
+        </div>
+
+        <div className="nr-local-empty-actions">
+          {hasQuery ? (
+            <button type="button" className="nr-primary-btn" onClick={onClearQuery}>
+              清空筛选
+            </button>
+          ) : (
+            <button
+              type="button"
+              className="nr-primary-btn"
+              disabled={busy}
+              onClick={onPickFolder}
+            >
+              <Icon name="folderPlus" className="nr-icon is-sm" />
+              添加本地音乐文件夹
+            </button>
+          )}
+          {foldersCount > 0 && !hasQuery && (
+            <button type="button" className="nr-soft-btn" disabled={busy} onClick={onScan}>
+              <Icon name="refresh" className="nr-icon is-sm" />
+              {busy ? '扫描中…' : '重新扫描'}
+            </button>
+          )}
+        </div>
+
+        {message && (
+          <InlineNotice tone={messageRole === 'alert' ? 'err' : 'ok'} role={messageRole}>
+            {message}
+          </InlineNotice>
+        )}
+      </div>
+    </div>
+  );
+}
+
 export function EmptyState({
   platformFlavor,
   noSearchResults,
