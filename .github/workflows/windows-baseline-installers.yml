@@ -1,0 +1,139 @@
+name: Windows 1.0.0 follow-up checks
+
+on:
+  push:
+    branches:
+      - baseline/windows-1.0.0
+    paths:
+      - .github/workflows/windows-baseline-installers.yml
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  frontend-follow-up:
+    runs-on: windows-2022
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: 0f78f2b98913b451228175c861a1829b21dc4060
+          persist-credentials: false
+
+      - name: Install locked frontend dependencies
+        run: npm ci --no-audit --no-fund
+
+      - name: Build the frontend fixture
+        id: frontend-build
+        run: npm run build
+
+      - name: Rerun the simulated desktop integration test
+        run: node src/desktop-p2a.test.mjs
+
+      - name: Run the local library integration test independently
+        if: ${{ !cancelled() && steps.frontend-build.outcome == 'success' }}
+        run: node src/local-library-p2b.test.mjs
+
+  installer-smoke:
+    runs-on: windows-2022
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        installer: [nsis, msi]
+    env:
+      PACKAGE_KIND: ${{ matrix.installer }}
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: windows-1.0.0-baseline-1
+          path: baseline
+          github-token: ${{ github.token }}
+          run-id: '45551576947'
+
+      - name: Verify, install, start and uninstall Prism
+        shell: pwsh
+        run: |
+          function Get-PrismInstallation {
+            $uninstallRoots = @(
+              'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*',
+              'HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*',
+              'HKLM:\Software\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*'
+            )
+            Get-ItemProperty -Path $uninstallRoots -ErrorAction SilentlyContinue |
+              Where-Object { $_.DisplayName -eq 'Prism' }
+          }
+
+          function Invoke-Installer($filePath, $arguments, $operation) {
+            $process = Start-Process -FilePath $filePath -ArgumentList $arguments -Wait -PassThru
+            Write-Host "$operation exit code: $($process.ExitCode)"
+            if ($process.ExitCode -ne 0) { throw "$operation failed with exit code $($process.ExitCode)" }
+          }
+
+          $build = Get-Content baseline/baseline-environment.json -Raw | ConvertFrom-Json
+          if ($build.commit -ne '0f78f2b98913b451228175c861a1829b21dc4060') {
+            throw 'Unexpected source commit in the installer artifact'
+          }
+          $manifest = Get-Content baseline/baseline-installers.json -Raw | ConvertFrom-Json
+          $pattern = if ($env:PACKAGE_KIND -eq 'msi') { '*.msi' } else { '*-setup.exe' }
+          $installer = @(Get-ChildItem baseline -Recurse -Filter $pattern -File)
+          if ($installer.Count -ne 1) { throw "Expected one $env:PACKAGE_KIND installer" }
+          $installer = $installer[0]
+          $expected = @($manifest | Where-Object name -eq $installer.Name)
+          $hash = (Get-FileHash -LiteralPath $installer.FullName -Algorithm SHA256).Hash
+          if ($expected.Count -ne 1 -or $hash -ne $expected[0].sha256) { throw 'Installer hash mismatch' }
+          Write-Host "Installer SHA-256: $hash"
+
+          if (@(Get-PrismInstallation).Count -ne 0) { throw 'Prism is already installed on the runner' }
+          $installDir = Join-Path $env:RUNNER_TEMP "Prism-$env:PACKAGE_KIND"
+          $evidenceDir = (New-Item -ItemType Directory -Path smoke-evidence).FullName
+          if ($env:PACKAGE_KIND -eq 'msi') {
+            Invoke-Installer 'msiexec.exe' "/i `"$($installer.FullName)`" INSTALLDIR=`"$installDir`" /qn /norestart /l*v `"$evidenceDir/install-msi.log`"" 'Install'
+          } else {
+            Invoke-Installer $installer.FullName "/S /D=$installDir" 'Install'
+          }
+
+          $installed = @(Get-PrismInstallation)
+          if ($installed.Count -ne 1 -or $installed[0].DisplayVersion -ne '1.0.0') {
+            throw 'Expected one Prism 1.0.0 uninstall entry after install'
+          }
+          $appFile = Join-Path $installDir 'Prism.exe'
+          if (-not (Test-Path -LiteralPath $appFile -PathType Leaf)) { throw 'Installed Prism.exe is missing' }
+
+          $app = Start-Process -FilePath $appFile -PassThru
+          try {
+            if ($app.WaitForExit(6000)) { throw "Prism exited unexpectedly: $($app.ExitCode)" }
+            $app.Refresh()
+            $windowObserved = $app.MainWindowHandle -ne [IntPtr]::Zero
+            Write-Host "Prism process stayed running; main window observed: $windowObserved"
+          } finally {
+            if (-not $app.HasExited) { Stop-Process -Id $app.Id }
+            $app.WaitForExit()
+          }
+
+          if ($env:PACKAGE_KIND -eq 'msi') {
+            Invoke-Installer 'msiexec.exe' "/x `"$($installer.FullName)`" /qn /norestart /l*v `"$evidenceDir/uninstall-msi.log`"" 'Uninstall'
+          } else {
+            Invoke-Installer (Join-Path $installDir 'uninstall.exe') '/S' 'Uninstall'
+          }
+          if ((Test-Path -LiteralPath $appFile) -or @(Get-PrismInstallation).Count -ne 0) {
+            throw 'Prism executable or uninstall entry remains after uninstall'
+          }
+          [ordered]@{
+            installer = $installer.Name
+            sha256 = $hash
+            install = 'passed'
+            launch_process = 'passed'
+            window_observed = $windowObserved
+            uninstall = 'passed'
+          } | ConvertTo-Json | Tee-Object -FilePath "$evidenceDir/result.json"
+
+      - name: Upload smoke test evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-1.0.0-smoke-${{ matrix.installer }}-${{ github.run_attempt }}
+          if-no-files-found: ignore
+          retention-days: 14
+          path: smoke-evidence/
