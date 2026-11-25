@@ -88,10 +88,10 @@ export function AppHeader({
   return (
     <header className="topbar">
       <div className="nr-top-left">
-        <button type="button" className="brand" onClick={onHome} aria-label="Prism，返回音乐库">
+        <button type="button" className="brand" onClick={onHome} aria-label="Vesper，返回音乐库">
           <span className="nr-lamp-dot" aria-hidden="true" />
           <span>
-            <b>Prism</b>
+            <b>Vesper</b>
           </span>
         </button>
 

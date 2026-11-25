@@ -81,7 +81,7 @@ fn sanitize_cover(raw:&str)->Option<String>{
  let safe=url.to_string();valid_cover(&safe).then_some(safe)
 }
 // 普通队列的封面：允许 ?param 查询串（真实封面 URL 带它），仅限 https 网易图域名。
-fn valid_cover(raw:&str)->bool {
+pub(crate) fn valid_cover(raw:&str)->bool {
  if raw.len()>2048 {return false}
  let Ok(u)=reqwest::Url::parse(raw) else{return false};
  let Some(host)=u.host_str() else{return false};

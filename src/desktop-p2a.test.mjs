@@ -31,7 +31,22 @@ let shortcutsState = {
   },
 };
 let rejectNextShortcutConflict = false;
-let lyricWindowState = { enabled: false, locked: false, position: null };
+let lyricWindowState = {
+  enabled: false,
+  locked: false,
+  position: null,
+  style: {
+    fontSize: 28,
+    theme: 'night',
+    layout: 'dual',
+    align: 'center',
+    panelOpacity: 82,
+    karaoke: true,
+    showTranslation: true,
+    showRomaji: false,
+    width: 720,
+  },
+};
 
 Object.defineProperty(dom.window.HTMLMediaElement.prototype, 'paused', {
   configurable: true,
@@ -130,8 +145,12 @@ window.__TAURI_INTERNALS__ = {
           enabled: Boolean(args.enabled),
           locked: args.locked === undefined ? lyricWindowState.locked : Boolean(args.locked),
           position: args.enabled ? lyricWindowState.position || { x: 240, y: 640 } : lyricWindowState.position,
+          style: {
+            ...lyricWindowState.style,
+            ...(args.style && typeof args.style === 'object' ? args.style : {}),
+          },
         };
-        return { ...lyricWindowState };
+        return { ...lyricWindowState, style: { ...lyricWindowState.style } };
       }
       case 'desktop_lyric_update':
         return null;
@@ -257,6 +276,10 @@ try {
   assert.equal(firstUpdate.romaji, 'di yi ju');
   assert.equal(firstUpdate.title, '夜车 - 曾轶可');
   assert.equal(firstUpdate.playing, true);
+  assert.equal(firstUpdate.nextText, '第二句灯光');
+  assert.equal(firstUpdate.durationMs, 10000);
+  assert.equal(firstUpdate.rate, 1);
+  assert.match(firstUpdate.accentColor, /^#[0-9a-fA-F]{6}$/);
 
   // 同句内多次 timeupdate 不得重复推送
   const countAtLine1 = countCmd('desktop_lyric_update');
@@ -291,6 +314,41 @@ try {
     enabled: true,
     locked: false,
   });
+
+  // 展开桌面歌词外观与字幕设置并切换主题/字号/模式/推进/透明度
+  buttonIncludes('外观与字幕设置').click();
+  await wait(() => document.querySelector('[aria-label="桌面歌词外观设置"]'), '展开桌面歌词外观设置');
+  buttonByText('高对比').click();
+  await wait(() => lyricWindowState.style.theme === 'contrast', '切换桌面歌词配色');
+  buttonByText('单行').click();
+  await wait(() => lyricWindowState.style.layout === 'single', '切换单行字幕模式');
+  buttonByText('大').click();
+  await wait(() => lyricWindowState.style.fontSize === 34, '切换桌面歌词字号');
+  buttonByText('暖光推进').click();
+  await wait(() => lyricWindowState.style.karaoke === false, '关闭暖光推进');
+  buttonByText('音译').click();
+  await wait(() => lyricWindowState.style.showRomaji === true, '开启音译字幕');
+
+  const opacitySlider = document.querySelector('#nr-dlyric-opacity');
+  Object.getOwnPropertyDescriptor(dom.window.HTMLInputElement.prototype, 'value').set.call(
+    opacitySlider,
+    '64'
+  );
+  opacitySlider.dispatchEvent(new dom.window.Event('input', { bubbles: true }));
+  opacitySlider.dispatchEvent(new dom.window.Event('change', { bubbles: true }));
+  opacitySlider.dispatchEvent(new dom.window.Event('blur', { bubbles: true }));
+  await wait(() => lyricWindowState.style.panelOpacity === 64, '更新桌面歌词底板透明度');
+
+  // 模拟从悬浮窗控制条触发的事件回传同步到主界面
+  listeners.get('prism:desktop-lyric-state')({
+    payload: {
+      enabled: true,
+      locked: false,
+      position: { x: 160, y: 520 },
+      style: { ...lyricWindowState.style, fontSize: 38, layout: 'dual' },
+    },
+  });
+  await wait(() => document.querySelector('#lw-more-panel')?.textContent.includes('38px'), '同步悬浮窗修改字号');
 
   // 模拟原生桌面歌词窗关闭 -> 派发 prism:desktop-lyric-state
   const beforeCloseCount = countCmd('desktop_lyric_update');

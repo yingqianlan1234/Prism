@@ -45,12 +45,18 @@ pub(crate) fn install(app:&mut App) {
     let mode=read_mode(path.as_ref());
     app.manage(BackgroundState { mode:Mutex::new(mode), tray_ready:AtomicBool::new(false), allow_exit:AtomicBool::new(false), user_hidden:AtomicBool::new(false), quit_pending:AtomicBool::new(false), path });
     let tray=(|| -> tauri::Result<_> {
-        let open=MenuItem::with_id(app,"prism_open","打开 Prism",true,None::<&str>)?;
-        let exit=MenuItem::with_id(app,"prism_exit","退出 Prism",true,None::<&str>)?;
-        let menu=Menu::with_items(app,&[&open,&exit])?;
+        let open=MenuItem::with_id(app,"prism_open","打开 Vesper",true,None::<&str>)?;
+        let exit=MenuItem::with_id(app,"prism_exit","退出 Vesper",true,None::<&str>)?;
+        let lyric=MenuItem::with_id(app,"prism_lyric_toggle","显示/隐藏桌面歌词",true,None::<&str>)?;
+        let lock=MenuItem::with_id(app,"prism_lyric_lock","锁定/解锁桌面歌词",true,None::<&str>)?;
+        let menu=Menu::with_items(app,&[&open,&lyric,&lock,&exit])?;
         let icon=tauri::image::Image::from_bytes(include_bytes!("../icons/window-icon.png"))?;
-        TrayIconBuilder::with_id("prism_tray").icon(icon).tooltip("Prism").menu(&menu).show_menu_on_left_click(false)
-            .on_menu_event(|app,event|match event.id().as_ref(){"prism_open"=>restore(app),"prism_exit"=>quit(app),_=>{}})
+        TrayIconBuilder::with_id("prism_tray").icon(icon).tooltip("Vesper").menu(&menu).show_menu_on_left_click(false)
+            .on_menu_event(|app,event|match event.id().as_ref(){
+                "prism_open"=>restore(app),"prism_exit"=>quit(app),
+                "prism_lyric_toggle"=>crate::desktop_lyric::toggle_from_tray(app,false),
+                "prism_lyric_lock"=>crate::desktop_lyric::toggle_from_tray(app,true),_=>{}
+            })
             .on_tray_icon_event(|tray,event|if let TrayIconEvent::Click{button:MouseButton::Left,button_state:MouseButtonState::Up,..}=event{restore(tray.app_handle())})
             .build(app)
     })();

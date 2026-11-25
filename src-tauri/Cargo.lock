@@ -4854,7 +4854,7 @@ dependencies = [
 
 [[package]]
 name = "xianyu"
-version = "1.0.0"
+version = "1.1.0"
 dependencies = [
  "aes",
  "base64 0.22.1",
@@ -4873,6 +4873,7 @@ dependencies = [
  "tauri-build",
  "webview2-com",
  "windows",
+ "windows-numerics",
 ]
 
 [[package]]

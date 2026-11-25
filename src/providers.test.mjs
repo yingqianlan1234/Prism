@@ -118,7 +118,7 @@ test('QQ 实际 mock 所有能力均不访问网络、IPC、Worker 或浏览器�
 test('Release 构建配置使用静态前端且未配置 Node 后台服务（静态检查）',async()=>{
  const config=JSON.parse(await readFile('src-tauri/tauri.conf.json','utf8'));
  const pkg=JSON.parse(await readFile('package.json','utf8'));
- assert.equal(config.productName,'Prism');assert.equal(config.mainBinaryName,'Prism');assert.equal(config.identifier,'local.xianyu.music');
+ assert.equal(config.productName,'Vesper');assert.equal(config.mainBinaryName,'Vesper');assert.equal(config.identifier,'local.xianyu.music');
  assert.equal(config.build.frontendDist,'../dist');
  assert.equal(config.build.beforeBuildCommand,'npm run build');
  assert.equal(config.bundle.externalBin,undefined);
@@ -180,4 +180,9 @@ test('桌面功能能力位、事件名与 P2-A IPC 命令参数映射正确',as
  assert.deepEqual(calls.at(-1),{command:'desktop_lyric_set',args:{enabled:true,locked:true}});
  await desktop.desktopLyricUpdate({text:'第一行',translation:'line 1',romaji:'dai ichi',title:'夜车 - 曾轶可',playing:true});
  assert.deepEqual(calls.at(-1),{command:'desktop_lyric_update',args:{text:'第一行',translation:'line 1',romaji:'dai ichi',title:'夜车 - 曾轶可',playing:true}});
+ const lyricStyle={layout:'single',theme:'contrast',fontSize:34,karaoke:false};
+ await desktop.desktopLyricSet({enabled:true,style:lyricStyle});
+ assert.deepEqual(calls.at(-1),{command:'desktop_lyric_set',args:{enabled:true,style:lyricStyle}});
+ await desktop.desktopLyricUpdate({text:'第一行',translation:'line 1',romaji:'dai ichi',title:'夜车 - 曾轶可',playing:true,nextText:'第二行',elapsedMs:1200,durationMs:4000,rate:1.25,accentColor:'#F2A65A'});
+ assert.deepEqual(calls.at(-1),{command:'desktop_lyric_update',args:{text:'第一行',translation:'line 1',romaji:'dai ichi',title:'夜车 - 曾轶可',playing:true,nextText:'第二行',elapsedMs:1200,durationMs:4000,rate:1.25,accentColor:'#F2A65A'}});
 });

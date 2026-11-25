@@ -15,6 +15,7 @@ import {
   manualIndex,
   queueMode,
   cleanTrack,
+  coverForStorage,
 } from './playback-state.js';
 import { extractAccent } from './accent.js';
 import {
@@ -57,6 +58,32 @@ import {
   PlaylistPickerDialog,
   GlobalShortcutsDialog,
 } from './components/Overlays.jsx';
+
+const DEFAULT_DESKTOP_LYRIC_STYLE = Object.freeze({
+  fontSize: 28,
+  theme: 'night',
+  layout: 'dual',
+  align: 'center',
+  panelOpacity: 82,
+  karaoke: true,
+  showTranslation: true,
+  showRomaji: false,
+  width: 720,
+});
+
+const normalizeDesktopLyricState = (res, prev) => ({
+  enabled: Boolean(res?.enabled),
+  locked: Boolean(res?.locked),
+  position: res?.position ?? prev?.position ?? null,
+  style: {
+    ...DEFAULT_DESKTOP_LYRIC_STYLE,
+    ...(prev?.style || {}),
+    ...(res?.style && typeof res.style === 'object' ? res.style : {}),
+  },
+});
+
+const validHexColor = color =>
+  typeof color === 'string' && /^#[0-9a-fA-F]{6}$/.test(color) ? color : '#F2A65A';
 
 if (typeof window !== 'undefined') window.__extractAccent = extractAccent;
 
@@ -239,11 +266,24 @@ export function App({
   const [showShortcuts, setShowShortcuts] = useState(false);
   const [shortcutsBusy, setShortcutsBusy] = useState(false);
   const [shortcutsError, setShortcutsError] = useState('');
-  const [desktopLyric, setDesktopLyric] = useState({ enabled: false, locked: false, position: null });
-  const desktopLyricRef = useRef({ enabled: false, locked: false, position: null });
+  const [desktopLyric, setDesktopLyric] = useState({
+    enabled: false,
+    locked: false,
+    position: null,
+    style: { ...DEFAULT_DESKTOP_LYRIC_STYLE },
+  });
+  const desktopLyricRef = useRef({
+    enabled: false,
+    locked: false,
+    position: null,
+    style: { ...DEFAULT_DESKTOP_LYRIC_STYLE },
+  });
   const [desktopLyricBusy, setDesktopLyricBusy] = useState(false);
   const [desktopLyricError, setDesktopLyricError] = useState('');
+  const [desktopLyricSyncTick, setDesktopLyricSyncTick] = useState(0);
   const lastDesktopLyricKeyRef = useRef(null);
+  const desktopLyricStyleChainRef = useRef(Promise.resolve());
+  const currentAccentRef = useRef('#F2A65A');
   const desktopHandlersRef = useRef({});
 
   // 睡眠定时控制：仅使用单次 setTimeout 或 onEnded 触发，无高频轮询
@@ -1488,7 +1528,7 @@ export function App({
         id: t.id,
         name: t.name,
         artists: t.artists.map(name => ({ name })),
-        album: { name: t.album },
+        album: { name: t.album, ...(t.coverUrl ? { picUrl: t.coverUrl } : {}) },
         duration: t.duration,
         provider: id,
         accountId: user,
@@ -1518,7 +1558,9 @@ export function App({
     if (recent.current.last?.token === token && recent.current.last?.song === current) return;
     let track;
     try {
-      track = cleanTrack(current);
+      const base = cleanTrack(current);
+      const cover = coverForStorage(current);
+      track = cover ? { ...base, coverUrl: cover } : base;
     } catch {
       return;
     }
@@ -2473,17 +2515,13 @@ export function App({
     scheduleSave(true);
   };
 
-  const setDesktopLyricState = async ({ enabled, locked }) => {
+  const setDesktopLyricState = async ({ enabled, locked, style }) => {
     if (!canDesktopLyric || desktopLyricBusy) return;
     setDesktopLyricBusy(true);
     setDesktopLyricError('');
     try {
-      const res = await desktop.desktopLyricSet({ enabled, locked });
-      const next = {
-        enabled: Boolean(res?.enabled),
-        locked: Boolean(res?.locked),
-        position: res?.position ?? null,
-      };
+      const res = await desktop.desktopLyricSet({ enabled, locked, style });
+      const next = normalizeDesktopLyricState(res, desktopLyricRef.current);
       const turnedOn = next.enabled && !desktopLyricRef.current.enabled;
       desktopLyricRef.current = next;
       if (!next.enabled || turnedOn) lastDesktopLyricKeyRef.current = null;
@@ -2504,6 +2542,25 @@ export function App({
       enabled: desktopLyricRef.current.enabled,
       locked: !desktopLyricRef.current.locked,
     });
+  };
+
+  const updateDesktopLyricStyle = patch => {
+    if (!canDesktopLyric || !patch || typeof patch !== 'object') return;
+    setDesktopLyricError('');
+    desktopLyricStyleChainRef.current = desktopLyricStyleChainRef.current
+      .catch(() => {})
+      .then(async () => {
+        const res = await desktop.desktopLyricSet({
+          enabled: desktopLyricRef.current.enabled,
+          style: patch,
+        });
+        const next = normalizeDesktopLyricState(res, desktopLyricRef.current);
+        desktopLyricRef.current = next;
+        setDesktopLyric(next);
+      })
+      .catch(e => {
+        setDesktopLyricError(errorText(e));
+      });
   };
 
   const updateGlobalShortcuts = async ({ enabled, bindings }) => {
@@ -2831,11 +2888,7 @@ export function App({
         .desktopLyricGet()
         .then(res => {
           if (!active || !res) return;
-          const next = {
-            enabled: Boolean(res.enabled),
-            locked: Boolean(res.locked),
-            position: res.position ?? null,
-          };
+          const next = normalizeDesktopLyricState(res, desktopLyricRef.current);
           desktopLyricRef.current = next;
           setDesktopLyric(next);
         })
@@ -2859,11 +2912,7 @@ export function App({
           const eventName = desktop?.events?.desktopLyricState || 'prism:desktop-lyric-state';
           const unLyric = await listen(eventName, e => {
             if (!active || !e?.payload || typeof e.payload.enabled !== 'boolean') return;
-            const next = {
-              enabled: Boolean(e.payload.enabled),
-              locked: Boolean(e.payload.locked),
-              position: e.payload.position ?? desktopLyricRef.current.position ?? null,
-            };
+            const next = normalizeDesktopLyricState(e.payload, desktopLyricRef.current);
             const turnedOn = next.enabled && !desktopLyricRef.current.enabled;
             desktopLyricRef.current = next;
             if (!next.enabled || turnedOn) lastDesktopLyricKeyRef.current = null;
@@ -2880,13 +2929,15 @@ export function App({
     };
   }, []);
 
-  // 事件驱动推送桌面悬浮歌词：仅在桌面歌词开启且当前行、歌名或播放态变化时触发
+  // 事件驱动推送桌面悬浮歌词：仅在桌面歌词开启且当前行、歌名、播放态、倍速或手动拖动变化时触发
   useEffect(() => {
     if (!canDesktopLyric || !desktopLyric.enabled) {
       lastDesktopLyricKeyRef.current = null;
       return;
     }
     const currentLine = lyricIndex >= 0 ? lyrics[lyricIndex] : null;
+    const nextLine =
+      lyricIndex >= 0 && lyricIndex + 1 < lyrics.length ? lyrics[lyricIndex + 1] : null;
     const titleText = song
       ? clipLyricField(artist(song) ? `${song.name} - ${artist(song)}` : song.name, 200)
       : '';
@@ -2906,18 +2957,61 @@ export function App({
     } else {
       mainText = '暂无歌词';
     }
+    let elapsedMs = 0;
+    let durationMs = 0;
+    if (currentLine && Number.isFinite(currentLine.at)) {
+      const startSec = currentLine.at;
+      const nextAt = nextLine && Number.isFinite(nextLine.at) ? nextLine.at : null;
+      const audioEl = audio.current;
+      const trackDur =
+        audioEl && Number.isFinite(audioEl.duration) && audioEl.duration > startSec
+          ? audioEl.duration
+          : null;
+      const rawDurationMs =
+        nextAt != null
+          ? Math.round((nextAt - startSec) * 1000)
+          : trackDur != null
+            ? Math.round((trackDur - startSec) * 1000)
+            : 5000;
+      durationMs = Math.min(600000, Math.max(0, rawDurationMs));
+      const curSec =
+        audioEl && Number.isFinite(audioEl.currentTime) ? audioEl.currentTime : startSec;
+      elapsedMs =
+        durationMs > 0
+          ? Math.min(durationMs, Math.max(0, Math.round((curSec - startSec) * 1000)))
+          : 0;
+    }
+    const rate =
+      Number.isFinite(audio.current?.playbackRate) && audio.current.playbackRate > 0
+        ? audio.current.playbackRate
+        : playbackRate || 1;
     const payload = {
       text: clipLyricField(mainText),
       translation: clipLyricField(currentLine?.translation || ''),
       romaji: clipLyricField(currentLine?.romaji || ''),
       title: titleText,
       playing: Boolean(playing),
+      nextText: clipLyricField(nextLine?.text || ''),
+      elapsedMs,
+      durationMs,
+      rate,
+      accentColor: validHexColor(currentAccentRef.current),
     };
     const key = JSON.stringify(payload);
     if (lastDesktopLyricKeyRef.current === key) return;
     lastDesktopLyricKeyRef.current = key;
     desktop.desktopLyricUpdate(payload).catch(() => {});
-  }, [canDesktopLyric, desktopLyric.enabled, song, lyrics, lyricIndex, lyricStatus, playing]);
+  }, [
+    canDesktopLyric,
+    desktopLyric.enabled,
+    song,
+    lyrics,
+    lyricIndex,
+    lyricStatus,
+    playing,
+    playbackRate,
+    desktopLyricSyncTick,
+  ]);
 
   // 单次下一句精准唤醒定时器（亚 30ms 节拍同步，零轮询，隐藏/暂停即撤销）
   useEffect(() => {
@@ -3179,17 +3273,26 @@ export function App({
   useEffect(() => {
     const root = document.documentElement;
     const apply = c => {
+      let nextAccent = '#F2A65A';
       if (c && c.a) {
+        nextAccent = validHexColor(c.a);
         root.style.setProperty('--nr-glow', c.a);
         root.style.setProperty('--lw-a', c.a);
         root.style.setProperty('--lw-on', c.on);
         root.dataset.accent = c.monochrome ? 'mono' : 'color';
       } else {
         const fb = accentFor(song);
+        nextAccent = validHexColor(fb);
         root.style.setProperty('--nr-glow', fb);
         root.style.setProperty('--lw-a', fb);
         root.style.setProperty('--lw-on', '#161C26');
         root.dataset.accent = 'fallback';
+      }
+      if (currentAccentRef.current !== nextAccent) {
+        currentAccentRef.current = nextAccent;
+        if (desktopLyricRef.current.enabled && desktopLyricRef.current.style?.theme === 'accent') {
+          setDesktopLyricSyncTick(t => t + 1);
+        }
       }
     };
     const src = coverUrl(song, 500);
@@ -3209,7 +3312,7 @@ export function App({
 
   // 原生窗口标题跟随实际播放曲目
   useEffect(() => {
-    const nextTitle = song ? [song.name, artist(song)].filter(Boolean).join(' — ') : 'Prism';
+    const nextTitle = song ? [song.name, artist(song)].filter(Boolean).join(' — ') : 'Vesper';
     try {
       const pending = getCurrentWindow().setTitle(nextTitle);
       if (pending && typeof pending.catch === 'function') pending.catch(() => {});
@@ -3822,6 +3925,7 @@ export function App({
         desktopLyricError={desktopLyricError}
         onToggleDesktopLyric={toggleDesktopLyric}
         onToggleDesktopLyricLock={toggleDesktopLyricLock}
+        onUpdateDesktopLyricStyle={updateDesktopLyricStyle}
         canGlobalShortcuts={canGlobalShortcuts}
         globalShortcuts={globalShortcuts}
         onOpenShortcuts={() => {
@@ -3961,6 +4065,7 @@ export function App({
           scheduleSave();
           const a = e.currentTarget;
           syncLyric(a.currentTime);
+          if (desktopLyricRef.current.enabled) setDesktopLyricSyncTick(t => t + 1);
           if (!a.paused && a.readyState >= 3) {
             listening.current.resume(a.currentTime, performance.now(), a.playbackRate);
           }

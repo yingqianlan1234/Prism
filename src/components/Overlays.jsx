@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   artist,
   providerLabel,
@@ -24,6 +24,26 @@ const SLEEP_OPTIONS = [
   { id: '60', label: '60分' },
   { id: 'track', label: '播完本首' },
 ];
+const LYRIC_LAYOUTS = [
+  { id: 'dual', label: '双行预告' },
+  { id: 'single', label: '单行' },
+];
+const LYRIC_ALIGNS = [
+  { id: 'center', label: '居中' },
+  { id: 'left', label: '靠左' },
+];
+const LYRIC_THEMES = [
+  { id: 'night', label: '深夜琥珀', dot: '#F2A65A' },
+  { id: 'contrast', label: '高对比', dot: '#FFFFFF' },
+  { id: 'warm', label: '暖金', dot: '#F5B762' },
+  { id: 'accent', label: '随封面色', dot: 'var(--nr-glow, #73B3E6)' },
+];
+const LYRIC_FONT_SIZES = [
+  { size: 22, label: '小' },
+  { size: 28, label: '中' },
+  { size: 34, label: '大' },
+  { size: 40, label: '特大' },
+];
 
 export function MoreSettingsPanel({
   showMore,
@@ -48,10 +68,58 @@ export function MoreSettingsPanel({
   desktopLyricError,
   onToggleDesktopLyric,
   onToggleDesktopLyricLock,
+  onUpdateDesktopLyricStyle,
   canGlobalShortcuts,
   globalShortcuts,
   onOpenShortcuts,
 }) {
+  const [showLyricStyle, setShowLyricStyle] = useState(false);
+  const style = desktopLyric?.style || {};
+  const layout = style.layout || 'dual';
+  const align = style.align || 'center';
+  const theme = style.theme || 'night';
+  const fontSize = Number(style.fontSize) || 28;
+  const karaoke = style.karaoke !== false;
+  const showTranslation = style.showTranslation !== false;
+  const showRomaji = Boolean(style.showRomaji);
+  const panelOpacity = Number.isFinite(Number(style.panelOpacity)) ? Number(style.panelOpacity) : 82;
+  const [opacityDraft, setOpacityDraft] = useState(panelOpacity);
+  const opacityTimerRef = useRef(null);
+  const pendingOpacityRef = useRef(null);
+
+  useEffect(() => {
+    setOpacityDraft(panelOpacity);
+  }, [panelOpacity]);
+
+  useEffect(
+    () => () => {
+      if (opacityTimerRef.current) clearTimeout(opacityTimerRef.current);
+    },
+    []
+  );
+
+  const flushOpacity = value => {
+    if (opacityTimerRef.current) {
+      clearTimeout(opacityTimerRef.current);
+      opacityTimerRef.current = null;
+    }
+    const target = value ?? pendingOpacityRef.current;
+    pendingOpacityRef.current = null;
+    if (target == null) return;
+    const clamped = Math.min(100, Math.max(40, Math.round(Number(target))));
+    if (clamped !== panelOpacity) {
+      onUpdateDesktopLyricStyle?.({ panelOpacity: clamped });
+    }
+  };
+
+  const scheduleOpacity = value => {
+    pendingOpacityRef.current = value;
+    if (opacityTimerRef.current) clearTimeout(opacityTimerRef.current);
+    opacityTimerRef.current = setTimeout(() => {
+      flushOpacity();
+    }, 80);
+  };
+
   const canReloadQuality =
     canSelectQuality &&
     song?.provider === 'netease' &&
@@ -152,6 +220,153 @@ export function MoreSettingsPanel({
               穿透锁定：{desktopLyric?.locked ? '已锁定' : '未锁定'}
             </button>
           </div>
+          <button
+            type="button"
+            className={'nr-seg-btn nr-dlyric-expand' + (showLyricStyle ? ' is-open' : '')}
+            aria-expanded={showLyricStyle}
+            onClick={() => setShowLyricStyle(v => !v)}
+          >
+            外观与字幕设置{showLyricStyle ? '（收起）' : ''}
+          </button>
+          {showLyricStyle && (
+            <div className="nr-dlyric-style-box" role="group" aria-label="桌面歌词外观设置">
+              <div className="nr-dlyric-subrow">
+                <span className="nr-more-sub-label">字幕模式</span>
+                <div className="nr-seg-pills">
+                  {LYRIC_LAYOUTS.map(item => (
+                    <button
+                      key={item.id}
+                      type="button"
+                      className={'nr-seg-btn' + (layout === item.id ? ' is-on' : '')}
+                      aria-pressed={layout === item.id}
+                      onClick={() => onUpdateDesktopLyricStyle?.({ layout: item.id })}
+                    >
+                      {item.label}
+                    </button>
+                  ))}
+                  <button
+                    type="button"
+                    className={'nr-seg-btn' + (karaoke ? ' is-on' : '')}
+                    aria-pressed={karaoke}
+                    onClick={() => onUpdateDesktopLyricStyle?.({ karaoke: !karaoke })}
+                  >
+                    暖光推进
+                  </button>
+                </div>
+              </div>
+
+              <div className="nr-dlyric-subrow">
+                <span className="nr-more-sub-label">伴随字幕</span>
+                <div className="nr-seg-pills">
+                  <button
+                    type="button"
+                    className={'nr-seg-btn' + (showTranslation ? ' is-on' : '')}
+                    aria-pressed={showTranslation}
+                    onClick={() =>
+                      onUpdateDesktopLyricStyle?.({ showTranslation: !showTranslation })
+                    }
+                  >
+                    译文
+                  </button>
+                  <button
+                    type="button"
+                    className={'nr-seg-btn' + (showRomaji ? ' is-on' : '')}
+                    aria-pressed={showRomaji}
+                    onClick={() => onUpdateDesktopLyricStyle?.({ showRomaji: !showRomaji })}
+                  >
+                    音译
+                  </button>
+                </div>
+              </div>
+
+              <div className="nr-dlyric-subrow">
+                <span className="nr-more-sub-label">配色主题</span>
+                <div className="nr-theme-grid">
+                  {LYRIC_THEMES.map(item => (
+                    <button
+                      key={item.id}
+                      type="button"
+                      className={'nr-seg-btn nr-theme-pill' + (theme === item.id ? ' is-on' : '')}
+                      aria-pressed={theme === item.id}
+                      onClick={() => onUpdateDesktopLyricStyle?.({ theme: item.id })}
+                    >
+                      <span
+                        className="nr-theme-dot"
+                        style={{ backgroundColor: item.dot }}
+                        aria-hidden="true"
+                      />
+                      {item.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div className="nr-dlyric-subrow">
+                <div className="nr-more-label-row">
+                  <span className="nr-more-sub-label">字号与对齐</span>
+                  <span className="nr-more-sub">{fontSize}px</span>
+                </div>
+                <div className="nr-dlyric-split">
+                  <div className="nr-seg-pills">
+                    {LYRIC_FONT_SIZES.map(item => (
+                      <button
+                        key={item.size}
+                        type="button"
+                        className={'nr-seg-btn' + (fontSize === item.size ? ' is-on' : '')}
+                        aria-pressed={fontSize === item.size}
+                        onClick={() => onUpdateDesktopLyricStyle?.({ fontSize: item.size })}
+                      >
+                        {item.label}
+                      </button>
+                    ))}
+                  </div>
+                  <div className="nr-seg-pills">
+                    {LYRIC_ALIGNS.map(item => (
+                      <button
+                        key={item.id}
+                        type="button"
+                        className={'nr-seg-btn' + (align === item.id ? ' is-on' : '')}
+                        aria-pressed={align === item.id}
+                        onClick={() => onUpdateDesktopLyricStyle?.({ align: item.id })}
+                      >
+                        {item.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </div>
+
+              <div className="nr-dlyric-subrow">
+                <div className="nr-more-label-row">
+                  <label className="nr-more-sub-label" htmlFor="nr-dlyric-opacity">
+                    悬停底板透明度
+                  </label>
+                  <span className="nr-more-sub">{opacityDraft}%</span>
+                </div>
+                <input
+                  id="nr-dlyric-opacity"
+                  className="nr-dlyric-range"
+                  type="range"
+                  min={40}
+                  max={100}
+                  step={2}
+                  value={opacityDraft}
+                  aria-label="桌面歌词悬停底板透明度"
+                  onChange={e => {
+                    const nextVal = Number(e.target.value);
+                    setOpacityDraft(nextVal);
+                    scheduleOpacity(nextVal);
+                  }}
+                  onPointerUp={e => flushOpacity(Number(e.currentTarget.value))}
+                  onBlur={e => flushOpacity(Number(e.currentTarget.value))}
+                />
+              </div>
+
+              <p className="nr-dlyric-tip">
+                未锁定时悬停浮现播控条并可拖宽；锁定后鼠标移到歌词上可点「解锁」。
+              </p>
+            </div>
+          )}
           {desktopLyricError && (
             <p className="nr-dialog-error" role="alert">
               {desktopLyricError}

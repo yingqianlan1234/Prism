@@ -518,7 +518,7 @@ fn parse_media_response(data:&Value)->Result<(String,&'static str)>{
  let detail=data.pointer("/req_0/data").ok_or(err("upstream","QQ 音频数据不完整"))?;
  match detail.pointer("/midurlinfo/0/result").and_then(Value::as_i64){
   Some(0)=>{},
-  Some(104003)=>return Err(err("upstream","该曲目暂时无法在 Prism 播放，可能受 QQ 绿钻、版权或播放方式限制（104003）")),
+  Some(104003)=>return Err(err("upstream","该曲目暂时无法在 Vesper 播放，可能受 QQ 绿钻、版权或播放方式限制（104003）")),
   Some(_)=>return Err(err("upstream","QQ 音乐拒绝本次播放请求，具体原因未知")),
   None=>return Err(err("upstream","QQ 音乐未返回曲目业务结果")),
  }
@@ -743,7 +743,7 @@ mod tests {
         let known=json!({"code":0,"req_0":{"code":0,"data":{"midurlinfo":[{"purl":"","result":104003}]}}});
         let failure=parse_media_response(&known).unwrap_err();
         assert_eq!(failure.kind,"upstream");
-        assert_eq!(failure.message,"该曲目暂时无法在 Prism 播放，可能受 QQ 绿钻、版权或播放方式限制（104003）");
+        assert_eq!(failure.message,"该曲目暂时无法在 Vesper 播放，可能受 QQ 绿钻、版权或播放方式限制（104003）");
         let denied=json!({"code":0,"req_0":{"code":0,"data":{"sip":["https://ws.stream.qqmusic.qq.com/"],"midurlinfo":[{"purl":"M500FAKE.mp3","result":104003}]}}});
         assert!(parse_media_response(&denied).is_err());
         let allowed=json!({"code":0,"req_0":{"code":0,"data":{"sip":["https://ws.stream.qqmusic.qq.com/"],"midurlinfo":[{"purl":"M500FAKE.mp3","result":0}]}}});

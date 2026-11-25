@@ -28,8 +28,8 @@ export const desktop = Object.freeze({
  globalShortcutsGet:()=>invoke('global_shortcuts_get'),
  globalShortcutsSet:({enabled,bindings})=>invoke('global_shortcuts_set',{enabled,bindings}),
  desktopLyricGet:()=>invoke('desktop_lyric_get'),
- desktopLyricSet:({enabled,locked})=>invoke('desktop_lyric_set',locked===undefined?{enabled}:{enabled,locked}),
- desktopLyricUpdate:({text,translation,romaji,title,playing})=>invoke('desktop_lyric_update',{text,translation,romaji,title,playing}),
+ desktopLyricSet:({enabled,locked,style})=>invoke('desktop_lyric_set',{enabled,...(locked===undefined?{}:{locked}),...(style===undefined?{}:{style})}),
+ desktopLyricUpdate:({text,translation,romaji,title,playing,nextText,elapsedMs,durationMs,rate,accentColor})=>invoke('desktop_lyric_update',{text,translation,romaji,title,playing,...(nextText===undefined?{}:{nextText}),...(elapsedMs===undefined?{}:{elapsedMs}),...(durationMs===undefined?{}:{durationMs}),...(rate===undefined?{}:{rate}),...(accentColor===undefined?{}:{accentColor})}),
  events:Object.freeze({globalShortcut:'prism:global-shortcut',desktopLyricState:'prism:desktop-lyric-state'})
 });
 export const platformFlavor=Object.freeze({netease:'netease',qqmusic:'community'});
