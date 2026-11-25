@@ -1,0 +1,87 @@
+name: Windows 1.0.0 baseline
+
+on:
+  push:
+    branches:
+      - baseline/windows-1.0.0
+    paths:
+      - .github/workflows/windows-baseline.yml
+
+permissions:
+  contents: read
+
+env:
+  BASELINE_COMMIT: 0f78f2b98913b451228175c861a1829b21dc4060
+  WINDOWS_TARGET: x86_64-pc-windows-msvc
+
+jobs:
+  windows-baseline:
+    runs-on: windows-2022
+    timeout-minutes: 45
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ env.BASELINE_COMMIT }}
+          persist-credentials: false
+
+      - name: Record build environment
+        run: |
+          $actualCommit = git rev-parse HEAD
+          if ($actualCommit -ne $env:BASELINE_COMMIT) { throw "Unexpected baseline commit: $actualCommit" }
+          $environment = [ordered]@{
+            commit = $actualCommit
+            workflow_run_id = $env:GITHUB_RUN_ID
+            workflow_run_attempt = $env:GITHUB_RUN_ATTEMPT
+            windows = (Get-CimInstance Win32_OperatingSystem).Version
+            runner_image = $env:ImageVersion
+            target = $env:WINDOWS_TARGET
+            node = (node --version)
+            npm = (npm --version)
+            rustc = (rustc --version)
+            cargo = (cargo --version)
+          }
+          $environment | ConvertTo-Json | Tee-Object -FilePath baseline-environment.json
+
+      - name: Install locked frontend dependencies
+        run: npm ci --no-audit --no-fund
+
+      - name: Run frontend regression suite
+        run: npm test
+
+      - name: Run Windows Rust suite
+        run: cargo test --locked --target $env:WINDOWS_TARGET --manifest-path src-tauri/Cargo.toml
+
+      - name: Build NSIS and MSI installers
+        run: npm run tauri -- build --ci --no-sign --target $env:WINDOWS_TARGET --bundles nsis,msi -- --locked
+
+      - name: Record installer identity
+        run: |
+          $bundle = "src-tauri/target/$env:WINDOWS_TARGET/release/bundle"
+          $installers = @(Get-ChildItem -Path "$bundle/nsis/*-setup.exe", "$bundle/msi/*.msi" -File)
+          if ($installers.Count -ne 2 -or @($installers.Extension | Sort-Object -Unique).Count -ne 2) {
+            throw 'Expected exactly one NSIS installer and one MSI installer'
+          }
+          $records = foreach ($installer in $installers) {
+            [ordered]@{
+              name = $installer.Name
+              bytes = $installer.Length
+              sha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath $installer.FullName).Hash
+              signature_status = (Get-AuthenticodeSignature -LiteralPath $installer.FullName).Status.ToString()
+            }
+          }
+          $records | ConvertTo-Json | Tee-Object -FilePath baseline-installers.json
+
+      - name: Upload baseline evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-1.0.0-baseline-${{ github.run_attempt }}
+          if-no-files-found: error
+          retention-days: 14
+          path: |
+            baseline-environment.json
+            baseline-installers.json
+            src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis/*-setup.exe
+            src-tauri/target/x86_64-pc-windows-msvc/release/bundle/msi/*.msi
