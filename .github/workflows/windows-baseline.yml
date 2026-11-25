@@ -46,18 +46,30 @@ jobs:
           $environment | ConvertTo-Json | Tee-Object -FilePath baseline-environment.json
 
       - name: Install locked frontend dependencies
+        id: frontend-install
         run: npm ci --no-audit --no-fund
 
       - name: Run frontend regression suite
+        id: frontend-test
         run: npm test
 
       - name: Run Windows Rust suite
-        run: cargo test --locked --target $env:WINDOWS_TARGET --manifest-path src-tauri/Cargo.toml
+        id: rust-test
+        if: ${{ !cancelled() && steps.frontend-install.outcome == 'success' }}
+        run: |
+          if (-not (Test-Path dist/index.html)) {
+            npm run build
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          }
+          cargo test --locked --target $env:WINDOWS_TARGET --manifest-path src-tauri/Cargo.toml
 
       - name: Build NSIS and MSI installers
+        id: bundle
+        if: ${{ !cancelled() && steps.frontend-install.outcome == 'success' }}
         run: npm run tauri -- build --ci --no-sign --target $env:WINDOWS_TARGET --bundles nsis,msi -- --locked
 
       - name: Record installer identity
+        if: ${{ !cancelled() && steps.bundle.outcome == 'success' }}
         run: |
           $bundle = "src-tauri/target/$env:WINDOWS_TARGET/release/bundle"
           $installers = @(Get-ChildItem -Path "$bundle/nsis/*-setup.exe", "$bundle/msi/*.msi" -File)
@@ -75,6 +87,7 @@ jobs:
           $records | ConvertTo-Json | Tee-Object -FilePath baseline-installers.json
 
       - name: Upload baseline evidence
+        if: ${{ !cancelled() }}
         uses: actions/upload-artifact@v4
         with:
           name: windows-1.0.0-baseline-${{ github.run_attempt }}
