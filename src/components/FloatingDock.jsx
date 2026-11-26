@@ -62,6 +62,8 @@ export function FloatingDock({
   desktopLyricBusy,
   onToggleDesktopLyric,
   onToggleDesktopLyricLock,
+  updateAttention = false,
+  updateHint = '',
 }) {
   const modeText = MODE_LABELS[mode] || '顺序播放';
   const showNeteaseActions = neteaseSignedIn && song?.provider === 'netease';
@@ -259,13 +261,14 @@ export function FloatingDock({
       <button
         type="button"
         className={'lw-icon-btn tool nr-settings-btn' + (showMore ? ' is-active' : '')}
-        aria-label="更多设置"
-        title="更多设置"
+        aria-label={updateHint ? `更多设置（${updateHint}）` : '更多设置'}
+        title={updateHint ? `更多设置（${updateHint}）` : '更多设置'}
         aria-expanded={showMore}
         aria-controls="lw-more-panel"
         onClick={onToggleMore}
       >
         <Icon name="settings" />
+        <span className="lw-dot" data-on={updateAttention ? 'true' : 'false'} aria-hidden="true" />
       </button>
     </div>
   );

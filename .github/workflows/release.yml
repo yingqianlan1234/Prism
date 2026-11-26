@@ -1,0 +1,82 @@
+name: Release Vesper
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      draft:
+        description: 创建为草稿 Release（建议开启，核对无误后手动发布）
+        required: false
+        type: boolean
+        default: true
+
+permissions:
+  contents: write
+
+jobs:
+  publish-windows:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: Setup Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: 'src-tauri -> target'
+
+      - name: Run frontend unit and integration tests
+        run: npm run test
+
+      - name: Run Rust backend unit tests
+        run: cargo test --manifest-path src-tauri/Cargo.toml
+
+      - name: Verify updater signing key and pubkey configuration
+        shell: pwsh
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+        run: |
+          if ([string]::IsNullOrWhiteSpace($env:TAURI_SIGNING_PRIVATE_KEY)) {
+            Write-Error "缺少仓库 Secret: TAURI_SIGNING_PRIVATE_KEY。请参考 docs/updater-release.md 生成并配置签名密钥。"
+            exit 1
+          }
+          $conf = Get-Content -Raw -Path "src-tauri/tauri.conf.json" | ConvertFrom-Json
+          $pubkey = $conf.plugins.updater.pubkey
+          if ([string]::IsNullOrWhiteSpace($pubkey)) {
+            Write-Error "src-tauri/tauri.conf.json 中的 plugins.updater.pubkey 尚未配置。请先填入公钥再打标签发版。"
+            exit 1
+          }
+
+      - name: Build, sign and upload Windows release via tauri-action
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        with:
+          tagName: v__VERSION__
+          releaseName: Vesper v__VERSION__
+          releaseBody: |
+            [feature]
+            ## 更新亮点
+            - 请在此填写本次更新的主要新特性或修复说明
+
+            > 提示：在发布页首行使用 `[feature]` 会向客户端主动弹出更新提示；使用 `[patch]`（或留空且仅递增修订号如 1.1.1）则仅在“更多设置”按钮亮起暖琥珀提醒点，不打断听歌。
+          releaseDraft: ${{ github.event_name == 'workflow_dispatch' && inputs.draft || true }}
+          prerelease: false
+          includeUpdaterJson: true
+          updaterJsonKeepUniversal: false

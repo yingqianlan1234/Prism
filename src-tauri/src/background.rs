@@ -40,6 +40,18 @@ fn quit(app:&AppHandle) {
 }
 pub(crate) fn may_reveal(app:&AppHandle)->bool { app.try_state::<BackgroundState>().is_none_or(|s|!s.user_hidden.load(Ordering::SeqCst)) }
 
+pub(crate) fn allow_exit_for_update(app: &AppHandle) {
+    if let Some(state) = app.try_state::<BackgroundState>() {
+        state.allow_exit.store(true, Ordering::SeqCst);
+    }
+}
+
+pub(crate) fn restore_close_behavior_after_update_error(app: &AppHandle) {
+    if let Some(state) = app.try_state::<BackgroundState>() {
+        state.allow_exit.store(false, Ordering::SeqCst);
+    }
+}
+
 pub(crate) fn install(app:&mut App) {
     let path=app.path().app_data_dir().ok().map(|p|p.join("close-behavior.json"));
     let mode=read_mode(path.as_ref());

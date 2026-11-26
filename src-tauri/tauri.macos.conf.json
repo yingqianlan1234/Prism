@@ -5,6 +5,7 @@
     }
   },
   "bundle": {
+    "createUpdaterArtifacts": false,
     "icon": ["icons/icon.icns", "icons/128x128.png", "icons/128x128@2x.png"]
   }
 }

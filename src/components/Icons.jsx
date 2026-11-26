@@ -222,6 +222,19 @@ const ICONS = {
       <path d="M9.7 13.1h4.6" />
     </>
   ),
+  update: (
+    <>
+      <path d="M12 4.2v10.2" />
+      <path d="m8.2 10.8 3.8 3.8 3.8-3.8" />
+      <path d="M5 15.8v2.2a1.8 1.8 0 0 0 1.8 1.8h10.4a1.8 1.8 0 0 0 1.8-1.8v-2.2" />
+    </>
+  ),
+  checkCircle: (
+    <>
+      <circle cx="12" cy="12" r="8.2" />
+      <path d="m8.8 12.2 2.2 2.2 4.4-4.6" />
+    </>
+  ),
 };
 
 export function Icon({ name, className = 'nr-icon' }) {

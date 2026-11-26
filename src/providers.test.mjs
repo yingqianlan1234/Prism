@@ -8,14 +8,14 @@ globalThis.window={__TAURI_INTERNALS__:{invoke:async(command,args)=>{calls.push(
 const {getProvider,capabilities,capabilitiesForHost,recommendationCapabilities,desktop}=await import('./providers.js');
 
 test('macOS 保留三个音乐来源，Windows 桌面能力随宿主关闭',()=>{
- const mac=capabilitiesForHost({qqMusic:true,globalShortcuts:false,desktopLyric:false,closeBehavior:false});
+ const mac=capabilitiesForHost({qqMusic:true,globalShortcuts:false,desktopLyric:false,closeBehavior:false,appUpdater:false});
  assert.equal(mac.local,capabilities.local);
  assert.equal(mac.netease,capabilities.netease);
  assert.equal(mac.qqmusic.available,true);
- assert.deepEqual(mac.desktop,{globalShortcuts:false,desktopLyric:false,closeBehavior:false});
- const windows=capabilitiesForHost({qqMusic:true,globalShortcuts:true,desktopLyric:true,closeBehavior:true});
+ assert.deepEqual(mac.desktop,{globalShortcuts:false,desktopLyric:false,closeBehavior:false,appUpdater:false});
+ const windows=capabilitiesForHost({qqMusic:true,globalShortcuts:true,desktopLyric:true,closeBehavior:true,appUpdater:true});
  assert.equal(windows.qqmusic.available,true);
- assert.deepEqual(windows.desktop,{globalShortcuts:true,desktopLyric:true,closeBehavior:true});
+ assert.deepEqual(windows.desktop,{globalShortcuts:true,desktopLyric:true,closeBehavior:true,appUpdater:true});
  assert.equal(capabilitiesForHost(undefined),capabilities);
 });
 
@@ -184,10 +184,10 @@ test('QQ Mock 与社区适配器分别声明真实能力',async()=>{
 });
 
 test('桌面功能能力位、事件名与 P2-A IPC 命令参数映射正确',async()=>{
- assert.deepEqual(capabilities.desktop,{globalShortcuts:true,desktopLyric:true});
+ assert.deepEqual(capabilities.desktop,{globalShortcuts:true,desktopLyric:true,appUpdater:true});
  assert(Object.isFrozen(capabilities.desktop));
  assert.equal(desktop.capabilities,capabilities.desktop);
- assert.deepEqual(desktop.events,{globalShortcut:'prism:global-shortcut',desktopLyricState:'prism:desktop-lyric-state'});
+ assert.deepEqual(desktop.events,{globalShortcut:'prism:global-shortcut',desktopLyricState:'prism:desktop-lyric-state',updateProgress:'prism:app-update-progress'});
  assert(Object.isFrozen(desktop.events));
  await desktop.globalShortcutsGet();
  assert.deepEqual(calls.at(-1),{command:'global_shortcuts_get',args:{}});
@@ -207,4 +207,14 @@ test('桌面功能能力位、事件名与 P2-A IPC 命令参数映射正确',as
  assert.deepEqual(calls.at(-1),{command:'desktop_lyric_set',args:{enabled:true,style:lyricStyle}});
  await desktop.desktopLyricUpdate({text:'第一行',translation:'line 1',romaji:'dai ichi',title:'夜车 - 曾轶可',playing:true,nextText:'第二行',elapsedMs:1200,durationMs:4000,rate:1.25,accentColor:'#F2A65A'});
  assert.deepEqual(calls.at(-1),{command:'desktop_lyric_update',args:{text:'第一行',translation:'line 1',romaji:'dai ichi',title:'夜车 - 曾轶可',playing:true,nextText:'第二行',elapsedMs:1200,durationMs:4000,rate:1.25,accentColor:'#F2A65A'}});
+ await desktop.updaterConfigGet();
+ assert.deepEqual(calls.at(-1),{command:'app_update_config_get',args:{}});
+ await desktop.updaterConfigSet({source:'mirror',customMirror:'https://mirror.example.com/'});
+ assert.deepEqual(calls.at(-1),{command:'app_update_config_set',args:{source:'mirror',customMirror:'https://mirror.example.com/'}});
+ await desktop.updaterCheck({sourceOverride:'mirror'});
+ assert.deepEqual(calls.at(-1),{command:'app_update_check',args:{sourceOverride:'mirror'}});
+ await desktop.updaterDownload();
+ assert.deepEqual(calls.at(-1),{command:'app_update_download',args:{}});
+ await desktop.updaterInstall();
+ assert.deepEqual(calls.at(-1),{command:'app_update_install',args:{}});
 });

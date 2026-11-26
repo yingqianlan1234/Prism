@@ -1,4 +1,4 @@
-name: Verify the Windows desktop executable layout
+name: Verify Windows updater integration after syncing main
 on:
   push:
     branches: [ci/macos-wechat-windows-check]
@@ -11,7 +11,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
         with:
-          ref: 9cbd41c4cc576d6cd02fd1867bdca05b15ca4905
+          ref: 915b10a8dc782b81044f39317e55b259b9ae6ce3
           persist-credentials: false
       - run: git rev-parse HEAD
       - run: npm ci --no-audit --no-fund
