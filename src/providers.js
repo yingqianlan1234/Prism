@@ -11,6 +11,14 @@ export const capabilities = Object.freeze({
  netease:Object.freeze({login:true,logout:true,restoreSession:true,getUserProfile:true,search:true,getPlaylists:true,getPlaylistTracks:true,getLyrics:true,resolvePlayback:true,getRecommendations:true,reportListening:false,...neteaseLibraryCapabilities(true)}),
  qqmusic:Object.freeze({login:true,logout:true,restoreSession:true,getUserProfile:true,search:true,getPlaylists:true,getPlaylistTracks:true,getLyrics:true,resolvePlayback:true,getRecommendations:true,reportListening:false,...neteaseLibraryCapabilities(false)})
 });
+export function capabilitiesForHost(host) {
+ if(typeof host?.qqMusic!=='boolean') return capabilities;
+ return Object.freeze({
+  ...capabilities,
+  desktop:Object.freeze({globalShortcuts:host.globalShortcuts,desktopLyric:host.desktopLyric,closeBehavior:host.closeBehavior}),
+  qqmusic:Object.freeze({...capabilities.qqmusic,available:host.qqMusic})
+ });
+}
 export const local = Object.freeze({
  capabilities:capabilities.local,
  getFolders:()=>invoke('local_library_folders_get'),

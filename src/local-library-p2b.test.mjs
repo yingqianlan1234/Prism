@@ -6,6 +6,7 @@ import assert from 'node:assert/strict';
 const dom = new JSDOM('<div id="root"></div>', { url: 'http://localhost' });
 globalThis.window = dom.window;
 globalThis.document = dom.window.document;
+globalThis.isTauri = true;
 Object.defineProperty(globalThis, 'navigator', { value: dom.window.navigator, configurable: true });
 for (const n of ['MutationObserver', 'HTMLElement', 'Event', 'KeyboardEvent', 'MouseEvent']) {
   globalThis[n] = dom.window[n];
@@ -55,7 +56,10 @@ window.__TAURI_INTERNALS__ = {
   invoke: async (cmd, args) => {
     calls.push({ cmd, args });
     switch (cmd) {
+      case 'host_capabilities':
+        return { qqMusic: false, globalShortcuts: false, desktopLyric: false, closeBehavior: false };
       case 'playback_state_load':
+        if (args.provider === 'last') return { status: 'ok', provider: 'qqmusic' };
         return { status: 'empty' };
       case 'playback_state_save':
         return { saved: true };
@@ -98,7 +102,7 @@ window.__TAURI_INTERNALS__ = {
         };
       }
       case 'local_track_resolve':
-        return { url: `http://prismmedia.localhost/${args.id}.flac`, contentType: 'audio/flac' };
+        return { url: `prismlocal://localhost/${args.id}.flac`, contentType: 'audio/flac' };
       case 'local_track_lyric':
         if (args.id === 'loc-1') return '[00:10.00]窗外雨滴落下来\n[00:50.00]耳机里正播到半夜';
         return null;
@@ -132,6 +136,10 @@ const countCmd = name => calls.filter(c => c.cmd === name).length;
 try {
   // 1. 启动不切本地前不主动扫描本地曲库；切入「本地」工作区后扫描并恢复本地队列与歌词
   await wait(() => buttonByText('本地'), '顶栏本地入口');
+  assert.equal(buttonByText('QQ 音乐'), undefined, '未启用 QQ 能力时隐藏对应工作区');
+  assert.equal(countCmd('global_shortcuts_get'), 0, '未启用快捷键能力时不调用快捷键命令');
+  assert.equal(countCmd('close_behavior_get'), 0, '未启用托盘行为配置时不调用对应命令');
+  assert.equal(countCmd('qq_web_account'), 0, '未启用 QQ 能力时忽略保存的 QQ 播放来源');
   assert.equal(countCmd('local_library_scan'), 0, '切入本地前不应触发扫描');
   buttonByText('本地').click();
 
@@ -145,7 +153,7 @@ try {
 
   const audio = document.querySelector('audio');
   document.querySelector('.play-toggle').click();
-  await wait(() => audio.src.includes('/loc-1.flac') && !paused, '点击播放恢复的本地歌曲');
+  await wait(() => audio.src === 'prismlocal://localhost/loc-1.flac' && !paused, '点击播放恢复的本地歌曲');
   audio.dispatchEvent(new Event('loadedmetadata'));
   await wait(() => Math.round(audio.currentTime) === 42, '恢复位置跳至 42 秒');
 
