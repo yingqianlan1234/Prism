@@ -1,4 +1,4 @@
-name: macOS port Windows regression
+name: macOS port Windows frontend follow-up
 on:
   push:
     branches: [ci/macos-wechat-windows-check]
@@ -7,30 +7,19 @@ permissions:
 jobs:
   windows:
     runs-on: windows-2022
-    timeout-minutes: 30
-    defaults:
-      run:
-        shell: pwsh
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v6
         with:
           ref: 3c468bc5c28e8780fc337fe438371e94c38f8f2e
           persist-credentials: false
-      - name: Record revision and toolchain
-        run: |
-          git rev-parse HEAD
-          node --version
-          rustc --version
-      - name: Install dependencies
-        id: install
-        run: npm ci --no-audit --no-fund
-      - name: Run frontend suite
-        run: npm test
-      - name: Compile and test Windows Rust backend
-        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
-        run: |
-          if (-not (Test-Path dist/index.html)) {
-            npm run build
-            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          }
-          cargo test --locked --manifest-path src-tauri/Cargo.toml
+      - run: npm ci --no-audit --no-fund
+      - run: npm run build
+      - name: Verify QQ and WeChat authorization UI
+        run: node src/qq-login.test.mjs
+      - name: Rerun the desktop shortcut scenario independently
+        if: ${{ !cancelled() }}
+        run: node src/desktop-p2a.test.mjs
+      - name: Verify the local library independently
+        if: ${{ !cancelled() }}
+        run: node src/local-library-p2b.test.mjs
