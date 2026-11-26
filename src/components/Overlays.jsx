@@ -14,7 +14,8 @@ import {
   hasTextSelectionShortcutWarning,
 } from '../utils/format.js';
 import { Icon } from './Icons.jsx';
-import { PlaylistCover } from './Artwork.jsx';
+import { PlaylistCover, SourceTag } from './Artwork.jsx';
+import { customTrackKey } from '../custom-playlists.js';
 import {
   formatBytes,
   isSwitchableSourceError,
@@ -81,6 +82,7 @@ export function MoreSettingsPanel({
   canAppUpdater,
   updateSummary,
   onOpenUpdater,
+  onOpenFullSettings,
 }) {
   const [showLyricStyle, setShowLyricStyle] = useState(false);
   const style = desktopLyric?.style || {};
@@ -415,6 +417,12 @@ export function MoreSettingsPanel({
         </button>
       )}
 
+      {onOpenFullSettings && (
+        <button type="button" className="lw-more-item" onClick={onOpenFullSettings}>
+          打开完整设置页
+        </button>
+      )}
+
       <button type="button" className="lw-more-item is-close" onClick={() => setShowMore(false)}>
         关闭
       </button>
@@ -429,16 +437,21 @@ export function QueueDrawer({
   setConfirmClear,
   activeProvider,
   ws,
+  mixedQueue = null,
   song,
   pendingPlay,
   selectedTrack,
   setSelectedTrack,
   play,
   editQueue,
+  editMixedQueue,
 }) {
   if (!showQueue) return null;
-  const tracks = ws.queue?.tracks || [];
-  const isFm = ws.queue?.type === 'fm' || ws.queue?.source === 'fm';
+  const isMixed = Boolean(mixedQueue?.tracks?.length);
+  const activeQueue = isMixed ? mixedQueue : ws.queue;
+  const tracks = activeQueue?.tracks || [];
+  const isFm = !isMixed && (ws.queue?.type === 'fm' || ws.queue?.source === 'fm');
+  const removeAction = isMixed ? editMixedQueue : editQueue;
 
   return (
     <div
@@ -458,8 +471,11 @@ export function QueueDrawer({
       >
         <div className="queue-header">
           <h2 id="queue-heading">
-            {providerLabel(activeProvider)}播放队列 · {tracks.length} 首
-            {tracks.length ? ` · 接下来 ${Math.max(0, tracks.length - ws.queue.index - 1)} 首` : ''}
+            {isMixed
+              ? `跨源歌单 · ${mixedQueue.playlistName || '混合队列'}`
+              : `${providerLabel(activeProvider)}播放队列`}{' '}
+            · {tracks.length} 首
+            {tracks.length ? ` · 接下来 ${Math.max(0, tracks.length - activeQueue.index - 1)} 首` : ''}
           </h2>
           <button
             type="button"
@@ -474,7 +490,7 @@ export function QueueDrawer({
           </button>
         </div>
 
-        {song && song.provider !== activeProvider && (
+        {!isMixed && song && song.provider !== activeProvider && (
           <p className="nr-queue-note">
             正在播放的歌曲来自{providerLabel(song.provider)}，这里显示的是
             {providerLabel(activeProvider)}的队列。
@@ -491,11 +507,14 @@ export function QueueDrawer({
           <>
             <div className="queue-list">
               {tracks.map((track, index) => {
-                const current =
-                  song?.provider === activeProvider &&
-                  song?.accountId === track.accountId &&
-                  song?.id === track.id &&
-                  ws.queue.index === index;
+                const current = isMixed
+                  ? song?.provider === track.provider &&
+                    song?.id === track.id &&
+                    activeQueue.index === index
+                  : song?.provider === activeProvider &&
+                    song?.accountId === track.accountId &&
+                    song?.id === track.id &&
+                    activeQueue.index === index;
                 const picked =
                   selectedTrack?.provider === track.provider &&
                   selectedTrack?.id === track.id &&
@@ -504,33 +523,36 @@ export function QueueDrawer({
                 return (
                   <div
                     className={'queue-item' + (current ? ' selected' : picked ? ' picked' : '')}
-                    key={`${track.id}-${index}`}
+                    key={`${track.provider || activeProvider}-${track.id}-${index}`}
                   >
                     <button
                       type="button"
                       className="queue-song"
                       onClick={() =>
-                        track.provider === 'netease'
+                        !isMixed && track.provider === 'netease'
                           ? setSelectedTrack({
                               provider: track.provider,
                               id: track.id,
                               accountId: track.accountId,
                             })
-                          : play(track, { ...ws.queue, index })
+                          : play(track, { ...activeQueue, index })
                       }
                       onDoubleClick={() => {
-                        if (track.provider === 'netease') play(track, { ...ws.queue, index });
+                        if (!isMixed && track.provider === 'netease') play(track, { ...activeQueue, index });
                       }}
                       onKeyDown={e => {
-                        if (track.provider === 'netease' && e.key === 'Enter') {
+                        if (!isMixed && track.provider === 'netease' && e.key === 'Enter') {
                           e.preventDefault();
-                          play(track, { ...ws.queue, index });
+                          play(track, { ...activeQueue, index });
                         }
                       }}
                       aria-current={current ? 'true' : undefined}
                     >
-                      <span>
-                        {index + 1}. {track.name}
+                      <span className="nr-queue-title-line">
+                        <span>
+                          {index + 1}. {track.name}
+                        </span>
+                        {isMixed && <SourceTag provider={track.provider} />}
                       </span>
                       <small>{artist(track)}</small>
                     </button>
@@ -541,7 +563,7 @@ export function QueueDrawer({
                         className="nr-remove-btn"
                         disabled={pendingPlay}
                         aria-disabled={pendingPlay}
-                        onClick={() => editQueue(index)}
+                        onClick={() => removeAction?.(index)}
                         aria-label={(current ? '移除并停止 ' : '移除 ') + track.name}
                       >
                         {current ? '移除并停止' : '移除'}
@@ -561,13 +583,17 @@ export function QueueDrawer({
                 aria-modal="true"
                 aria-labelledby="clear-queue-title"
               >
-                <p id="clear-queue-title">确定清空此工作区队列？正在播放的本平台歌曲会停止。</p>
+                <p id="clear-queue-title">
+                  {isMixed
+                    ? '确定清空当前跨源混合队列？正在播放的歌曲会停止。'
+                    : '确定清空此工作区队列？正在播放的本平台歌曲会停止。'}
+                </p>
                 <div className="nr-confirm-actions">
                   <button
                     type="button"
                     className="nr-danger-btn"
                     disabled={pendingPlay}
-                    onClick={() => editQueue(null, true)}
+                    onClick={() => removeAction?.(null, true)}
                   >
                     确认清空
                   </button>
@@ -649,7 +675,7 @@ export function CloseBehaviorDialog({
         aria-labelledby="lw-close-heading"
       >
         <h2 id="lw-close-heading">关闭窗口时</h2>
-        <p>选择以后点击关闭按钮的行为，可在“更多设置”中修改。</p>
+        <p>选择以后点击关闭按钮的行为，可在右上角「设置 → 常规与数据」中随时修改。</p>
         <div className="nr-close-options">
           <div className="nr-close-opt">
             <button
@@ -724,8 +750,43 @@ export function QrDialog({ qr, onClose }) {
   );
 }
 
-export function PlaylistPickerDialog({ track, playlists, busyId, error, onSelect, onClose }) {
+export function PlaylistPickerDialog({
+  track,
+  playlists,
+  customPlaylists = [],
+  canNeteaseCollect = false,
+  busyId,
+  error,
+  onSelect,
+  onSelectCustom,
+  onCreateAndSelectCustom,
+  onClose,
+}) {
+  const [newName, setNewName] = useState('');
+  const [localError, setLocalError] = useState('');
+
+  useEffect(() => {
+    if (!track) return;
+    setNewName('');
+    setLocalError('');
+  }, [track]);
+
   if (!track) return null;
+
+  const trackKey = customTrackKey(track);
+  const showNeteaseSection = track.provider === 'netease' && canNeteaseCollect;
+
+  const handleCreateCustom = e => {
+    e.preventDefault();
+    const res = onCreateAndSelectCustom?.(newName, track);
+    if (res?.error) {
+      setLocalError(res.error);
+      return;
+    }
+    setLocalError('');
+    setNewName('');
+  };
+
   return (
     <div className="overlay" onClick={onClose}>
       <div
@@ -747,37 +808,99 @@ export function PlaylistPickerDialog({ track, playlists, busyId, error, onSelect
           </button>
         </div>
         <p className="nr-picker-track">
-          <b>{track.name}</b> · {artist(track) || '未知歌手'}
+          <SourceTag provider={track.provider} /> <b>{track.name}</b> · {artist(track) || '未知歌手'}
         </p>
-        {error && (
+        {(error || localError) && (
           <p className="nr-dialog-error" role="alert">
-            {error}
+            {localError || error}
           </p>
         )}
-        {playlists.length ? (
-          <div className="nr-picker-list">
-            {playlists.map(pl => {
-              const busy = String(busyId ?? '') === String(pl.id);
-              return (
-                <button
-                  key={pl.id}
-                  type="button"
-                  className="nr-picker-item"
-                  disabled={busyId != null}
-                  onClick={() => onSelect(pl)}
-                >
-                  <PlaylistCover className="nr-picker-thumb" url={pl.coverImgUrl} />
-                  <span className="nr-picker-copy">
-                    <b>{pl.name}</b>
-                    <small>{pl.trackCount ?? '——'} 首</small>
-                  </span>
-                  <span className="nr-picker-state">{busy ? '收藏中…' : '加入'}</span>
-                </button>
-              );
-            })}
+
+        <div className="nr-picker-section">
+          <div className="nr-picker-sec-head">
+            <span>本机跨源歌单</span>
+            <small>保存在本机 · 不回写原平台</small>
           </div>
-        ) : (
-          <p className="nr-queue-empty">暂无可编辑的自建歌单。</p>
+          <form className="nr-custom-picker-create" onSubmit={handleCreateCustom}>
+            <input
+              type="text"
+              className="nr-custom-side-input"
+              maxLength={40}
+              value={newName}
+              placeholder="新建本机歌单并加入…"
+              aria-label="新建本机歌单并加入"
+              onChange={e => {
+                setNewName(e.target.value);
+                if (localError) setLocalError('');
+              }}
+            />
+            <button type="submit" className="nr-soft-btn">
+              新建并加入
+            </button>
+          </form>
+          {customPlaylists.length ? (
+            <div className="nr-picker-list is-compact">
+              {customPlaylists.map(pl => {
+                const alreadyIn = Boolean(
+                  trackKey && pl.tracks.some(item => customTrackKey(item) === trackKey)
+                );
+                return (
+                  <button
+                    key={pl.id}
+                    type="button"
+                    className="nr-custom-picker-item"
+                    disabled={alreadyIn || busyId != null}
+                    onClick={() => onSelectCustom?.(pl.id, track)}
+                  >
+                    <span className="nr-custom-picker-ico" aria-hidden="true">
+                      <Icon name="collection" className="nr-icon is-sm" />
+                    </span>
+                    <span className="nr-picker-copy">
+                      <b>{pl.name}</b>
+                      <small>{pl.tracks.length} 首 · 本机跨源</small>
+                    </span>
+                    <span className="nr-picker-state">{alreadyIn ? '已在歌单' : '加入本机'}</span>
+                  </button>
+                );
+              })}
+            </div>
+          ) : (
+            <p className="nr-queue-empty">还没有本机歌单，可在上方直接新建并加入。</p>
+          )}
+        </div>
+
+        {showNeteaseSection && (
+          <div className="nr-picker-section">
+            <div className="nr-picker-sec-head">
+              <span>网易云线上歌单</span>
+              <small>同步至你的网易云账号</small>
+            </div>
+            {playlists.length ? (
+              <div className="nr-picker-list is-compact">
+                {playlists.map(pl => {
+                  const busy = String(busyId ?? '') === String(pl.id);
+                  return (
+                    <button
+                      key={pl.id}
+                      type="button"
+                      className="nr-picker-item"
+                      disabled={busyId != null}
+                      onClick={() => onSelect(pl)}
+                    >
+                      <PlaylistCover className="nr-picker-thumb" url={pl.coverImgUrl} />
+                      <span className="nr-picker-copy">
+                        <b>{pl.name}</b>
+                        <small>{pl.trackCount ?? '——'} 首</small>
+                      </span>
+                      <span className="nr-picker-state">{busy ? '收藏中…' : '加入'}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            ) : (
+              <p className="nr-queue-empty">暂无可编辑的自建歌单。</p>
+            )}
+          </div>
         )}
       </div>
     </div>

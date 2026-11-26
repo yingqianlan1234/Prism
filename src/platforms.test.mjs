@@ -70,27 +70,32 @@ try{
  pending.filter(x=>x.command==='netease_url'&&x.args.id===1).at(-1).resolve({data:[{code:200,url:'https://example.com/netease.mp3'}]});
  await wait(()=>document.body.textContent.includes('刷新失败后歌词'),'刷新失败不丢在途歌词');
  await wait(()=>!document.body.textContent.includes('正在获取歌曲'),'刷新失败不挂起播放');
+ button('返回曲库').click();await wait(()=>document.querySelector('.app')?.dataset.view==='library');
  accountResult={profile:{userId:100,nickname:'网易账号A'}};
  const audio=document.querySelector('audio');let src=audio.src,pauseCount=pauses,playCount=plays;
  audio.currentTime=31;audio.dispatchEvent(new Event('timeupdate'));
  const unchanged=()=>{assert.equal(document.querySelectorAll('audio').length,1);assert.equal(document.querySelector('audio'),audio);assert.equal(audio.src,src);assert.equal(pauses,pauseCount);assert.equal(plays,playCount);assert.equal(audio.currentTime,31);assert.match(document.querySelector('footer .current small').textContent,/^(来源：)?网易云 · 网易歌手$/);assert.equal(document.querySelector('.play-toggle').getAttribute('aria-label'),'暂停');};
 
+ button('发现音乐').click();await wait(()=>pending.some(x=>x.command==='netease_daily_songs'),'发现页默认每日请求');
+ pending.filter(x=>x.command==='netease_daily_songs').at(-1).resolve({items:[]});await wait(()=>button('推荐新歌'),'展开右侧发现标签');
  button('推荐新歌').click();await wait(()=>pending.some(x=>x.command==='netease_recommended_new_songs'),'推荐新歌请求');
  pending.find(x=>x.command==='netease_recommended_new_songs').resolve({items:[{id:80,name:'合成推荐新歌'}]});await wait(()=>rows().some(x=>x.includes('合成推荐新歌')),'推荐新歌展示');unchanged();
  button('推荐新歌').click();await wait(()=>pending.filter(x=>x.command==='netease_recommended_new_songs').length===2,'新歌空状态请求');pending.filter(x=>x.command==='netease_recommended_new_songs').at(-1).resolve({items:[]});await wait(()=>document.body.textContent.includes('暂无推荐歌曲'),'新歌空状态');unchanged();
  button('推荐新歌').click();await wait(()=>pending.filter(x=>x.command==='netease_recommended_new_songs').length===3,'新歌错误请求');pending.filter(x=>x.command==='netease_recommended_new_songs').at(-1).reject(Error('新歌模拟失败'));await wait(()=>document.body.textContent.includes('推荐加载失败：新歌模拟失败'),'新歌错误状态');unchanged();
  button('推荐新歌').click();await wait(()=>pending.filter(x=>x.command==='netease_recommended_new_songs').length===4,'跨平台新歌请求');await switchTo('QQ 模拟');pending.filter(x=>x.command==='netease_recommended_new_songs').at(-1).resolve({items:[{id:88,name:'跨平台过期新歌'}]});await settle();assert(!document.body.textContent.includes('跨平台过期新歌'));unchanged();await switchTo('网易云');assert(!document.body.textContent.includes('跨平台过期新歌'));unchanged();
- button('每日推荐').click();await wait(()=>pending.some(x=>x.command==='netease_daily_songs'),'每日推荐请求');
- pending.find(x=>x.command==='netease_daily_songs').resolve({items:[{id:81,name:'合成每日歌曲',album:{name:'合成专辑'},al:{picUrl:'http://p1.music.126.net/synthetic.jpg'}}]});await wait(()=>rows().some(x=>x.includes('合成每日歌曲')),'每日推荐展示');const dailyCover=document.querySelector('.song img');assert.equal(dailyCover.src,'https://p1.music.126.net/synthetic.jpg?param=80y80');dailyCover.dispatchEvent(new Event('error'));await wait(()=>document.querySelector('.song .lw-cover-fallback'),'封面失败占位');unchanged();
+ button('每日推荐').click();await wait(()=>pending.filter(x=>x.command==='netease_daily_songs').length===2,'每日推荐请求');
+ pending.filter(x=>x.command==='netease_daily_songs').at(-1).resolve({items:[{id:81,name:'合成每日歌曲',album:{name:'合成专辑'},al:{picUrl:'http://p1.music.126.net/synthetic.jpg'}}]});await wait(()=>rows().some(x=>x.includes('合成每日歌曲')),'每日推荐展示');const dailyCover=document.querySelector('.song img');assert.equal(dailyCover.src,'https://p1.music.126.net/synthetic.jpg?param=80y80');dailyCover.dispatchEvent(new Event('error'));await wait(()=>document.querySelector('.song .lw-cover-fallback'),'封面失败占位');unchanged();
  button('为你推荐的歌单').click();await wait(()=>pending.some(x=>x.command==='netease_recommended_resources'),'账号推荐歌单请求');
  pending.find(x=>x.command==='netease_recommended_resources').resolve({items:[{id:82,name:'合成推荐歌单'}]});await wait(()=>button('合成推荐歌单'),'推荐歌单展示');unchanged();
  assert(document.querySelector('.topbar form input'),'推荐歌单页显示顶部搜索');await search('推荐歌单搜索');await wait(()=>request('netease_search','推荐歌单搜索'),'推荐歌单直接搜索请求');request('netease_search','推荐歌单搜索').resolve({result:{songs:[{id:85,name:'推荐页搜索结果'}],songCount:1}});await wait(()=>rows().some(x=>x.includes('推荐页搜索结果')),'推荐页搜索结果');unchanged();
+ button('发现音乐').click();await wait(()=>pending.filter(x=>x.command==='netease_daily_songs').length===3,'返回发现标签');
+ pending.filter(x=>x.command==='netease_daily_songs').at(-1).resolve({items:[]});await wait(()=>button('推荐歌单'));
  button('推荐歌单').click();await wait(()=>pending.some(x=>x.command==='netease_personalized_playlists'),'推荐歌单请求');
  pending.find(x=>x.command==='netease_personalized_playlists').resolve({items:[]});await wait(()=>document.body.textContent.includes('暂无推荐歌单'),'推荐空状态');unchanged();
  assert(document.querySelector('.topbar form input'),'空推荐歌单页显示顶部搜索');await search('空歌单搜索');await wait(()=>request('netease_search','空歌单搜索'),'空歌单直接搜索请求');request('netease_search','空歌单搜索').resolve({result:{songs:[{id:86,name:'空歌单搜索结果'}],songCount:1}});await wait(()=>rows().some(x=>x.includes('空歌单搜索结果')),'空歌单搜索结果');unchanged();
- button('每日推荐').click();await wait(()=>pending.filter(x=>x.command==='netease_daily_songs').length===2,'每日推荐错误请求');
+ button('发现音乐').click();await wait(()=>pending.filter(x=>x.command==='netease_daily_songs').length===4,'每日推荐错误请求');
  pending.filter(x=>x.command==='netease_daily_songs').at(-1).reject(Error('合成接口错误'));await wait(()=>document.body.textContent.includes('推荐加载失败：合成接口错误'),'推荐错误状态');unchanged();
- button('每日推荐').click();await wait(()=>pending.filter(x=>x.command==='netease_daily_songs').length===3,'跨平台推荐请求');
+ button('每日推荐').click();await wait(()=>pending.filter(x=>x.command==='netease_daily_songs').length===5,'跨平台推荐请求');
  await switchTo('QQ 模拟');pending.filter(x=>x.command==='netease_daily_songs').at(-1).resolve({items:[{id:83,name:'跨平台过期推荐'}]});await settle();assert(!document.body.textContent.includes('跨平台过期推荐'));unchanged();
  await switchTo('网易云');assert(!document.body.textContent.includes('跨平台过期推荐'));unchanged();
  button('网易同ID歌单').click();await wait(()=>request('netease_playlist',1),'浏览不同歌单');
@@ -147,6 +152,7 @@ try{
  request('netease_lyric',2).resolve({lrc:{lyric:'[00:00]手动选歌C歌词'}});
  request('netease_url',2).resolve({data:[{code:200,url:'https://example.com/manual-c.mp3'}]});
  await wait(()=>audio.src.includes('manual-c.mp3'),'手动C请求没有被ended作废');
+ button('返回曲库').click();await wait(()=>document.querySelector('.app')?.dataset.view==='library');
  assert.equal(document.querySelector('footer .current b').textContent,'网易后台结果');
  assert.equal(document.querySelector('.play-toggle').getAttribute('aria-label'),'暂停');
 
@@ -163,7 +169,9 @@ try{
  activateSong(document.querySelector('.song'));await wait(()=>pending.filter(x=>x.command==='netease_url'&&x.args.id===6).length===2,'再次选择新歌曲');
  pending.filter(x=>x.command==='netease_lyric'&&x.args.id===6).at(-1).resolve({lrc:{lyric:''}});
  pending.filter(x=>x.command==='netease_url'&&x.args.id===6).at(-1).resolve({data:[{code:200,url:'https://example.com/c-retry.mp3'}]});
- await wait(()=>document.querySelector('footer .current b').textContent==='新队列C','重试成功');
+ await wait(()=>audio.src.includes('c-retry.mp3'),'重试成功');
+ button('返回曲库').click();await wait(()=>document.querySelector('.app')?.dataset.view==='library');
+ await wait(()=>document.querySelector('footer .current b')?.textContent==='新队列C','重试成功展示');
  audio.dispatchEvent(new Event('ended'));await wait(()=>request('netease_url',7),'重试成功后续播新队列D');
  request('netease_lyric',7).resolve({lrc:{lyric:''}});
  request('netease_url',7).resolve({data:[{code:200,url:'https://example.com/d-after-retry.mp3'}]});
@@ -172,7 +180,7 @@ try{
  assert(!request('netease_url',4),'重试后不能恢复旧队列');
  await search('账号旧搜索');await wait(()=>request('netease_search','账号旧搜索'),'账号旧搜索请求');
  button('网易同ID歌单').click();await wait(()=>pending.filter(x=>x.command==='netease_playlist'&&x.args.id===1).length===2,'账号旧歌单请求');
- button('每日推荐').click();await wait(()=>pending.filter(x=>x.command==='netease_daily_songs').length===4,'跨账号推荐请求');
+ button('发现音乐').click();await wait(()=>pending.filter(x=>x.command==='netease_daily_songs').length===6,'跨账号推荐请求');
  button('推荐新歌').click();await wait(()=>pending.filter(x=>x.command==='netease_recommended_new_songs').length===5,'跨账号新歌请求');
  accountResult={profile:{userId:200,nickname:'网易账号B'}};
  button('网易账号A · 刷新').click();await wait(()=>button('网易账号B · 刷新'),'网易账号更换');

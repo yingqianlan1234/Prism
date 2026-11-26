@@ -141,20 +141,17 @@ try {
   assert.equal(document.querySelector('.nr-update-dialog'), null, 'Patch 更新不应主动弹窗');
 
   const settingsDot = await wait(
-    () => document.querySelector('.nr-settings-btn .lw-dot[data-on="true"]'),
+    () => document.querySelector('.nr-top-settings-btn .lw-dot[data-on="true"]'),
     '齿轮暖琥珀点亮起'
   );
-  assert(settingsDot, 'Patch 更新应点亮更多设置齿轮提示点');
+  assert(settingsDot, 'Patch 更新应点亮设置图标提示点');
 
-  document.querySelector('.nr-settings-btn').click();
-  await wait(() => document.querySelector('#lw-more-panel:not([hidden])'), '打开更多设置');
-  const entry = document.querySelector('.nr-update-entry');
-  assert(entry?.textContent.includes('新版本 v1.1.1'), '更多设置应显示新版本 v1.1.1 徽标');
+  document.querySelector('.nr-top-settings-btn').click();
+  await wait(() => document.querySelector('.nr-settings-page'), '打开独立设置页');
+  [...document.querySelectorAll('button')].find(x => x.textContent.includes('更新与关于')).click();
+  await wait(() => document.querySelector('.nr-settings-page')?.textContent.includes('v1.1.1'), '设置页显示新版本 v1.1.1');
 
-  // 2. 打开应用更新弹窗 -> 先验证双源切换、自定义镜像校验与错误一键切源重试
-  entry.click();
-  await wait(() => document.querySelector('.nr-update-dialog'), '打开应用更新弹窗');
-
+  // 2. 验证双源切换、自定义镜像校验与错误一键切源重试
   buttonByText('国内加速镜像').click();
   await wait(
     () =>
@@ -163,7 +160,6 @@ try {
     '切换至国内加速镜像'
   );
 
-  buttonByText('自定义镜像前缀（可选）').click();
   const mirrorInput = await wait(() => document.querySelector('.nr-update-mirror-input'), '显示镜像输入框');
   const setInputValue = (input, val) => {
     const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
@@ -172,34 +168,28 @@ try {
     input.dispatchEvent(new Event('change', { bubbles: true }));
   };
   setInputValue(mirrorInput, 'http://bad.example.com');
-  buttonByText('保存').click();
+  buttonByText('保存镜像').click();
   await wait(() => document.body.textContent.includes('必须以 https:// 开头'), '拦截非 HTTPS 自定义镜像');
 
   setInputValue(mirrorInput, 'https://mirror.example.com');
-  buttonByText('保存').click();
+  buttonByText('保存镜像').click();
   await wait(
     () => calls.some(c => c.cmd === 'app_update_config_set' && c.args?.customMirror === 'https://mirror.example.com/'),
     '保存合法自定义镜像'
   );
 
-  // 模拟跳过 Patch 版本，验证齿轮灯熄灭
+  // 模拟跳过 Patch 版本，验证设置灯熄灭
   const skipBtn = await wait(() => {
     const b = buttonByText('跳过此版本');
     return b && !b.disabled ? b : null;
   }, '跳过按钮恢复可点击');
   skipBtn.click();
-  await wait(() => !document.querySelector('.nr-update-dialog'), '跳过后关闭弹窗');
   await wait(
-    () => document.querySelector('.nr-settings-btn .lw-dot[data-on="false"]'),
-    '跳过版本后齿轮灯熄灭'
+    () => document.querySelector('.nr-top-settings-btn .lw-dot[data-on="false"]'),
+    '跳过版本后设置灯熄灭'
   );
 
-  // 3. 验证网络错误一键切源重试 & Feature 版本弹窗流程
-  document.querySelector('.nr-settings-btn').click();
-  await wait(() => document.querySelector('#lw-more-panel:not([hidden])'), '再次打开更多设置');
-  document.querySelector('.nr-update-entry').click();
-  await wait(() => document.querySelector('.nr-update-dialog'), '再次打开更新弹窗');
-
+  // 3. 验证网络错误一键切源重试 & Feature 版本推送流程
   nextCheckHandler = async ({ source }) => {
     if (source === 'mirror') {
       throw { code: 'network', message: '无法连接加速镜像' };
@@ -226,7 +216,7 @@ try {
     '切源重试拿到 Feature 新版本'
   );
 
-  // 4. 点击立即更新 -> 后台进度推送 -> 关闭窗口继续听歌 -> 完成后点击重启并安装
+  // 4. 点击立即更新 -> 后台进度推送 -> 完成后点击重启并安装
   let resolveDownload;
   downloadHandler = async () => {
     const emitProgress = listeners.get('prism:app-update-progress');
@@ -254,16 +244,8 @@ try {
 
   buttonByText('立即更新').click();
   await wait(() => document.querySelector('.nr-update-progress')?.textContent.includes('50%'), '显示下载进度 50%');
-  buttonByText('后台继续').click();
-  await wait(() => !document.querySelector('.nr-update-dialog'), '下载中允许关闭弹窗');
-
-  document.querySelector('.nr-settings-btn').click();
-  await wait(() => document.querySelector('.nr-update-entry')?.textContent.includes('下载中 50%'), '更多设置实时同步下载进度');
 
   resolveDownload();
-  await wait(() => document.querySelector('.nr-update-entry')?.textContent.includes('重启以更新'), '下载完成后变为重启以更新');
-
-  document.querySelector('.nr-update-entry').click();
   const installBtn = await wait(() => buttonByText('重启并安装'), '出现重启并安装按钮');
   installBtn.click();
   await wait(() => countCmd('app_update_install') === 1, '调用 app_update_install 完成安装触发');

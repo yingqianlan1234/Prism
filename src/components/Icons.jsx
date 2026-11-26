@@ -235,6 +235,108 @@ const ICONS = {
       <path d="m8.8 12.2 2.2 2.2 4.4-4.6" />
     </>
   ),
+  collection: (
+    <>
+      <rect x="4" y="6.8" width="16" height="12.4" rx="2.6" />
+      <path d="M7.2 4.2h9.6" />
+      <path d="M9.6 11.2h5.2" />
+      <path d="M9.6 14.8h3.6" />
+    </>
+  ),
+  sliders: (
+    <>
+      <path d="M5 7h14" />
+      <circle cx="9" cy="7" r="1.9" fill="var(--nr-night-0, #0E1624)" />
+      <path d="M5 12h14" />
+      <circle cx="15" cy="12" r="1.9" fill="var(--nr-night-0, #0E1624)" />
+      <path d="M5 17h14" />
+      <circle cx="11" cy="17" r="1.9" fill="var(--nr-night-0, #0E1624)" />
+    </>
+  ),
+  download: (
+    <>
+      <path d="M12 4.5v10" />
+      <path d="m8.5 11.2 3.5 3.6 3.5-3.6" />
+      <path d="M5.2 16.5v2a1.6 1.6 0 0 0 1.6 1.6h10.4a1.6 1.6 0 0 0 1.6-1.6v-2" />
+    </>
+  ),
+  upload: (
+    <>
+      <path d="M12 14.5v-10" />
+      <path d="m8.5 7.8 3.5-3.6 3.5 3.6" />
+      <path d="M5.2 16.5v2a1.6 1.6 0 0 0 1.6 1.6h10.4a1.6 1.6 0 0 0 1.6-1.6v-2" />
+    </>
+  ),
+  edit: (
+    <>
+      <path d="M4.8 19.2h3.4l9.7-9.7a2.1 2.1 0 0 0-3-3L5.2 16.2v3Z" />
+      <path d="m13.3 8.1 2.8 2.8" />
+    </>
+  ),
+  palette: (
+    <>
+      <path d="M12 3.5a8.5 8.5 0 0 0 0 17 2.1 2.1 0 0 0 2.1-2.1c0-.5-.2-1-.5-1.3a2 2 0 0 1 1.5-3.3h2.1A3.8 3.8 0 0 0 21 10c0-3.7-4-6.5-9-6.5Z" />
+      <circle cx="8" cy="10.2" r="1.1" fill="currentColor" stroke="none" />
+      <circle cx="11.2" cy="7.6" r="1.1" fill="currentColor" stroke="none" />
+      <circle cx="15.2" cy="8.4" r="1.1" fill="currentColor" stroke="none" />
+    </>
+  ),
+  compass: (
+    <>
+      <circle cx="12" cy="12" r="8.4" />
+      <polygon points="14.8,9.2 13.4,13.4 9.2,14.8 10.6,10.6" fill="currentColor" fillOpacity="0.24" />
+    </>
+  ),
+  radio: (
+    <>
+      <circle cx="12" cy="12" r="2.2" fill="currentColor" stroke="none" />
+      <path d="M8.1 15.9a5.5 5.5 0 0 1 0-7.8" />
+      <path d="M15.9 8.1a5.5 5.5 0 0 1 0 7.8" />
+      <path d="M5.4 18.6a9.3 9.3 0 0 1 0-13.2" />
+      <path d="M18.6 5.4a9.3 9.3 0 0 1 0 13.2" />
+    </>
+  ),
+  history: (
+    <>
+      <path d="M4.6 12a7.4 7.4 0 1 0 2.1-5.2L4.6 8.8" />
+      <path d="M4.6 4.8v4h4" />
+      <path d="M12 8.2v4.1l2.8 1.6" />
+    </>
+  ),
+  chevronDown: (
+    <path d="m7.2 9.8 4.8 4.8 4.8-4.8" />
+  ),
+  arrowLeft: (
+    <>
+      <path d="M18.4 12H5.6" />
+      <path d="m10.8 6.8-5.2 5.2 5.2 5.2" />
+    </>
+  ),
+  timer: (
+    <>
+      <circle cx="12" cy="13" r="7.4" />
+      <path d="M12 9.4v3.8l2.5 1.5" />
+      <path d="M9.5 3.8h5" />
+    </>
+  ),
+  winMin: (
+    <path d="M6.5 12h11" />
+  ),
+  winMax: (
+    <rect x="6.5" y="6.5" width="11" height="11" rx="1.8" />
+  ),
+  winRestore: (
+    <>
+      <rect x="6" y="8.5" width="9.5" height="9.5" rx="1.6" />
+      <path d="M9 6h7.2A1.8 1.8 0 0 1 18 7.8V15" />
+    </>
+  ),
+  winClose: (
+    <>
+      <path d="m7.2 7.2 9.6 9.6" />
+      <path d="m16.8 7.2-9.6 9.6" />
+    </>
+  ),
 };
 
 export function Icon({ name, className = 'nr-icon' }) {
