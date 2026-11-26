@@ -6,7 +6,7 @@ const neteaseLibraryCapabilities = enabled => ({
  likeTrack:enabled,getLikedSongIds:enabled,trashFmTrack:enabled,editPlaylistTracks:enabled
 });
 export const capabilities = Object.freeze({
- desktop:Object.freeze({globalShortcuts:true,desktopLyric:true}),
+ desktop:Object.freeze({globalShortcuts:true,desktopLyric:true,appUpdater:true}),
  local:Object.freeze({manageFolders:true,scanLibrary:true,getTracks:true,resolvePlayback:true,getLyrics:true,persistQueue:true}),
  netease:Object.freeze({login:true,logout:true,restoreSession:true,getUserProfile:true,search:true,getPlaylists:true,getPlaylistTracks:true,getLyrics:true,resolvePlayback:true,getRecommendations:true,reportListening:false,...neteaseLibraryCapabilities(true)}),
  qqmusic:Object.freeze({login:true,logout:true,restoreSession:true,getUserProfile:true,search:true,getPlaylists:true,getPlaylistTracks:true,getLyrics:true,resolvePlayback:true,getRecommendations:true,reportListening:false,...neteaseLibraryCapabilities(false)})
@@ -30,7 +30,12 @@ export const desktop = Object.freeze({
  desktopLyricGet:()=>invoke('desktop_lyric_get'),
  desktopLyricSet:({enabled,locked,style})=>invoke('desktop_lyric_set',{enabled,...(locked===undefined?{}:{locked}),...(style===undefined?{}:{style})}),
  desktopLyricUpdate:({text,translation,romaji,title,playing,nextText,elapsedMs,durationMs,rate,accentColor})=>invoke('desktop_lyric_update',{text,translation,romaji,title,playing,...(nextText===undefined?{}:{nextText}),...(elapsedMs===undefined?{}:{elapsedMs}),...(durationMs===undefined?{}:{durationMs}),...(rate===undefined?{}:{rate}),...(accentColor===undefined?{}:{accentColor})}),
- events:Object.freeze({globalShortcut:'prism:global-shortcut',desktopLyricState:'prism:desktop-lyric-state'})
+ updaterConfigGet:()=>invoke('app_update_config_get'),
+ updaterConfigSet:patch=>invoke('app_update_config_set',patch||{}),
+ updaterCheck:options=>invoke('app_update_check',options||{}),
+ updaterDownload:()=>invoke('app_update_download'),
+ updaterInstall:()=>invoke('app_update_install'),
+ events:Object.freeze({globalShortcut:'prism:global-shortcut',desktopLyricState:'prism:desktop-lyric-state',updateProgress:'prism:app-update-progress'})
 });
 export const platformFlavor=Object.freeze({netease:'netease',qqmusic:'community'});
 export const recommendationCapabilities=Object.freeze({
