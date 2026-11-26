@@ -19,9 +19,8 @@ export const lyricalLines = arr =>
 export const qqLocalHandle = src => {
   try {
     const u = new URL(src);
-    const isMediaOrigin = (u.protocol === 'http:' && u.hostname === 'prismmedia.localhost') ||
-      (u.protocol === 'prismmedia:' && u.hostname === 'localhost');
-    return isMediaOrigin && !u.username && !u.password && !u.port &&
+    return u.protocol === 'http:' &&
+      u.hostname === 'prismmedia.localhost' &&
       !u.search &&
       !u.hash &&
       /^\/[a-z0-9]{40}$/i.test(u.pathname)

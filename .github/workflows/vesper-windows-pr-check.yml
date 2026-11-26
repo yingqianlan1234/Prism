@@ -1,4 +1,4 @@
-name: macOS port Windows frontend follow-up
+name: Windows shortcut baseline on main
 on:
   push:
     branches: [ci/macos-wechat-windows-check]
@@ -11,15 +11,9 @@ jobs:
     steps:
       - uses: actions/checkout@v6
         with:
-          ref: 3c468bc5c28e8780fc337fe438371e94c38f8f2e
+          ref: c7a7e7a7b5a507d21c7adea3d6d5d1ea4ded3a94
           persist-credentials: false
+      - run: git rev-parse HEAD
       - run: npm ci --no-audit --no-fund
       - run: npm run build
-      - name: Verify QQ and WeChat authorization UI
-        run: node src/qq-login.test.mjs
-      - name: Rerun the desktop shortcut scenario independently
-        if: ${{ !cancelled() }}
-        run: node src/desktop-p2a.test.mjs
-      - name: Verify the local library independently
-        if: ${{ !cancelled() }}
-        run: node src/local-library-p2b.test.mjs
+      - run: node src/desktop-p2a.test.mjs

@@ -39,8 +39,8 @@ pub trait CredentialStore {
     fn load(&self) -> Result<Option<Credential>, LoginError>;
     fn clear(&self) -> Result<(), LoginError>;
 }
-pub struct SystemCredentialStore;
-impl CredentialStore for SystemCredentialStore {
+pub struct WindowsStore;
+impl CredentialStore for WindowsStore {
     fn save(&self, credential: &Credential) -> Result<(), LoginError> { keyring::Entry::new(SERVICE, USER).map_err(|_|LoginError::Storage)?.set_password(&credential.0).map_err(|_|LoginError::Storage) }
     fn load(&self) -> Result<Option<Credential>, LoginError> { match keyring::Entry::new(SERVICE, USER).map_err(|_|LoginError::Storage)?.get_password() { Ok(value) => Credential::new(value).map(Some), Err(keyring::Error::NoEntry) => Ok(None), Err(_) => Err(LoginError::Storage) } }
     fn clear(&self) -> Result<(), LoginError> { match keyring::Entry::new(SERVICE, USER).map_err(|_|LoginError::Storage)?.delete_credential() { Ok(())|Err(keyring::Error::NoEntry)=>Ok(()), Err(_)=>Err(LoginError::Storage) } }

@@ -1,32 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFile} from 'node:fs/promises';
-import {qqLocalHandle} from './utils/format.js';
 
 const calls=[];
 globalThis.window={__TAURI_INTERNALS__:{invoke:async(command,args)=>{calls.push({command,args});return {command,args};}}};
-const {getProvider,capabilities,capabilitiesForHost,recommendationCapabilities,desktop}=await import('./providers.js');
-
-test('macOS 保留三个音乐来源，Windows 桌面能力随宿主关闭',()=>{
- const mac=capabilitiesForHost({qqMusic:true,globalShortcuts:false,desktopLyric:false,closeBehavior:false});
- assert.equal(mac.local,capabilities.local);
- assert.equal(mac.netease,capabilities.netease);
- assert.equal(mac.qqmusic.available,true);
- assert.deepEqual(mac.desktop,{globalShortcuts:false,desktopLyric:false,closeBehavior:false});
- const windows=capabilitiesForHost({qqMusic:true,globalShortcuts:true,desktopLyric:true,closeBehavior:true});
- assert.equal(windows.qqmusic.available,true);
- assert.deepEqual(windows.desktop,{globalShortcuts:true,desktopLyric:true,closeBehavior:true});
- assert.equal(capabilitiesForHost(undefined),capabilities);
-});
-
-test('QQ 播放回滚只接受 Windows 和 macOS 的本地媒体句柄',()=>{
- const handle='a'.repeat(40);
- assert.equal(qqLocalHandle(`http://prismmedia.localhost/${handle}`),handle);
- assert.equal(qqLocalHandle(`prismmedia://localhost/${handle}`),handle);
- for(const url of [`prismmedia://example.com/${handle}`,`prismmedia://localhost/${handle}?token=x`,`http://prismmedia.localhost:8000/${handle}`]){
-  assert.equal(qqLocalHandle(url),null);
- }
-});
+const {getProvider,capabilities,recommendationCapabilities,desktop}=await import('./providers.js');
 
 test('本地曲库由独立 provider 注入，IPC 参数只包含曲库标识和状态', async () => {
  const local=await getProvider('local');
@@ -145,14 +123,14 @@ test('Release 构建配置使用静态前端且未配置 Node 后台服务（静
  assert.equal(config.build.beforeBuildCommand,'npm run build');
  assert.equal(config.bundle.externalBin,undefined);
  assert(!Object.keys(pkg.dependencies).some(x=>/netease|concurrently|express/.test(x)));
- const rust=await readFile('src-tauri/src/lib.rs','utf8');
+ const rust=await readFile('src-tauri/src/main.rs','utf8');
  assert(rust.includes('keyring::Entry::new("local.xianyu.music", "netease-session")'));
  assert(!/Command::new\s*\(\s*"(?:node|npm|npx)|\.sidecar\s*\(/.test(rust));
 });
 
 test('生产 IPC 只注册受限网页登录原型，不注册旧二维码登录',async()=>{
- const rust=await readFile('src-tauri/src/lib.rs','utf8');
- const handlers=rust.match(/tauri::generate_handler!\[(.*?)\]\)/s)?.[1];
+ const rust=await readFile('src-tauri/src/main.rs','utf8');
+ const handlers=rust.match(/tauri::generate_handler!\[([^\]]*)\]/s)?.[1];
  assert(handlers);assert(!handlers.includes('qq_login::'));assert(handlers.includes('qq_search'));assert(handlers.includes('qq_web_auth::qq_web_login_open'));assert(handlers.includes('qq_recommended_playlists'));assert(handlers.includes('qq_recommended_new_songs'));
 });
 

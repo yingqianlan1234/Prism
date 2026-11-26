@@ -1,35 +1,30 @@
 //! User-operated, isolated QQ web session. Sensitive session data stays in Rust.
 use std::{
     collections::BTreeMap,
+    path::{Path, PathBuf},
     sync::{atomic::{AtomicBool, Ordering}, mpsc, Arc, Mutex},
+    thread,
     time::{Duration, Instant},
 };
-#[cfg(windows)]
-use std::{path::{Path, PathBuf}, thread};
 
 use base64::Engine;
 use rand::{distributions::Alphanumeric, Rng};
 use serde_json::{json, Value};
-use tauri::{AppHandle, Manager, State, WebviewUrl, WebviewWindow, WebviewWindowBuilder};
-#[cfg(windows)]
-use tauri::Emitter;
-#[cfg(windows)]
+use tauri::{AppHandle, Emitter, Manager, State, WebviewUrl, WebviewWindow, WebviewWindowBuilder};
 use webview2_com::Microsoft::Web::WebView2::Win32::ICoreWebView2Settings4;
-#[cfg(windows)]
 use windows::{core::Interface, core::BOOL};
 
 use crate::{err, Result};
-use crate::qq_login_offline::{Credential, CredentialStore, SystemCredentialStore};
+use crate::qq_login_offline::{Credential, CredentialStore, WindowsStore};
 
 const LABEL: &str = "qq-auth";
 const PROFILE_URL: &str = "https://y.qq.com/n/ryqq_v2/profile";
-#[cfg(windows)]
 const COOKIE_URL: &str = "https://y.qq.com/";
 const API_URL: &str = "https://u.y.qq.com/cgi-bin/musicu.fcg";
 const MAX_BODY: usize = 1024 * 1024;
 
 #[derive(Default)]
-struct Inner { generation: u64, auth_window: Option<u64>, completing: bool, stream: Option<Stream>, candidate:Option<Stream>, previous:Option<Stream>, diagnostic: Option<PlaybackDiagnostic>, diagnostic_revision:u64, resolve_revision:u64, resolve_status:ResolveStatus }
+struct Inner { generation: u64, directory: Option<PathBuf>, completing: bool, stream: Option<Stream>, candidate:Option<Stream>, previous:Option<Stream>, diagnostic: Option<PlaybackDiagnostic>, diagnostic_revision:u64, resolve_revision:u64, resolve_status:ResolveStatus }
 #[derive(Clone,Copy,PartialEq,Eq,Default)]
 enum ResolveStatus {#[default] Idle,Pending,Failed,Succeeded}
 struct ResolveGuard {inner:Arc<Mutex<Inner>>,revision:u64}
@@ -140,9 +135,7 @@ fn allowed_navigation(url: &tauri::Url) -> bool {
         Some("y.qq.com") => url.path().starts_with("/n/ryqq/")
             || url.path().starts_with("/n/ryqq_v2/")
             || url.path() == "/portal/wx_redirect.html",
-        Some("graph.qq.com") => matches!(url.path(),
-            "/connect" | "/connect/" | "/oauth2.0/show" | "/oauth2.0/authorize" | "/oauth2.0/login_jump"),
-        Some("open.weixin.qq.com") => url.path() == "/connect/qrconnect",
+        Some("graph.qq.com") => matches!(url.path(), "/oauth2.0/show" | "/oauth2.0/authorize" | "/oauth2.0/login_jump"),
         Some("xui.ptlogin2.qq.com") => url.path() == "/cgi-bin/xlogin",
         Some("ssl.ptlogin2.qq.com") => matches!(url.path(), "/ptqrshow" | "/ptqrlogin" | "/check_sig"),
         Some("ssl.ptlogin2.graph.qq.com") => url.path() == "/check_sig",
@@ -155,126 +148,27 @@ fn safe_cookie_value(v: &str) -> bool {
         && v.bytes().all(|b| b.is_ascii_graphic() && b != b';' && b != b',' && b != b'"')
 }
 
-fn session_cookie_name(name: &str) -> bool {
-    matches!(name, "login_type" | "uin" | "qqmusic_uin" | "wxuin" | "wxopenid" | "qm_keyst" | "qqmusic_key" | "music_key")
-}
-
-#[cfg(target_os = "macos")]
-fn qq_music_root_cookie(cookie: &tauri::webview::Cookie<'_>) -> bool {
-    let Some(domain) = cookie.domain() else { return false };
-    matches!(domain.strip_prefix('.').unwrap_or(domain), "qq.com" | "y.qq.com")
-        && cookie.path().is_none_or(|path| path == "/")
-}
-
-fn read_auth_cookies(window: &WebviewWindow) -> tauri::Result<Vec<(String, String)>> {
-    #[cfg(windows)]
-    let cookies = window.cookies_for_url(COOKIE_URL.parse().unwrap())?.into_iter();
-    // Wry 0.57's WKWebView URL lookup only matches the exact domain. The QQ callback
-    // sets root cookies on qq.com, which also apply to the QQ Music web origin.
-    #[cfg(target_os = "macos")]
-    let cookies = window.cookies()?.into_iter().filter(qq_music_root_cookie);
-    Ok(cookies
-        .filter(|cookie| session_cookie_name(cookie.name()))
-        .map(|cookie| (cookie.name().to_owned(), cookie.value().to_owned()))
-        .collect())
-}
-
-fn normalized_account(value: &str) -> Option<&str> {
-    let value = value.strip_prefix('o').unwrap_or(value).trim_start_matches('0');
-    (!value.is_empty() && value.len() <= 20 && value.bytes().all(|b| b.is_ascii_digit())).then_some(value)
-}
-
-#[derive(serde::Deserialize, serde::Serialize)]
-#[serde(deny_unknown_fields)]
-struct WebSession {
-    #[serde(rename = "musicid")]
-    account: String,
-    #[serde(rename = "musickey")]
-    key: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    wechat: Option<WechatIdentity>,
-}
-
-#[derive(serde::Deserialize, serde::Serialize)]
-#[serde(deny_unknown_fields)]
-struct WechatIdentity {
-    uin: Option<String>,
-    openid: Option<String>,
-}
-
-impl WebSession {
-    fn from_credential(credential: &Credential) -> Result<Self> {
-        let invalid = || err("storage", "QQ 登录状态格式异常");
-        let session: Self = serde_json::from_str(credential.expose()).map_err(|_| invalid())?;
-        if normalized_account(&session.account) != Some(session.account.as_str())
-            || !safe_cookie_value(&session.key)
-        {
-            return Err(invalid());
-        }
-        if let Some(wechat) = &session.wechat {
-            if wechat.uin.is_none() && wechat.openid.is_none()
-                || wechat.uin.as_deref().is_some_and(|uin| normalized_account(uin) != Some(session.account.as_str()))
-                || wechat.openid.as_deref().is_some_and(|id| !safe_cookie_value(id))
-            {
-                return Err(invalid());
-            }
-        }
-        Ok(session)
-    }
-
-    fn cookie_header(&self) -> String {
-        let account = &self.account;
-        let key = &self.key;
-        if let Some(wechat) = &self.wechat {
-            let mut cookie = format!("login_type=2; qqmusic_uin={account}; qqmusic_key={key}");
-            if let Some(uin) = &wechat.uin {
-                cookie.push_str(&format!("; wxuin={uin}"));
-            }
-            if let Some(openid) = &wechat.openid {
-                cookie.push_str(&format!("; wxopenid={openid}"));
-            }
-            cookie
-        } else {
-            format!("uin={account}; qqmusic_uin={account}; qm_keyst={key}; qqmusic_key={key}")
-        }
-    }
-}
-
-fn select_session(items: impl IntoIterator<Item = (String, String)>) -> Result<WebSession> {
+// QQ-only prototype: conflicting aliases fail closed instead of guessing an identity.
+fn select_session(items: impl IntoIterator<Item = (String, String)>) -> Result<(String, String)> {
     let mut values = BTreeMap::<String, String>::new();
     for (name, value) in items {
-        if !session_cookie_name(&name) || value.is_empty() {
+        if !matches!(name.as_str(), "uin" | "qqmusic_uin" | "qm_keyst" | "qqmusic_key" | "music_key") {
             continue;
         }
         if !safe_cookie_value(&value) { return Err(err("auth", "QQ 会话数据无效")); }
         if values.get(&name).is_some_and(|old| old != &value) { return Err(err("auth", "QQ 会话存在冲突")); }
         values.insert(name, value);
     }
-    let explicit_mode = values.get("login_type").map(String::as_str);
-    let has_wechat_identity = values.get("wxuin").and_then(|value| normalized_account(value)).is_some()
-        && values.get("wxopenid").is_some_and(|value| value != "0");
-    if explicit_mode == Some("2") || (explicit_mode != Some("1") && has_wechat_identity) {
-        let uin = values.remove("wxuin");
-        let openid = values.remove("wxopenid");
-        // The official web client uses wxuin for WeChat and can fall back to qqmusic_uin.
-        let account = match uin.as_deref() {
-            Some(value) => normalized_account(value),
-            None if openid.is_some() => values.get("qqmusic_uin").and_then(|value| normalized_account(value)),
-            None => None,
-        }.ok_or(err("auth", "请在 QQ 音乐网页完成微信登录后重试"))?.to_owned();
-        let key = values.remove("qqmusic_key").ok_or(err("auth", "微信登录已发起，QQ 音乐会话尚未就绪"))?;
-        return Ok(WebSession { account, key, wechat: Some(WechatIdentity { uin, openid }) });
-    }
-
     let mut accounts = values.iter().filter(|(k, _)| matches!(k.as_str(), "uin" | "qqmusic_uin"))
-        .map(|(_, value)| normalized_account(value));
-    let account = accounts.next().flatten().ok_or(err("auth", "请在 QQ 音乐页面完成 QQ 或微信登录"))?;
-    if accounts.any(|v| v != Some(account)) { return Err(err("auth", "QQ 账号会话存在冲突")); }
+        .map(|(_, value)| value.trim_start_matches('o').trim_start_matches('0').to_string());
+    let account = accounts.next().filter(|v| !v.is_empty() && v.len() <= 20 && v.bytes().all(|b| b.is_ascii_digit()))
+        .ok_or(err("auth", "请在 QQ 音乐页面完成登录"))?;
+    if accounts.any(|v| v != account) { return Err(err("auth", "QQ 账号会话存在冲突")); }
     let mut keys = values.iter().filter(|(k, _)| matches!(k.as_str(), "qm_keyst" | "qqmusic_key" | "music_key"))
         .map(|(_, value)| value.as_str());
     let key = keys.next().ok_or(err("auth", "QQ 音乐会话尚未就绪"))?;
     if keys.any(|v| v != key) { return Err(err("auth", "QQ 音乐会话存在冲突")); }
-    Ok(WebSession { account: account.to_owned(), key: key.to_owned(), wechat: None })
+    Ok((account, key.to_string()))
 }
 
 fn profile_data(data: Value, account: &str) -> Result<Value> {
@@ -292,14 +186,15 @@ fn hash33(s: &str) -> u32 {
     s.bytes().fold(5381_u32, |h, b| h.wrapping_mul(33).wrapping_add(b as u32)) & 0x7fff_ffff
 }
 
-async fn profile(client: &reqwest::Client, session: &WebSession) -> Result<Value> {
-    let gtk = hash33(&session.key);
+async fn profile(client: &reqwest::Client, account: &str, key: &str) -> Result<Value> {
+    let gtk = hash33(key);
     let request = json!({
-        "comm":{"ct":24,"cv":4747474,"platform":"yqq.json","uin":session.account,"authst":session.key,"g_tk":gtk,"g_tk_new_20200303":gtk,"format":"json"},
+        "comm":{"ct":24,"cv":4747474,"platform":"yqq.json","uin":account,"authst":key,"g_tk":gtk,"g_tk_new_20200303":gtk,"format":"json"},
         "req_0":{"module":"music.UserInfo.userInfoServer","method":"GetLoginUserInfo","param":{}}
     });
+    let cookie = format!("uin={account}; qqmusic_uin={account}; qm_keyst={key}; qqmusic_key={key}");
     let mut response = client.post(API_URL).header("Referer", "https://y.qq.com/")
-        .header("Cookie", session.cookie_header()).json(&request).send().await.map_err(|e| {
+        .header("Cookie", cookie).json(&request).send().await.map_err(|e| {
             if e.is_timeout() { err("timeout", "QQ 资料验证超时") } else { err("network", "无法连接 QQ 音乐") }
         })?;
     if !response.status().is_success() { return Err(err("upstream", "QQ 资料请求失败")); }
@@ -312,10 +207,9 @@ async fn profile(client: &reqwest::Client, session: &WebSession) -> Result<Value
         body.extend_from_slice(&chunk);
     }
     let data = serde_json::from_slice(&body).map_err(|_| err("upstream", "QQ 资料格式异常"))?;
-    profile_data(data, &session.account)
+    profile_data(data, account)
 }
 
-#[cfg(windows)]
 fn new_profile_dir(app: &AppHandle) -> Result<PathBuf> {
     let base = app.path().app_local_data_dir().map_err(|_| err("storage", "无法创建授权隔离目录"))?;
     let root = base.join("qq-auth-transient");
@@ -330,7 +224,6 @@ fn new_profile_dir(app: &AppHandle) -> Result<PathBuf> {
 }
 
 // Never remove paths outside the canonical fixed application directory.
-#[cfg(windows)]
 fn remove_profile(app: &AppHandle, path: &Path) -> bool {
     let Ok(base) = app.path().app_local_data_dir() else { return false };
     let Ok(root) = base.join("qq-auth-transient").canonicalize() else { return false };
@@ -343,7 +236,6 @@ fn remove_profile(app: &AppHandle, path: &Path) -> bool {
     std::fs::remove_dir_all(path).is_ok()
 }
 
-#[cfg(windows)]
 fn destroy_later(app: AppHandle, path: PathBuf, failure: Arc<AtomicBool>) {
     thread::spawn(move || {
         thread::sleep(Duration::from_secs(2));
@@ -363,7 +255,6 @@ impl Drop for CompletionGuard {
     }
 }
 
-#[cfg(windows)]
 fn hardened(window: &WebviewWindow) -> Result<()> {
     let (tx, rx) = mpsc::sync_channel(1);
     window.with_webview(move |wv| {
@@ -386,24 +277,6 @@ fn hardened(window: &WebviewWindow) -> Result<()> {
     else { Err(err("security", "无法关闭密码保存和自动填充，已停止 QQ 登录")) }
 }
 
-#[cfg(target_os = "macos")]
-fn hardened(window: &WebviewWindow) -> Result<()> {
-    let (tx, rx) = mpsc::sync_channel(1);
-    window.with_webview(move |webview| {
-        // The callback runs on the WebKit UI thread and the native handle belongs to this window.
-        let isolated = unsafe {
-            let view = &*webview.inner().cast::<objc2_web_kit::WKWebView>();
-            !view.configuration().websiteDataStore().isPersistent()
-        };
-        let _ = tx.send(isolated);
-    }).map_err(|_| err("security", "无法检查 QQ 授权窗口的临时会话"))?;
-    if rx.recv_timeout(Duration::from_secs(10)).unwrap_or(false) {
-        Ok(())
-    } else {
-        Err(err("security", "QQ 授权窗口未使用临时会话，已停止登录"))
-    }
-}
-
 #[tauri::command]
 pub async fn qq_web_login_open(app: AppHandle, caller: WebviewWindow, state: State<'_, QqWebAuth>) -> Result<Value> {
     main_only(&caller)?;
@@ -411,24 +284,22 @@ pub async fn qq_web_login_open(app: AppHandle, caller: WebviewWindow, state: Sta
         return Err(err("storage", "上次 QQ 授权临时数据未清理，请检查后再试"));
     }
     if app.get_webview_window(LABEL).is_some() { return Err(err("validation", "QQ 授权窗口已经打开")); }
-    #[cfg(windows)]
     let directory = new_profile_dir(&app)?;
     let generation = {
         let mut s = state.inner.lock().map_err(|_| err("storage", "QQ 会话不可用"))?;
-        if s.auth_window.is_some() {
+        if s.directory.is_some() {
             drop(s);
-            #[cfg(windows)]
             if !remove_profile(&app, &directory) { state.cleanup_failed.store(true, Ordering::Release); }
             return Err(err("validation", "QQ 授权窗口已经打开或正在关闭"));
         }
         s.generation += 1;
-        s.auth_window = Some(s.generation);
+        s.directory = Some(directory.clone());
         s.generation
     };
     let popup_app = app.clone();
-    let builder = WebviewWindowBuilder::new(&app, LABEL, WebviewUrl::External("about:blank".parse().unwrap()))
+    let auth = WebviewWindowBuilder::new(&app, LABEL, WebviewUrl::External("about:blank".parse().unwrap()))
         .title("QQ 音乐授权").inner_size(920.0, 720.0).visible(false)
-        .incognito(true)
+        .data_directory(directory.clone()).incognito(true).general_autofill_enabled(false)
         .on_navigation(|url| (url.scheme() == "about" && url.path() == "blank") || allowed_navigation(url))
         .on_new_window(move |url, _| {
             if allowed_navigation(&url) {
@@ -437,33 +308,28 @@ pub async fn qq_web_login_open(app: AppHandle, caller: WebviewWindow, state: Sta
                 }
             }
             tauri::webview::NewWindowResponse::Deny
-        });
-    #[cfg(windows)]
-    let builder = builder.data_directory(directory.clone()).general_autofill_enabled(false);
-    let auth = builder.build();
+        })
+        .build();
     let auth = match auth {
         Ok(auth) => auth,
         Err(_) => {
-            if let Ok(mut s) = state.inner.lock() { if s.auth_window == Some(generation) { s.auth_window = None; } }
-            #[cfg(windows)]
+            if let Ok(mut s) = state.inner.lock() { if s.generation == generation { s.directory = None; } }
             if !remove_profile(&app, &directory) { state.cleanup_failed.store(true, Ordering::Release); }
             return Err(err("security", "无法创建 QQ 授权窗口"));
         }
     };
     let close_state = state.inner.clone();
-    #[cfg(windows)]
     let close_app = app.clone();
-    #[cfg(windows)]
+    let close_path = directory.clone();
     let close_failure = state.cleanup_failed.clone();
     auth.on_window_event(move |event| {
         if matches!(event, tauri::WindowEvent::Destroyed) {
             if let Ok(mut s) = close_state.lock() {
-                if s.auth_window == Some(generation) {
-                    s.generation += 1; s.auth_window = None; s.completing = false;
+                if s.directory.as_ref() == Some(&close_path) {
+                    s.generation += 1; s.directory = None; s.completing = false;
                 }
             }
-            #[cfg(windows)]
-            destroy_later(close_app.clone(), directory.clone(), close_failure.clone());
+            destroy_later(close_app.clone(), close_path.clone(), close_failure.clone());
         }
     });
     let check_window = auth.clone();
@@ -488,33 +354,36 @@ pub async fn qq_web_login_complete(app: AppHandle, caller: WebviewWindow, state:
     main_only(&caller)?;
     let generation = {
         let mut s = state.inner.lock().map_err(|_| err("storage", "QQ 会话不可用"))?;
-        if s.auth_window.is_none() || s.completing { return Err(err("validation", "QQ 授权窗口未打开或正在验证")); }
+        if s.directory.is_none() || s.completing { return Err(err("validation", "QQ 授权窗口未打开或正在验证")); }
         s.completing = true;
         s.generation
     };
     let _guard = CompletionGuard { inner: state.inner.clone(), generation };
     let auth = app.get_webview_window(LABEL).ok_or(err("validation", "QQ 授权窗口未打开"))?;
     let get_cookies = auth.clone();
-    let pairs = tauri::async_runtime::spawn_blocking(move || read_auth_cookies(&get_cookies))
-        .await.map_err(|_| err("storage", "无法读取 QQ 授权窗口会话"))?
+    let pairs = tauri::async_runtime::spawn_blocking(move || {
+        get_cookies.cookies_for_url(COOKIE_URL.parse().unwrap()).map(|cookies| cookies.into_iter()
+            .filter(|c| matches!(c.name(), "uin" | "qqmusic_uin" | "qm_keyst" | "qqmusic_key" | "music_key"))
+            .map(|c| (c.name().to_owned(), c.value().to_owned())).collect::<Vec<_>>())
+    }).await.map_err(|_| err("storage", "无法读取 QQ 授权窗口会话"))?
         .map_err(|_| err("storage", "无法读取 QQ 授权窗口会话"))?;
-    let session = select_session(pairs)?;
+    let (account, key) = select_session(pairs)?;
     {
         let s = state.inner.lock().map_err(|_| err("storage", "QQ 会话不可用"))?;
-        if s.generation != generation || s.auth_window.is_none() { return Err(err("cancelled", "QQ 授权已取消")); }
+        if s.generation != generation || s.directory.is_none() { return Err(err("cancelled", "QQ 授权已取消")); }
     }
-    let info = profile(&state.client, &session).await?;
+    let info = profile(&state.client, &account, &key).await?;
     {
         let s = state.inner.lock().map_err(|_| err("storage", "QQ 会话不可用"))?;
-        if s.generation != generation || s.auth_window.is_none() { return Err(err("cancelled", "QQ 授权已取消")); }
+        if s.generation != generation || s.directory.is_none() { return Err(err("cancelled", "QQ 授权已取消")); }
     }
-    let secret = Credential::new(serde_json::to_string(&session)
+    let secret = Credential::new(serde_json::to_string(&json!({"musicid":account,"musickey":key}))
         .map_err(|_| err("storage", "无法保存 QQ 会话"))?)
         .map_err(|_| err("storage", "无法保存 QQ 会话"))?;
     {
         let mut s = state.inner.lock().map_err(|_| err("storage", "QQ 会话不可用"))?;
-        if s.generation != generation || s.auth_window.is_none() { return Err(err("cancelled", "QQ 授权已取消")); }
-        SystemCredentialStore.save(&secret).map_err(|_| err("storage", "无法安全保存 QQ 登录状态"))?;
+        if s.generation != generation || s.directory.is_none() { return Err(err("cancelled", "QQ 授权已取消")); }
+        WindowsStore.save(&secret).map_err(|_| err("storage", "无法安全保存 QQ 登录状态"))?;
         s.generation += 1;
     }
     let clear_window = auth.clone();
@@ -537,10 +406,14 @@ pub fn qq_web_login_cancel(app: AppHandle, caller: WebviewWindow, state: State<'
 pub async fn qq_web_account(caller: WebviewWindow, state: State<'_, QqWebAuth>) -> Result<Value> {
     main_only(&caller)?;
     let generation = state.inner.lock().map_err(|_| err("storage", "QQ 会话不可用"))?.generation;
-    let credential = SystemCredentialStore.load().map_err(|_| err("storage", "无法读取 QQ 登录状态"))?;
+    let credential = WindowsStore.load().map_err(|_| err("storage", "无法读取 QQ 登录状态"))?;
     let Some(credential) = credential else { return Ok(json!({"profile":null})); };
-    let session = WebSession::from_credential(&credential)?;
-    let info = profile(&state.client, &session).await?;
+    let data: Value = serde_json::from_str(credential.expose()).map_err(|_| err("storage", "QQ 登录状态格式异常"))?;
+    let account = data.get("musicid").and_then(Value::as_str).filter(|v| v.bytes().all(|b| b.is_ascii_digit()))
+        .ok_or(err("storage", "QQ 登录状态格式异常"))?;
+    let key = data.get("musickey").and_then(Value::as_str).filter(|v| safe_cookie_value(v))
+        .ok_or(err("storage", "QQ 登录状态格式异常"))?;
+    let info = profile(&state.client, account, key).await?;
     if state.inner.lock().map_err(|_| err("storage", "QQ 会话不可用"))?.generation != generation {
         return Err(err("cancelled", "QQ 账号已变化"));
     }
@@ -551,7 +424,7 @@ pub async fn qq_web_account(caller: WebviewWindow, state: State<'_, QqWebAuth>) 
 pub fn qq_web_logout(app: AppHandle, caller: WebviewWindow, state: State<'_, QqWebAuth>) -> Result<Value> {
     main_only(&caller)?;
     let mut s = state.inner.lock().map_err(|_| err("storage", "QQ 会话不可用"))?;
-    SystemCredentialStore.clear().map_err(|_| err("storage", "无法清理 QQ 本地登录状态"))?;
+    WindowsStore.clear().map_err(|_| err("storage", "无法清理 QQ 本地登录状态"))?;
     s.generation += 1;
     s.diagnostic_revision=s.diagnostic_revision.wrapping_add(1);
     if let Some(d)=s.diagnostic.as_mut(){*d=PlaybackDiagnostic{stage:"账号已退出",session_expiry:"未知",session_validity:"未检查",upstream_identity_match:"未知",..Default::default()};}
@@ -565,15 +438,18 @@ pub fn qq_web_logout(app: AppHandle, caller: WebviewWindow, state: State<'_, QqW
 }
 
 
-fn account_snapshot(state: &QqWebAuth) -> Result<(u64, WebSession)> {
-    let generation = state.inner.lock().map_err(|_| err("storage", "QQ 会话不可用"))?.generation;
-    let credential = SystemCredentialStore.load().map_err(|_| err("storage", "无法读取 QQ 登录状态"))?
-        .ok_or(err("auth", "请先登录 QQ 音乐"))?;
-    Ok((generation, WebSession::from_credential(&credential)?))
+fn account_snapshot(state:&QqWebAuth)->Result<(u64,String,String)>{
+ let generation=state.inner.lock().map_err(|_|err("storage","QQ 会话不可用"))?.generation;
+ let secret=WindowsStore.load().map_err(|_|err("storage","无法读取 QQ 登录状态"))?.ok_or(err("auth","请先登录 QQ 音乐"))?;
+ let value:Value=serde_json::from_str(secret.expose()).map_err(|_|err("storage","QQ 登录状态格式异常"))?;
+ let account=value.get("musicid").and_then(Value::as_str).filter(|v|!v.is_empty()&&v.bytes().all(|b|b.is_ascii_digit())).ok_or(err("storage","QQ 登录状态格式异常"))?.to_owned();
+ let key=value.get("musickey").and_then(Value::as_str).filter(|v|safe_cookie_value(v)).ok_or(err("storage","QQ 登录状态格式异常"))?.to_owned();
+ Ok((generation,account,key))
 }
 fn require_generation(state:&QqWebAuth,generation:u64)->Result<()> {
  if state.inner.lock().map_err(|_|err("storage","QQ 会话不可用"))?.generation!=generation {Err(err("cancelled","QQ 账号已变化"))}else{Ok(())}
 }
+fn session_cookie(account:&str,key:&str)->String {format!("uin={account}; qqmusic_uin={account}; qm_keyst={key}; qqmusic_key={key}")}
 async fn read_json(mut response:reqwest::Response)->Result<Value>{
  if response.status()==reqwest::StatusCode::UNAUTHORIZED||response.status()==reqwest::StatusCode::FORBIDDEN{return Err(err("auth","QQ 登录已过期或没有权限"));}
  if !response.status().is_success(){return Err(err("upstream","QQ 服务请求失败"));}
@@ -584,11 +460,10 @@ async fn read_json(mut response:reqwest::Response)->Result<Value>{
 #[tauri::command]
 pub async fn qq_web_playlists(caller:WebviewWindow,state:State<'_,QqWebAuth>,page:u32)->Result<Value>{
  main_only(&caller)?;if !(1..=50).contains(&page){return Err(err("validation","QQ 歌单页码无效"));}
- let (generation,session)=account_snapshot(&state)?;let account=&session.account;let start=((page-1)*40).to_string();let end=((page-1)*40+39).to_string();let cookie=session.cookie_header();
- let gtk=if session.wechat.is_some(){hash33(&session.key).to_string()}else{"5381".into()};
+ let (generation,account,key)=account_snapshot(&state)?;let start=((page-1)*40).to_string();let end=((page-1)*40+39).to_string();let cookie=session_cookie(&account,&key);
  let created=state.client.get("https://c.y.qq.com/rsc/fcgi-bin/fcg_user_created_diss")
   .header("Referer","https://y.qq.com/portal/profile.html").header("Cookie",&cookie)
-  .query(&[("hostUin","0"),("hostuin",account.as_str()),("sin",start.as_str()),("size","40"),("g_tk",gtk.as_str()),("loginUin",account.as_str()),("format","json"),("inCharset","utf8"),("outCharset","utf-8"),("notice","0"),("platform","yqq.json"),("needNewCode","0")]).send().await.map_err(|e|if e.is_timeout(){err("timeout","QQ 歌单请求超时")}else{err("network","无法连接 QQ 歌单服务")})?;
+  .query(&[("hostUin","0"),("hostuin",account.as_str()),("sin",start.as_str()),("size","40"),("g_tk","5381"),("loginUin",account.as_str()),("format","json"),("inCharset","utf8"),("outCharset","utf-8"),("notice","0"),("platform","yqq.json"),("needNewCode","0")]).send().await.map_err(|e|if e.is_timeout(){err("timeout","QQ 歌单请求超时")}else{err("network","无法连接 QQ 歌单服务")})?;
  let created=read_json(created).await?;require_generation(&state,generation)?;
  let collected=state.client.get("https://c.y.qq.com/fav/fcgi-bin/fcg_get_profile_order_asset.fcg")
   .header("Referer","https://y.qq.com/portal/profile.html").header("Cookie",&cookie)
@@ -600,9 +475,9 @@ pub async fn qq_web_playlists(caller:WebviewWindow,state:State<'_,QqWebAuth>,pag
 pub async fn qq_web_playlist_tracks(caller:WebviewWindow,state:State<'_,QqWebAuth>,id:String,page:u32)->Result<Value>{
  main_only(&caller)?;if !(1..=100).contains(&page){return Err(err("validation","QQ 歌曲页码无效"));}
  let liked=id=="liked:201";let diss=if liked{0}else{id.parse::<u64>().ok().filter(|n|*n>0&&*n<=9_007_199_254_740_991).ok_or(err("validation","QQ 歌单标识无效"))?};
- let (generation,session)=account_snapshot(&state)?;let gtk=hash33(&session.key);
- let request=json!({"comm":{"ct":24,"cv":4747474,"platform":"yqq.json","uin":session.account,"authst":session.key,"g_tk":gtk,"format":"json"},"playlist":{"module":"music.srfDissInfo.DissInfo","method":"CgiGetDiss","param":{"disstid":diss,"dirid":if liked{201}else{0},"tag":true,"song_begin":(page-1)*50,"song_num":50,"userinfo":true,"orderlist":true,"onlysonglist":false}}});
- let response=state.client.post(API_URL).header("Referer","https://y.qq.com/").header("Cookie",session.cookie_header()).json(&request).send().await.map_err(|e|if e.is_timeout(){err("timeout","QQ 歌曲请求超时")}else{err("network","无法连接 QQ 音乐")})?;
+ let (generation,account,key)=account_snapshot(&state)?;let gtk=hash33(&key);
+ let request=json!({"comm":{"ct":24,"cv":4747474,"platform":"yqq.json","uin":account,"authst":key,"g_tk":gtk,"format":"json"},"playlist":{"module":"music.srfDissInfo.DissInfo","method":"CgiGetDiss","param":{"disstid":diss,"dirid":if liked{201}else{0},"tag":true,"song_begin":(page-1)*50,"song_num":50,"userinfo":true,"orderlist":true,"onlysonglist":false}}});
+ let response=state.client.post(API_URL).header("Referer","https://y.qq.com/").header("Cookie",session_cookie(&account,&key)).json(&request).send().await.map_err(|e|if e.is_timeout(){err("timeout","QQ 歌曲请求超时")}else{err("network","无法连接 QQ 音乐")})?;
  let data=read_json(response).await?;require_generation(&state,generation)?;let mut out=crate::qq_catalog::map_tracks(data)?;out["page"]=json!(page);Ok(out)
 }
 
@@ -657,14 +532,14 @@ fn parse_media_response(data:&Value)->Result<(String,&'static str)>{
      else {return Err(err("upstream","QQ 返回的音频格式不受支持"));};
  Ok((url.into(),mime))
 }
-fn media_request(client:&reqwest::Client,session:&WebSession,guid:&str,mid:&str,filename:&str)->reqwest::RequestBuilder{
- let gtk=hash33(&session.key);
+fn media_request(client:&reqwest::Client,account:&str,key:&str,guid:&str,mid:&str,filename:&str)->reqwest::RequestBuilder{
+ let gtk=hash33(key);
  let request=json!({
-     "comm":{"ct":24,"cv":4747474,"platform":"yqq.json","uin":session.account,"authst":session.key,"g_tk":gtk,"g_tk_new_20200303":gtk,"format":"json"},
-     "req_0":{"module":"vkey.GetVkeyServer","method":"CgiGetVkey","param":{"guid":guid,"songmid":[mid],"songtype":[0],"uin":session.account,"loginflag":1,"platform":"20","filename":[filename]}}
+     "comm":{"ct":24,"cv":4747474,"platform":"yqq.json","uin":account,"authst":key,"g_tk":gtk,"g_tk_new_20200303":gtk,"format":"json"},
+     "req_0":{"module":"vkey.GetVkeyServer","method":"CgiGetVkey","param":{"guid":guid,"songmid":[mid],"songtype":[0],"uin":account,"loginflag":1,"platform":"20","filename":[filename]}}
  });
  client.post(API_URL).header("Referer","https://y.qq.com/").header(reqwest::header::ORIGIN,"https://y.qq.com")
-     .header("Cookie",session.cookie_header()).json(&request)
+     .header("Cookie",session_cookie(account,key)).json(&request)
 }
 #[tauri::command]
 pub async fn qq_web_resolve(caller:WebviewWindow,state:State<'_,QqWebAuth>,mid:String,media_mid:Option<String>)->Result<Value>{
@@ -672,23 +547,19 @@ pub async fn qq_web_resolve(caller:WebviewWindow,state:State<'_,QqWebAuth>,mid:S
  let (diag_rev,resolve_rev)={let mut inner=state.inner.lock().map_err(|_|err("storage","QQ 会话不可用"))?;inner.diagnostic_revision=inner.diagnostic_revision.wrapping_add(1);inner.resolve_revision=inner.resolve_revision.wrapping_add(1);inner.resolve_status=ResolveStatus::Pending;let rev=(inner.diagnostic_revision,inner.resolve_revision);if let Some(d)=inner.diagnostic.as_mut(){*d=PlaybackDiagnostic{stage:"会话检查",session_expiry:"未知",session_validity:"未检查",upstream_identity_match:"未知",..Default::default()};}rev};
  let _resolve_guard=ResolveGuard{inner:state.inner.clone(),revision:resolve_rev};
  let filename=vkey_filename(&mid,media_mid.as_deref()).map_err(|e|{update_diagnostic_for(&state,diag_rev,|d|d.failure=Some("输入无效"));e})?;
- let (generation,session)=account_snapshot(&state).map_err(|e|{update_diagnostic_for(&state,diag_rev,|d|d.failure=Some("会话不可用"));e})?;
+ let (generation,account,key)=account_snapshot(&state).map_err(|e|{update_diagnostic_for(&state,diag_rev,|d|d.failure=Some("会话不可用"));e})?;
  update_diagnostic_for(&state,diag_rev,|d|{d.session_fields=true;d.session_validity="本地结构有效，服务端未知";d.stage="请求构造";d.media_mid_present=media_mid.is_some();d.media_mid_matches_song_mid=media_mid.as_ref().map(|m|m==&mid);});
  require_generation(&state,generation).map_err(|e|{update_diagnostic_for(&state,diag_rev,|d|{d.generation_match=Some(false);d.failure=Some("账号代次冲突");});e})?;
  let guid:String=rand::thread_rng().gen_range(10_000_000_u64..99_999_999).to_string();
  update_diagnostic_for(&state,diag_rev,|d|{d.stage="接口响应";d.request_complete=true;d.uses_login=true;d.generation_match=Some(true);});
- let response=media_request(&state.client,&session,&guid,&mid,&filename).send().await.map_err(|e|{update_diagnostic_for(&state,diag_rev,|d|d.failure=Some("网络或超时"));if e.is_timeout(){err("timeout","QQ 音频请求超时")}else{err("network","无法连接 QQ 音乐")}})?;
+ let response=media_request(&state.client,&account,&key,&guid,&mid,&filename).send().await.map_err(|e|{update_diagnostic_for(&state,diag_rev,|d|d.failure=Some("网络或超时"));if e.is_timeout(){err("timeout","QQ 音频请求超时")}else{err("network","无法连接 QQ 音乐")}})?;
  let data=read_json(response).await.map_err(|e|{update_diagnostic_for(&state,diag_rev,|d|d.failure=Some("接口响应错误"));e})?;
  require_generation(&state,generation).map_err(|e|{update_diagnostic_for(&state,diag_rev,|d|{d.generation_match=Some(false);d.failure=Some("账号代次冲突");});e})?;
  update_diagnostic_for(&state,diag_rev,|d|{d.stage="URL 解析";d.top_code=data.get("code").and_then(Value::as_i64);d.module_code=data.pointer("/req_0/code").and_then(Value::as_i64);d.business_code=data.pointer("/req_0/data/midurlinfo/0/result").and_then(Value::as_i64);});
  let (url,mime)=parse_media_response(&data).map_err(|e|{update_diagnostic_for(&state,diag_rev,|d|d.failure=Some("未获得有效播放地址"));e})?;
  let handle:String=rand::thread_rng().sample_iter(&Alphanumeric).take(40).map(char::from).collect();
  {let mut inner=state.inner.lock().map_err(|_|err("storage","QQ 会话不可用"))?;if inner.generation!=generation {if inner.diagnostic_revision==diag_rev {if let Some(d)=inner.diagnostic.as_mut(){d.generation_match=Some(false);d.failure=Some("账号代次冲突");}}return Err(err("cancelled","QQ 账号已变化"));}install_stream(&mut inner,generation,resolve_rev,Stream{handle:handle.clone(),url,mime,generation,expires:Instant::now()+Duration::from_secs(600),diagnostic_revision:diag_rev,resolve_revision:resolve_rev})?;inner.resolve_status=ResolveStatus::Succeeded;if inner.diagnostic_revision==diag_rev {if let Some(d)=inner.diagnostic.as_mut(){d.valid_url=true;d.stage="等待音频加载";}}}
- #[cfg(windows)]
- let origin = "http://prismmedia.localhost";
- #[cfg(target_os = "macos")]
- let origin = "prismmedia://localhost";
- Ok(json!({"data":[{"code":200,"url":format!("{origin}/{handle}")}] }))
+ Ok(json!({"data":[{"code":200,"url":format!("http://prismmedia.localhost/{handle}")}] }))
 }
 fn bounded_range(value:Option<&str>)->Result<(u64,u64)>{
  let raw=value.unwrap_or("bytes=0-").strip_prefix("bytes=").ok_or(err("validation","音频范围无效"))?;
@@ -726,9 +597,9 @@ async fn stream_chunk_inner(state:&QqWebAuth,handle:&str,range:Option<&str>)->Re
 }
 #[tauri::command]
 pub async fn qq_web_lyric(caller:WebviewWindow,state:State<'_,QqWebAuth>,mid:String)->Result<Value>{
- main_only(&caller)?;if !valid_mid(&mid){return Err(err("validation","QQ 曲目标识无效"));}let(generation,session)=account_snapshot(&state)?;require_generation(&state,generation)?;
+ main_only(&caller)?;if !valid_mid(&mid){return Err(err("validation","QQ 曲目标识无效"));}let(generation,account,key)=account_snapshot(&state)?;require_generation(&state,generation)?;
  let request=json!({"comm":{"ct":24,"cv":0},"lyric":{"module":"music.musichallSong.PlayLyricInfo","method":"GetPlayLyricInfo","param":{"songMID":mid}}});
- let response=state.client.post(API_URL).header("Referer","https://y.qq.com/").header("Cookie",session.cookie_header()).json(&request).send().await.map_err(|e|if e.is_timeout(){err("timeout","QQ 歌词请求超时")}else{err("network","QQ 歌词请求失败")})?;
+ let response=state.client.post(API_URL).header("Referer","https://y.qq.com/").header("Cookie",session_cookie(&account,&key)).json(&request).send().await.map_err(|e|if e.is_timeout(){err("timeout","QQ 歌词请求超时")}else{err("network","QQ 歌词请求失败")})?;
  let data=read_json(response).await?;require_generation(&state,generation)?;if data.get("code").and_then(Value::as_i64)!=Some(0)||data.pointer("/lyric/code").and_then(Value::as_i64)!=Some(0){return Err(err("upstream","QQ 歌词服务返回失败"));}
  let encoded=data.pointer("/lyric/data/lyric").and_then(Value::as_str).unwrap_or("");let decoded=base64::engine::general_purpose::STANDARD.decode(encoded).ok().and_then(|b|String::from_utf8(b).ok()).unwrap_or_else(||encoded.to_owned());Ok(json!({"lrc":{"lyric":decoded}}))
 }
@@ -805,82 +676,23 @@ mod tests {
             assert!(allowed_navigation(&u.parse().unwrap()));
         }
         assert!(allowed_navigation(&"https://graph.qq.com/oauth2.0/show".parse().unwrap()));
-        for u in ["https://graph.qq.com/connect", "https://graph.qq.com/connect/?style=inline"] {
-            assert!(allowed_navigation(&u.parse().unwrap()));
-        }
-        assert!(allowed_navigation(&"https://open.weixin.qq.com/connect/qrconnect?response_type=code".parse().unwrap()));
         for u in ["http://y.qq.com/n/ryqq/profile", "https://y.qq.com.evil.invalid/n/ryqq/profile",
             "https://y.qq.com:444/n/ryqq/profile", "https://evil.qq.com/n/ryqq/profile",
             "file:///etc/passwd", "https://user@y.qq.com/n/ryqq/profile",
-            "https://y.qq.com/n/ryqq_v2evil/profile", "https://graph.qq.com/connect/other",
-            "https://graph.qq.com.evil.invalid/connect/", "https://open.weixin.qq.com/connect/qrconnect/other",
-            "https://open.weixin.qq.com.evil.invalid/connect/qrconnect"] {
+            "https://y.qq.com/n/ryqq_v2evil/profile"] {
             assert!(!allowed_navigation(&u.parse().unwrap()));
         }
     }
     #[test] fn selects_only_non_conflicting_necessary_synthetic_fields() {
         let pairs = vec![("uin".into(),"o000123".into()),("qm_keyst".into(),"fictional-key".into()),
             ("unrelated".into(),"never-used".into())];
-        let session = select_session(pairs).unwrap();
-        assert_eq!(session.account,"123"); assert_eq!(session.key,"fictional-key");
-        assert!(session.wechat.is_none());
+        let (account, key) = select_session(pairs).unwrap();
+        assert_eq!(account,"123"); assert_eq!(key,"fictional-key");
         assert!(select_session(vec![("uin".into(),"123".into())]).is_err());
         assert!(select_session(vec![("uin".into(),"123".into()),("qqmusic_uin".into(),"999".into()),
             ("qm_keyst".into(),"fake".into())]).is_err());
         assert!(select_session(vec![("uin".into(),"123".into()),("qm_keyst".into(),"".into())]).is_err());
         assert!(select_session(vec![("uin".into(),"123".into()),("qm_keyst".into(),"one".into()),("qqmusic_key".into(),"two".into())]).is_err());
-    }
-    #[test] fn selects_wechat_account_and_preserves_it_for_restart_and_playback() {
-        let cookies = [
-            ("login_type", "2"), ("wxuin", "o001234567890123456"), ("wxopenid", "fixture-openid"),
-            ("uin", "4321"), ("qm_keyst", "fixture-old-qq-key"), ("qqmusic_key", "fixture-wechat-key"),
-        ].map(|(name, value)| (name.to_owned(), value.to_owned()));
-        let session = select_session(cookies).unwrap();
-        let credential = Credential::new(serde_json::to_string(&session).unwrap()).unwrap();
-        let resumed = WebSession::from_credential(&credential).unwrap();
-        assert_eq!(resumed.account, "1234567890123456");
-        assert_eq!(resumed.cookie_header(), "login_type=2; qqmusic_uin=1234567890123456; qqmusic_key=fixture-wechat-key; wxuin=o001234567890123456; wxopenid=fixture-openid");
-
-        let request = media_request(&reqwest::Client::new(), &resumed, "678", "SONG1", "C400FILE2.m4a").build().unwrap();
-        assert_eq!(request.headers()[reqwest::header::COOKIE], resumed.cookie_header());
-        let body: Value = serde_json::from_slice(request.body().unwrap().as_bytes().unwrap()).unwrap();
-        assert_eq!(body["comm"]["uin"], json!("1234567890123456"));
-        assert_eq!(body["comm"]["g_tk"], json!(hash33("fixture-wechat-key")));
-    }
-
-    #[cfg(target_os = "macos")]
-    #[test]
-    fn wechat_login_reads_parent_domain_cookies_in_the_qq_music_root_scope() {
-        let cookie = |name: &'static str, value: &'static str, domain: &'static str, path: &'static str| {
-            tauri::webview::Cookie::build((name, value)).domain(domain).path(path).secure(true).build()
-        };
-        let cookies = [
-            cookie("login_type", "2", ".qq.com", "/"),
-            cookie("wxuin", "o001234567890123456", ".qq.com", "/"),
-            cookie("qqmusic_key", "fixture-wechat-key", "y.qq.com", "/"),
-            cookie("wxuin", "4321", "graph.qq.com", "/"),
-            cookie("qqmusic_key", "different-path", "y.qq.com", "/unrelated"),
-            cookie("qqmusic_key", "untrusted-domain", "y.qq.com.example.invalid", "/"),
-        ];
-        let pairs = |cookie: &tauri::webview::Cookie<'_>| (cookie.name().to_owned(), cookie.value().to_owned());
-        let exact_match = cookies.iter().filter(|cookie| cookie.domain() == Some("y.qq.com") && cookie.path() == Some("/")).map(pairs);
-        assert_eq!(select_session(exact_match).err().unwrap().message, "请在 QQ 音乐页面完成 QQ 或微信登录");
-        let session = select_session(cookies.iter().filter(|cookie| qq_music_root_cookie(cookie)).map(pairs)).unwrap();
-        assert!(session.wechat.is_some());
-        assert_eq!(session.account, "1234567890123456");
-        assert_eq!(session.key, "fixture-wechat-key");
-    }
-
-    #[test] fn wechat_requires_its_music_session_and_legacy_credentials_still_load() {
-        let incomplete = [("login_type", "2"), ("uin", "123"), ("qm_keyst", "fixture-qq-key")]
-            .map(|(name, value)| (name.to_owned(), value.to_owned()));
-        assert!(select_session(incomplete).is_err());
-        let bad_key = [("login_type", "2"), ("wxuin", "1234567890123456"),
-            ("qqmusic_key", "fixture\r\nInjected: header")].map(|(name, value)| (name.to_owned(), value.to_owned()));
-        assert!(select_session(bad_key).is_err());
-        let legacy = Credential::new(r#"{"musicid":"123","musickey":"fixture-qq-key"}"#.into()).unwrap();
-        let legacy = WebSession::from_credential(&legacy).unwrap();
-        assert_eq!(legacy.cookie_header(), "uin=123; qqmusic_uin=123; qm_keyst=fixture-qq-key; qqmusic_key=fixture-qq-key");
     }
     #[test] fn vkey_filename_uses_file_mid_and_validates_both_ids() {
         assert_eq!(vkey_filename("SONG1",Some("FILE2")).unwrap(),"C400FILE2.m4a");
@@ -890,8 +702,7 @@ mod tests {
     }
     #[test] fn media_request_uses_unsigned_endpoint_and_legacy_module() {
         let client=reqwest::Client::new();
-        let session=WebSession {account:"123".into(),key:"fixture-key".into(),wechat:None};
-        let request=media_request(&client,&session,"678","SONG1","C400FILE2.m4a").build().unwrap();
+        let request=media_request(&client,"123","fixture-key","678","SONG1","C400FILE2.m4a").build().unwrap();
         assert_eq!(request.url().as_str(),API_URL);
         assert_eq!(request.headers()[reqwest::header::ORIGIN],"https://y.qq.com");
         let body:Value=serde_json::from_slice(request.body().unwrap().as_bytes().unwrap()).unwrap();
