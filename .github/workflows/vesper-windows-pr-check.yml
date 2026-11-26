@@ -1,4 +1,4 @@
-name: Compare Windows native test loader on main and PR
+name: Verify the Windows desktop executable layout
 on:
   push:
     branches: [ci/macos-wechat-windows-check]
@@ -8,63 +8,13 @@ jobs:
   windows:
     runs-on: windows-2022
     timeout-minutes: 25
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - label: main
-            revision: c7a7e7a7b5a507d21c7adea3d6d5d1ea4ded3a94
-          - label: pr
-            revision: 3c468bc5c28e8780fc337fe438371e94c38f8f2e
-    name: Windows ${{ matrix.label }}
-    defaults:
-      run:
-        shell: pwsh
     steps:
       - uses: actions/checkout@v6
         with:
-          ref: ${{ matrix.revision }}
+          ref: 9cbd41c4cc576d6cd02fd1867bdca05b15ca4905
           persist-credentials: false
+      - run: git rev-parse HEAD
       - run: npm ci --no-audit --no-fund
       - run: npm run build
-      - name: Resolve Windows test executable paths
-        id: executables
-        run: |
-          cargo test --locked --no-run --message-format=json --manifest-path src-tauri/Cargo.toml > test-build.jsonl
-      - name: Run native tests
-        if: steps.executables.outcome == 'success'
+      - name: Compile and test the Windows desktop executable
         run: cargo test --locked --manifest-path src-tauri/Cargo.toml
-      - name: Check unresolved Windows imports
-        if: failure() && steps.executables.outcome == 'success'
-        run: |
-          python -m pip install pefile
-          @'
-          import ctypes as c
-          import json
-          from pathlib import Path
-          import pefile
-
-          kernel = c.WinDLL("kernel32.dll", use_last_error=True)
-          load = kernel.LoadLibraryExW
-          load.argtypes = [c.c_wchar_p, c.c_void_p, c.c_uint32]
-          load.restype = c.c_void_p
-          proc = kernel.GetProcAddress
-          proc.argtypes = [c.c_void_p, c.c_char_p]
-          proc.restype = c.c_void_p
-          for line in Path("test-build.jsonl").read_text(encoding="utf-8-sig").splitlines():
-              entry = json.loads(line)
-              if not entry.get("profile", {}).get("test") or not entry.get("executable"):
-                  continue
-              filename = entry["executable"]
-              print(f"Checking {Path(filename).name}")
-              for library in pefile.PE(filename, fast_load=False).DIRECTORY_ENTRY_IMPORT:
-                  dll = library.dll.decode("ascii")
-                  handle = load(dll, None, 0x800)
-                  if handle is None:
-                      print(f"  System load failed: {dll} ({c.get_last_error()})")
-                      continue
-                  for imported in library.imports:
-                      if imported.name and not proc(handle, imported.name):
-                          print(f"  Missing: {dll}!{imported.name.decode('ascii')}")
-          '@ | Set-Content -Encoding utf8 inspect-imports.py
-          python inspect-imports.py

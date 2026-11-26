@@ -145,13 +145,13 @@ test('Release 构建配置使用静态前端且未配置 Node 后台服务（静
  assert.equal(config.build.beforeBuildCommand,'npm run build');
  assert.equal(config.bundle.externalBin,undefined);
  assert(!Object.keys(pkg.dependencies).some(x=>/netease|concurrently|express/.test(x)));
- const rust=await readFile('src-tauri/src/lib.rs','utf8');
+ const rust=await readFile('src-tauri/src/main.rs','utf8');
  assert(rust.includes('keyring::Entry::new("local.xianyu.music", "netease-session")'));
  assert(!/Command::new\s*\(\s*"(?:node|npm|npx)|\.sidecar\s*\(/.test(rust));
 });
 
 test('生产 IPC 只注册受限网页登录原型，不注册旧二维码登录',async()=>{
- const rust=await readFile('src-tauri/src/lib.rs','utf8');
+ const rust=await readFile('src-tauri/src/main.rs','utf8');
  const handlers=rust.match(/tauri::generate_handler!\[(.*?)\]\)/s)?.[1];
  assert(handlers);assert(!handlers.includes('qq_login::'));assert(handlers.includes('qq_search'));assert(handlers.includes('qq_web_auth::qq_web_login_open'));assert(handlers.includes('qq_recommended_playlists'));assert(handlers.includes('qq_recommended_new_songs'));
 });
