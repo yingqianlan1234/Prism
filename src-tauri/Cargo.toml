@@ -20,6 +20,11 @@ lofty = "0.25.5"
 qrcode = { version = "0.14", default-features = false, features = ["svg"] }
 [target.'cfg(windows)'.dependencies]
 tauri = { version = "2", features = ["tray-icon"] }
+tauri-plugin-updater = "2"
+minisign-verify = "0.3"
+updater-http = { package = "reqwest", version = "0.13", default-features = false }
+semver = "1"
+time = { version = "0.3", features = ["formatting"] }
 keyring = { version = "3", features = ["windows-native"] }
 webview2-com = "0.39"
 windows = { version = "0.62", features = ["Win32_Foundation", "Win32_Graphics_Direct2D", "Win32_Graphics_Direct2D_Common", "Win32_Graphics_DirectWrite", "Win32_Graphics_Dwm", "Win32_Graphics_Dxgi_Common", "Win32_Graphics_Gdi", "Win32_Storage_FileSystem", "Win32_System_Com", "Win32_System_LibraryLoader", "Win32_UI_HiDpi", "Win32_UI_Input_KeyboardAndMouse", "Win32_UI_Shell", "Win32_UI_WindowsAndMessaging"] }

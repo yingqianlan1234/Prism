@@ -15,6 +15,12 @@ import {
 } from '../utils/format.js';
 import { Icon } from './Icons.jsx';
 import { PlaylistCover } from './Artwork.jsx';
+import {
+  formatBytes,
+  isSwitchableSourceError,
+  parseReleaseNotes,
+  validateMirrorPrefix,
+} from '../updater.js';
 
 const PLAYBACK_RATES = [0.75, 1, 1.25, 1.5, 2];
 const SLEEP_OPTIONS = [
@@ -72,6 +78,9 @@ export function MoreSettingsPanel({
   canGlobalShortcuts,
   globalShortcuts,
   onOpenShortcuts,
+  canAppUpdater,
+  updateSummary,
+  onOpenUpdater,
 }) {
   const [showLyricStyle, setShowLyricStyle] = useState(false);
   const style = desktopLyric?.style || {};
@@ -396,6 +405,15 @@ export function MoreSettingsPanel({
       {onOpenCloseSettings && (
         <button type="button" className="lw-more-item" onClick={onOpenCloseSettings}>
           关闭窗口：{closeMode === 'background' ? '后台运行' : closeMode === 'exit' ? '完全退出' : '每次询问'}
+        </button>
+      )}
+
+      {canAppUpdater && (
+        <button type="button" className="lw-more-item nr-update-entry" onClick={onOpenUpdater}>
+          <span>应用更新</span>
+          <span className={`nr-update-pill is-${updateSummary?.badgeTone || 'muted'}`}>
+            {updateSummary?.badgeText || '检查更新'}
+          </span>
         </button>
       )}
 
@@ -932,6 +950,366 @@ export function GlobalShortcutsDialog({
               {busy ? '保存中…' : '保存快捷键'}
             </button>
           </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+export function AppUpdateDialog({
+  open,
+  mode,
+  config,
+  state,
+  busy,
+  onCheck,
+  onDownload,
+  onInstall,
+  onSkipVersion,
+  onRemindLater,
+  onChangeSource,
+  onSaveMirror,
+  onToggleAutoCheck,
+  onSwitchSourceAndRetry,
+  onClose,
+}) {
+  const [mirrorExpanded, setMirrorExpanded] = useState(false);
+  const [mirrorDraft, setMirrorDraft] = useState(config?.customMirror || '');
+  const [mirrorError, setMirrorError] = useState('');
+
+  useEffect(() => {
+    if (!open) return;
+    setMirrorDraft(config?.customMirror || '');
+    setMirrorError('');
+    setMirrorExpanded(Boolean(config?.customMirror));
+  }, [open, config?.customMirror]);
+
+  if (!open) return null;
+
+  const phase = state?.phase || 'idle';
+  const info = state?.info || null;
+  const progress = state?.progress || null;
+  const currentVersion = config?.currentVersion || '1.1.0';
+  const source = config?.source === 'mirror' ? 'mirror' : 'github';
+  const altSource = source === 'github' ? 'mirror' : 'github';
+  const altLabel = altSource === 'mirror' ? '国内加速镜像' : 'GitHub 直连';
+  const pubkeyConfigured = Boolean(config?.pubkeyConfigured);
+  const isDownloading = phase === 'downloading';
+  const isChecking = phase === 'checking';
+  const isReady = phase === 'ready';
+  const isAvailable = phase === 'available' && Boolean(info?.version);
+  const isFeaturePrompt = mode === 'auto' && isAvailable;
+  const noteLines = isAvailable || isDownloading || isReady ? parseReleaseNotes(info?.notes || '') : [];
+  const percent = Number.isFinite(progress?.percent)
+    ? Math.max(0, Math.min(100, Math.round(progress.percent)))
+    : 0;
+  const downloadedText = progress?.downloadedBytes ? formatBytes(progress.downloadedBytes) : '0 B';
+  const totalText = progress?.totalBytes ? formatBytes(progress.totalBytes) : '';
+  const updateKindLabel =
+    info?.updateKind === 'feature' ? '功能更新' : info?.updateKind === 'patch' ? '常规修复' : '';
+
+  let statusPillText = '待检查';
+  let statusPillTone = 'muted';
+  if (!pubkeyConfigured) {
+    statusPillText = '未配公钥';
+    statusPillTone = 'muted';
+  } else if (isChecking) {
+    statusPillText = '检查中…';
+    statusPillTone = 'muted';
+  } else if (isDownloading) {
+    statusPillText = `下载中 ${percent}%`;
+    statusPillTone = 'accent';
+  } else if (isReady) {
+    statusPillText = '验签通过 · 待重启';
+    statusPillTone = 'ok';
+  } else if (isAvailable) {
+    statusPillText = '有新版本';
+    statusPillTone = 'accent';
+  } else if (phase === 'up-to-date') {
+    statusPillText = '已是最新';
+    statusPillTone = 'ok';
+  } else if (phase === 'error') {
+    statusPillText = '检查失败';
+    statusPillTone = 'danger';
+  }
+
+  const handleMirrorSave = async e => {
+    e.preventDefault();
+    const check = validateMirrorPrefix(mirrorDraft);
+    if (!check.valid) {
+      setMirrorError(check.error);
+      return;
+    }
+    setMirrorError('');
+    await onSaveMirror?.(check.normalized);
+  };
+
+  const handleMirrorReset = async () => {
+    setMirrorDraft('');
+    setMirrorError('');
+    await onSaveMirror?.('');
+  };
+
+  return (
+    <div className="overlay" onClick={onClose}>
+      <div
+        className="dialog nr-update-dialog"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="app-update-heading"
+        onClick={e => e.stopPropagation()}
+      >
+        <div className="queue-header">
+          <h2 id="app-update-heading" className="nr-shortcuts-title">
+            <Icon name={isReady || phase === 'up-to-date' ? 'checkCircle' : 'update'} className="nr-icon" />
+            {isFeaturePrompt ? '发现新版本' : '应用更新'}
+          </h2>
+          <button
+            type="button"
+            className="nr-close-btn"
+            aria-label="关闭应用更新弹窗"
+            onClick={onClose}
+          >
+            <Icon name="close" />
+          </button>
+        </div>
+
+        <div className="nr-update-hero">
+          <div className="nr-update-ver-block">
+            <span className="nr-update-ver">
+              {info?.version && (isAvailable || isDownloading || isReady)
+                ? `v${currentVersion} → v${info.version}`
+                : `v${currentVersion}`}
+            </span>
+            <div className="nr-update-subline">
+              {updateKindLabel && (isAvailable || isDownloading || isReady) && (
+                <span className="nr-update-kind">{updateKindLabel}</span>
+              )}
+              <span className="nr-update-source-tag">
+                当前通道：{source === 'mirror' ? '国内加速镜像' : 'GitHub 官方直连'}
+              </span>
+            </div>
+          </div>
+          <span className={`nr-update-pill is-${statusPillTone}`}>{statusPillText}</span>
+        </div>
+
+        {!pubkeyConfigured && (
+          <p className="nr-shortcut-hint" role="status">
+            当前开发构建尚未填入正式更新签名公钥（pubkey）。配置后即可在线拉取并校验 GitHub Release 更新包。
+          </p>
+        )}
+
+        {noteLines.length > 0 && (
+          <div className="nr-update-notes" aria-label="更新说明">
+            {noteLines.map((row, idx) =>
+              row.type === 'heading' ? (
+                <h3 key={idx}>{row.text}</h3>
+              ) : row.type === 'item' ? (
+                <p key={idx} className="is-item">
+                  <span aria-hidden="true">·</span>
+                  <span>{row.text}</span>
+                </p>
+              ) : (
+                <p key={idx}>{row.text}</p>
+              )
+            )}
+          </div>
+        )}
+
+        {(isDownloading || isReady) && (
+          <div className="nr-update-progress" aria-live="polite">
+            <div className="nr-update-progress-head">
+              <span>{isReady ? '安装包已校验签名，可随时重启安装' : '正在后台下载安装包…'}</span>
+              <span className="nr-update-progress-num">
+                {totalText ? `${downloadedText} / ${totalText}` : downloadedText} · {isReady ? 100 : percent}%
+              </span>
+            </div>
+            <div
+              className="nr-update-bar"
+              role="progressbar"
+              aria-valuemin={0}
+              aria-valuemax={100}
+              aria-valuenow={isReady ? 100 : percent}
+            >
+              <span
+                className={'nr-update-bar-fill' + (isReady ? ' is-ready' : '')}
+                style={{ width: `${isReady ? 100 : percent}%` }}
+              />
+            </div>
+          </div>
+        )}
+
+        {phase === 'error' && state?.error && (
+          <div className="nr-update-error-box" role="alert">
+            <p className="nr-dialog-error">{state.error}</p>
+            {isSwitchableSourceError(state.errorCode) && (
+              <button
+                type="button"
+                className="nr-soft-btn nr-update-retry-alt"
+                disabled={busy || isChecking || isDownloading}
+                onClick={() => onSwitchSourceAndRetry?.(altSource)}
+              >
+                {`切换至${altLabel}并重试`}
+              </button>
+            )}
+          </div>
+        )}
+
+        <div className="nr-update-prefs">
+          <div className="nr-update-pref-row">
+            <div className="nr-shortcut-master-copy">
+              <strong>下载通道</strong>
+              <small>
+                {source === 'mirror'
+                  ? `使用 ${config?.customMirror || config?.defaultMirror || 'https://gh-proxy.com/'} 全程代理元数据与安装包，所有包仍经过本地签名校验`
+                  : '直接连接 GitHub Releases，海外或代理网络推荐'}
+              </small>
+            </div>
+            <div className="nr-seg-pills" role="group" aria-label="更新源选择">
+              <button
+                type="button"
+                className={'nr-seg-btn' + (source === 'github' ? ' is-on' : '')}
+                aria-pressed={source === 'github'}
+                disabled={busy || isDownloading}
+                onClick={() => onChangeSource?.('github')}
+              >
+                GitHub 直连
+              </button>
+              <button
+                type="button"
+                className={'nr-seg-btn' + (source === 'mirror' ? ' is-on' : '')}
+                aria-pressed={source === 'mirror'}
+                disabled={busy || isDownloading}
+                onClick={() => onChangeSource?.('mirror')}
+              >
+                国内加速镜像
+              </button>
+            </div>
+          </div>
+
+          {source === 'mirror' && (
+            <div className="nr-update-mirror-box">
+              <button
+                type="button"
+                className="nr-more-reload"
+                onClick={() => setMirrorExpanded(v => !v)}
+              >
+                {mirrorExpanded ? '收起自定义镜像设置' : '自定义镜像前缀（可选）'}
+              </button>
+              {mirrorExpanded && (
+                <form className="nr-update-mirror-form" onSubmit={handleMirrorSave}>
+                  <input
+                    type="url"
+                    className="nr-update-mirror-input"
+                    value={mirrorDraft}
+                    disabled={busy || isDownloading}
+                    placeholder={config?.defaultMirror || 'https://gh-proxy.com/'}
+                    aria-label="自定义镜像前缀"
+                    onChange={e => {
+                      setMirrorDraft(e.target.value);
+                      if (mirrorError) setMirrorError('');
+                    }}
+                  />
+                  <button
+                    type="submit"
+                    className="nr-soft-btn"
+                    disabled={busy || isDownloading}
+                  >
+                    保存
+                  </button>
+                  {config?.customMirror && (
+                    <button
+                      type="button"
+                      className="nr-ghost-btn"
+                      disabled={busy || isDownloading}
+                      onClick={handleMirrorReset}
+                    >
+                      恢复默认
+                    </button>
+                  )}
+                </form>
+              )}
+              {mirrorError && (
+                <p className="nr-dialog-error" role="alert">
+                  {mirrorError}
+                </p>
+              )}
+            </div>
+          )}
+
+          <div className="nr-shortcut-master">
+            <div className="nr-shortcut-master-copy">
+              <strong>启动时自动检查更新</strong>
+              <small>常规修复仅点亮齿轮提示点，重要新功能才弹出提醒。</small>
+            </div>
+            <button
+              type="button"
+              className={'nr-shortcut-toggle' + (config?.autoCheck ? ' is-on' : '')}
+              aria-pressed={Boolean(config?.autoCheck)}
+              disabled={busy}
+              onClick={() => onToggleAutoCheck?.(!config?.autoCheck)}
+            >
+              {config?.autoCheck ? '已开启' : '已关闭'}
+            </button>
+          </div>
+        </div>
+
+        <div className="nr-update-foot">
+          {isReady ? (
+            <>
+              <button type="button" className="nr-soft-btn" disabled={busy} onClick={onClose}>
+                稍后重启
+              </button>
+              <button type="button" className="nr-primary-btn" disabled={busy} onClick={onInstall}>
+                {busy ? '正在安装…' : '重启并安装'}
+              </button>
+            </>
+          ) : isDownloading ? (
+            <>
+              <span className="nr-update-foot-note">关闭窗口不影响下载，可继续听歌</span>
+              <button type="button" className="nr-soft-btn" onClick={onClose}>
+                后台继续
+              </button>
+            </>
+          ) : isAvailable ? (
+            <>
+              <button
+                type="button"
+                className="nr-ghost-btn"
+                disabled={busy}
+                onClick={() => onSkipVersion?.(info.version)}
+              >
+                跳过此版本
+              </button>
+              <div className="nr-dialog-actions">
+                <button
+                  type="button"
+                  className="nr-soft-btn"
+                  disabled={busy}
+                  onClick={() => onRemindLater?.(info.version)}
+                >
+                  稍后提醒
+                </button>
+                <button type="button" className="nr-primary-btn" disabled={busy} onClick={onDownload}>
+                  立即更新
+                </button>
+              </div>
+            </>
+          ) : (
+            <>
+              <button type="button" className="nr-soft-btn" onClick={onClose}>
+                关闭
+              </button>
+              <button
+                type="button"
+                className="nr-primary-btn"
+                disabled={busy || isChecking || !pubkeyConfigured}
+                onClick={() => onCheck?.()}
+              >
+                {isChecking ? '检查中…' : '检查更新'}
+              </button>
+            </>
+          )}
         </div>
       </div>
     </div>

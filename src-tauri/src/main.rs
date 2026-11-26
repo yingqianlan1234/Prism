@@ -28,6 +28,8 @@ mod qq_catalog;
 mod netease_recommendations;
 mod netease_library;
 mod playback_storage;
+#[cfg(windows)]
+mod updater;
 use aes::cipher::{block_padding::Pkcs7, BlockEncryptMut, KeyIvInit};
 use base64::{engine::general_purpose::STANDARD, Engine};
 use num_bigint::BigUint;
@@ -316,6 +318,7 @@ fn host_capabilities() -> Value {
         "globalShortcuts": cfg!(windows),
         "desktopLyric": cfg!(windows),
         "closeBehavior": cfg!(windows),
+        "appUpdater": cfg!(windows),
     })
 }
 
@@ -360,6 +363,8 @@ fn main() {
         .manage(qq_web_auth::QqWebAuth::new());
     builder
         .setup(|app| {
+            #[cfg(windows)]
+            updater::install(app);
             window_state::install(app);
             local_library::install(app.handle());
             #[cfg(windows)]
@@ -387,6 +392,16 @@ fn main() {
             session: Mutex::new(Session { cookie, storage_error, ..Default::default() }),
         })
         .invoke_handler(tauri::generate_handler![
+            #[cfg(windows)]
+            updater::app_update_config_get,
+            #[cfg(windows)]
+            updater::app_update_config_set,
+            #[cfg(windows)]
+            updater::app_update_check,
+            #[cfg(windows)]
+            updater::app_update_download,
+            #[cfg(windows)]
+            updater::app_update_install,
             reveal_main_window,
             host_capabilities,
             local_library::local_library_folders_get,
