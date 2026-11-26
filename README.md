@@ -5,7 +5,7 @@
 <h1 align="center">Vesper</h1>
 
 <p align="center">
-  深夜电台风格的 Windows 桌面多源音乐播放器（原名 Prism）<br>
+  深夜电台风格的桌面多源音乐播放器（原名 Prism）<br>
   基于 Tauri 2 + React 19 + Rust 构建 · 轻量化原生桌面歌词 · 三源独立工作区
 </p>
 
@@ -19,7 +19,7 @@
 
 ### 2. 三源独立工作区（切来源不断播）
 - **网易云音乐**：支持二维码登录与系统凭据恢复、四档音质切换与试听标识、红心喜欢列表同步、自建歌单增删曲目、四分类分页搜索、私人 FM 直达歌词舞台、每日推荐 / 推荐歌单 / 推荐新歌，以及本地持久化最近播放（含封面）。
-- **QQ 音乐**：受限独立授权窗口登录与账户隔离、免费曲目受控流代理播放、VIP 曲目清晰标识，以及免签公开「推荐歌单 / 推荐新歌」。
+- **QQ 音乐**：独立授权窗口支持 QQ 或微信扫码登录，按账号隔离会话。支持免费曲目受控流代理播放、VIP 曲目清晰标识，以及免签公开「推荐歌单 / 推荐新歌」。
 - **本地音乐**：独立本机曲库，支持按需目录选择与递归扫描、`MP3 / FLAC / WAV / M4A / OGG` 元数据及同目录 `.lrc` 歌词解析、关键词与目录筛选、队列与播放进度恢复。
 - 任意平台切换浏览时，当前正在播放的歌曲保持唯一音频实例不中断。
 
@@ -31,7 +31,7 @@
 
 ### 4. 更多播放与桌面能力
 - 全局自定义系统热键（后台与托盘可用），支持译文与音译歌词开关、播放倍速（`0.75×–2.0×`）、睡眠定时关闭、关闭窗口行为选择（转入后台托盘 / 退出）。
-- 账号凭据按来源严格隔离存储在 Windows 凭据管理器中，重启自动恢复上次播放队列、进度与专辑封面。
+- 账号凭据按来源隔离，Windows 使用凭据管理器，macOS 使用钥匙串。重启后可恢复上次播放队列、进度与专辑封面。
 
 ---
 
@@ -56,7 +56,8 @@
 
 ### 环境要求
 - Node.js 22+（含 npm）
-- Rust 工具链（`cargo` / `rustc`）与 Windows MSVC 构建工具
+- Rust 工具链（`cargo` / `rustc`）
+- Windows 使用 MSVC 构建工具，macOS 使用 Xcode Command Line Tools
 
 ### 常用命令
 
@@ -77,13 +78,23 @@ cargo test --offline --manifest-path src-tauri/Cargo.toml
 npm run tauri build
 ```
 
+
+### macOS Apple Silicon 本地构建
+
+```bash
+npm ci
+npm run tauri -- build --bundles app,dmg --no-sign -- --locked
+```
+
+产物位于 `src-tauri/target/release/bundle/`。macOS 测试版包含网易云、QQ 音乐和本地曲库。使用微信登录 QQ 音乐时，在「QQ / 微信登录」打开的授权窗口里选择「微信登录」，扫码确认后回到 Vesper 完成授权。系统托盘、全局快捷键和原生悬浮歌词目前由 Windows 提供。
+
 ---
 
 ## 项目结构与设计
 
 - 前端（React 19 + Vite 8）：[src/](src/)，设计规范与视觉档案见 [design-brief.md](design-brief.md)
 - 桌面宿主与原生能力（Tauri 2 + Rust）：[src-tauri/](src-tauri/)
-- 当前正式支持 **Windows x64**，macOS 与 Android 跨平台规划见文档分支方案。
+- 发布页提供 **Windows x64** 安装包。macOS Apple Silicon 可从源码构建测试版，后续计划见[跨平台移植方案](docs/Prism-三平台移植方案.md)。
 
 ---
 

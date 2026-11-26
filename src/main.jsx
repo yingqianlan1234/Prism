@@ -1,15 +1,26 @@
 import React from 'react';
 import { createRoot } from 'react-dom/client';
-import { invoke } from '@tauri-apps/api/core';
+import { invoke, isTauri } from '@tauri-apps/api/core';
 import './styles/tokens.css';
 import './styles/night-radio.css';
 import * as providers from './providers.js';
 import { ListeningTracker } from './listening.js';
 import { App } from './App.jsx';
 
-createRoot(document.getElementById('root')).render(
-  <App providers={providers} ListeningTracker={ListeningTracker} />
-);
+async function start() {
+  let host;
+  if (isTauri()) {
+    try { host = await invoke('host_capabilities'); } catch {}
+  }
+  const capabilities = host
+    ? providers.capabilitiesForHost?.(host) ?? providers.capabilities
+    : providers.capabilities;
+  createRoot(document.getElementById('root')).render(
+    <App providers={{ ...providers, capabilities }} ListeningTracker={ListeningTracker} />
+  );
+}
+
+void start();
 
 // 窗口以 visible:false 创建：等首帧真正画完再显示，避免 WebView2 白底闪一下。
 // 非 Tauri 环境（浏览器预览、jsdom 测试）静默跳过；Rust 侧另有 4 秒兜底显示。

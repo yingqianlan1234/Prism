@@ -29,6 +29,7 @@ export function AppHeader({
   const accountName = identityUnknown ? '身份未知' : profile?.nickname || '';
   const refreshText = identityUnknown ? '刷新账号' : (accountName || '账号') + ' · 刷新';
   const signedIn = !!(profile || identityUnknown);
+  const canUseQq = capabilities?.qqmusic?.available !== false;
 
   const navRef = useRef(null);
   const animatedRef = useRef(false);
@@ -58,7 +59,7 @@ export function AppHeader({
     const ro = new ResizeObserver(syncProvSlider);
     ro.observe(prov);
     return () => ro.disconnect();
-  }, [activeProvider, platformFlavor.qqmusic, canLocalLibrary]);
+  }, [activeProvider, platformFlavor.qqmusic, canLocalLibrary, canUseQq]);
 
   useLayoutEffect(() => {
     const nav = navRef.current;
@@ -104,13 +105,15 @@ export function AppHeader({
           >
             网易云
           </button>
-          <button
-            type="button"
-            aria-pressed={activeProvider === 'qqmusic'}
-            onClick={() => switchProvider('qqmusic')}
-          >
-            {platformFlavor.qqmusic === 'mock' ? 'QQ 模拟' : 'QQ 音乐'}
-          </button>
+          {canUseQq && (
+            <button
+              type="button"
+              aria-pressed={activeProvider === 'qqmusic'}
+              onClick={() => switchProvider('qqmusic')}
+            >
+              {platformFlavor.qqmusic === 'mock' ? 'QQ 模拟' : 'QQ 音乐'}
+            </button>
+          )}
           {canLocalLibrary && (
             <button
               type="button"
@@ -208,7 +211,7 @@ export function AppHeader({
                   : activeProvider === 'qqmusic'
                     ? platformFlavor.qqmusic === 'mock'
                       ? '进入模拟账号'
-                      : 'QQ 登录'
+                      : 'QQ / 微信登录'
                     : '扫码登录'}
               </button>
             ))}

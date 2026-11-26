@@ -1,4 +1,4 @@
-use crate::{desktop_shortcuts::on_ui, err, local_media, Result};
+use crate::{err, local_media, Result};
 use lofty::{
     config::{apply_global_options, GlobalOptions, ParseOptions},
     file::{AudioFile, FileType, TaggedFileExt},
@@ -11,7 +11,6 @@ use std::{
     collections::{BTreeMap, VecDeque},
     fs::{self, File},
     io,
-    os::windows::ffi::OsStrExt,
     path::{Path, PathBuf},
     sync::{
         atomic::{AtomicUsize, Ordering},
@@ -172,7 +171,7 @@ impl LocalLibrary {
                     || folders.iter().any(|folder| {
                         !opaque_id(&folder.id, 32)
                             || !folder.path.is_absolute()
-                            || folder.path.as_os_str().encode_wide().count() > 2048
+                            || local_media::path_length(&folder.path) > 2048
                     })
                     || folders.iter().enumerate().any(|(i, f)| {
                         folders[..i]
@@ -240,9 +239,7 @@ fn track_id(folder: &Folder, path: &Path) -> String {
     let relative = path
         .strip_prefix(&folder.path)
         .expect("scan paths must be under the configured folder");
-    for code in relative.as_os_str().encode_wide() {
-        hash.update(code.to_le_bytes());
-    }
+    local_media::hash_path(&mut hash, relative);
     format!("{:x}", hash.finalize())
 }
 
@@ -261,8 +258,9 @@ fn scan_track(folder: &Folder, path: PathBuf) -> Option<Track> {
         .options(ParseOptions::new().read_cover_art(false))
         .guess_file_type()
         .ok()?;
+    let file_type = probe.file_type()?;
     let matches_extension = matches!(
-        (extension.as_str(), probe.file_type()?),
+        (extension.as_str(), file_type),
         ("mp3", FileType::Mpeg)
             | ("flac", FileType::Flac)
             | ("wav", FileType::Wav)
@@ -272,6 +270,13 @@ fn scan_track(folder: &Folder, path: PathBuf) -> Option<Track> {
     if !matches_extension {
         return None;
     }
+    #[cfg(target_os = "macos")]
+    let mime = match file_type {
+        FileType::Vorbis => "audio/ogg; codecs=vorbis",
+        FileType::Opus => "audio/ogg; codecs=opus",
+        FileType::Speex => "audio/ogg; codecs=speex",
+        _ => mime,
+    };
     let tagged = probe.read().ok();
     let tag = tagged
         .as_ref()
@@ -387,12 +392,12 @@ pub(crate) fn local_library_folders_get(
 pub(crate) async fn local_library_folder_pick(window: WebviewWindow) -> Result<Option<FolderInfo>> {
     authorize(&window)?;
     let app = window.app_handle().clone();
-    let Some(selected) = on_ui(window, local_media::choose_folder).await? else {
+    let Some(selected) = local_media::choose_folder(window).await? else {
         return Ok(None);
     };
     tauri::async_runtime::spawn_blocking(move || {
         let invalid = || err("validation", "请选择可访问的本地目录");
-        if selected.as_os_str().encode_wide().count() > 2044
+        if local_media::path_length(&selected) > 2044
             || !local_media::safe_directory(&selected)
         {
             return Err(invalid());
@@ -619,7 +624,7 @@ pub(crate) async fn local_track_resolve(window: WebviewWindow, id: String) -> Re
             expires: now + STREAM_TTL,
         });
         Ok(PlaybackUrl {
-            url: format!("http://prismlocal.localhost/{token}"),
+            url: local_media::stream_url(&token),
             content_type: track.mime,
         })
     })
@@ -911,6 +916,8 @@ mod tests {
         let outside = target.0.join("outside.wav");
         fs::write(&outside, wav(false)).unwrap();
         fs::hard_link(&outside, source.0.join("hard.wav")).unwrap();
+        #[cfg(target_os = "macos")]
+        std::os::unix::fs::symlink(&outside, source.0.join("redirected.wav")).unwrap();
         let media = source.0.join("allowed.wav");
         fs::write(&media, wav(false)).unwrap();
         let catalog = scan_folders(&[source.folder()]);
