@@ -8,7 +8,19 @@ export function playlistCoverUrl(value) {
   return url.href;
  } catch { return null; }
 }
+const SAFE_EMBEDDED_DATA_IMAGE_RE = /^data:image\/(?:jpeg|png|webp);base64,[A-Za-z0-9+/=]+$/;
+const MAX_EMBEDDED_DATA_URI_LENGTH = 3_000_000;
+
 export function artworkUrl(value, size) {
+ if (typeof value === 'string') {
+  const trimmed = value.trim();
+  if (trimmed.startsWith('data:')) {
+   if (trimmed.length <= MAX_EMBEDDED_DATA_URI_LENGTH && SAFE_EMBEDDED_DATA_IMAGE_RE.test(trimmed)) {
+    return trimmed;
+   }
+   return null;
+  }
+ }
  const safe = playlistCoverUrl(value);
  if (!safe) return null;
  const url = new URL(safe);

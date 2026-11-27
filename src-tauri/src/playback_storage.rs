@@ -41,7 +41,7 @@ fn decode_last(raw:&[u8])->std::result::Result<LastProvider,&'static str>{
  Ok(value)
 }
 fn qq_id(s:&str,max:usize)->bool {!s.is_empty()&&s.len()<=max&&s.bytes().all(|b|b.is_ascii_alphanumeric())}
-fn valid_qq_cover(raw:&str)->bool {
+pub(crate) fn valid_qq_cover(raw:&str)->bool {
  if raw.len()>2048{return false}
  let Some(path)=raw.strip_prefix("https://y.gtimg.cn/music/photo_new/T002R").and_then(|s|s.strip_suffix(".jpg")) else{return false};
  let Some((width,rest))=path.split_once('x') else{return false};

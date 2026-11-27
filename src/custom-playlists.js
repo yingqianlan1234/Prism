@@ -153,23 +153,27 @@ function sanitizePlaylistRecord(raw) {
   return { id, name, createdAt, updatedAt, tracks };
 }
 
+export function sanitizeCustomPlaylistsList(list) {
+  if (!Array.isArray(list)) return [];
+  const seenIds = new Set();
+  const out = [];
+  for (const item of list) {
+    if (out.length >= MAX_CUSTOM_PLAYLISTS) break;
+    const pl = sanitizePlaylistRecord(item);
+    if (!pl || seenIds.has(pl.id)) continue;
+    seenIds.add(pl.id);
+    out.push(pl);
+  }
+  return out;
+}
+
 export function loadCustomPlaylists(storage = globalThis?.localStorage) {
   try {
     const raw = storage?.getItem?.(CUSTOM_PLAYLISTS_STORAGE_KEY);
     if (!raw) return [];
     const parsed = JSON.parse(raw);
     const list = Array.isArray(parsed) ? parsed : Array.isArray(parsed?.playlists) ? parsed.playlists : null;
-    if (!list) return [];
-    const seenIds = new Set();
-    const out = [];
-    for (const item of list) {
-      if (out.length >= MAX_CUSTOM_PLAYLISTS) break;
-      const pl = sanitizePlaylistRecord(item);
-      if (!pl || seenIds.has(pl.id)) continue;
-      seenIds.add(pl.id);
-      out.push(pl);
-    }
-    return out;
+    return sanitizeCustomPlaylistsList(list);
   } catch {
     return [];
   }

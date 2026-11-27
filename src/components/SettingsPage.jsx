@@ -63,6 +63,11 @@ export function SettingsPage({
   trayAvailable,
   closeError,
   onChooseCloseMode,
+  canAutostart,
+  autostartEnabled,
+  autostartBusy,
+  autostartError,
+  onToggleAutostart,
   // 本机跨源歌单备份
   customPlaylistCount,
   customTrackCount,
@@ -267,7 +272,11 @@ export function SettingsPage({
             <div className="nr-settings-panel" role="region" aria-label="常规与数据设置">
               <header className="nr-settings-head">
                 <h2>常规与数据</h2>
-                <p>{onChooseCloseMode ? '管理主窗口关闭行为，以及应用内跨源本机歌单的 JSON 备份。' : '管理应用内跨源本机歌单的 JSON 备份。'}</p>
+                <p>
+                  {onChooseCloseMode || canAutostart
+                    ? '管理主窗口关闭与启动行为，以及应用内跨源本机歌单的 JSON 备份。'
+                    : '管理应用内跨源本机歌单的 JSON 备份。'}
+                </p>
               </header>
 
               <div className="nr-settings-grid">
@@ -305,6 +314,42 @@ export function SettingsPage({
                     {closeError && (
                       <p className="nr-dialog-error" role="alert">
                         {closeError}
+                      </p>
+                    )}
+                  </div>
+                )}
+
+                {canAutostart && (
+                  <div className="nr-settings-card">
+                    <div className="nr-settings-card-head">
+                      <div>
+                        <h3>开机自动启动</h3>
+                        <p>默认关闭；开启后随当前 Windows 用户登录自动启动 Vesper。</p>
+                      </div>
+                    </div>
+                    <div className="nr-seg-pills" role="group" aria-label="开机自动启动">
+                      <button
+                        type="button"
+                        className={'nr-seg-btn' + (!autostartEnabled ? ' is-on' : '')}
+                        aria-pressed={!autostartEnabled}
+                        disabled={autostartBusy}
+                        onClick={() => onToggleAutostart?.(false)}
+                      >
+                        关闭（默认）
+                      </button>
+                      <button
+                        type="button"
+                        className={'nr-seg-btn' + (autostartEnabled ? ' is-on' : '')}
+                        aria-pressed={autostartEnabled}
+                        disabled={autostartBusy}
+                        onClick={() => onToggleAutostart?.(true)}
+                      >
+                        开机自启
+                      </button>
+                    </div>
+                    {autostartError && (
+                      <p className="nr-dialog-error" role="alert">
+                        {autostartError}
                       </p>
                     )}
                   </div>

@@ -6,8 +6,8 @@ const neteaseLibraryCapabilities = enabled => ({
  likeTrack:enabled,getLikedSongIds:enabled,trashFmTrack:enabled,editPlaylistTracks:enabled
 });
 export const capabilities = Object.freeze({
- desktop:Object.freeze({globalShortcuts:true,desktopLyric:true,appUpdater:true}),
- local:Object.freeze({manageFolders:true,scanLibrary:true,getTracks:true,resolvePlayback:true,getLyrics:true,persistQueue:true}),
+ desktop:Object.freeze({globalShortcuts:true,desktopLyric:true,appUpdater:true,autostart:false,customPlaylistsStorage:false}),
+ local:Object.freeze({manageFolders:true,scanLibrary:true,getTracks:true,resolvePlayback:true,getLyrics:true,persistQueue:true,getCover:false}),
  netease:Object.freeze({login:true,logout:true,restoreSession:true,getUserProfile:true,search:true,getPlaylists:true,getPlaylistTracks:true,getLyrics:true,resolvePlayback:true,getRecommendations:true,reportListening:false,...neteaseLibraryCapabilities(true)}),
  qqmusic:Object.freeze({login:true,logout:true,restoreSession:true,getUserProfile:true,search:true,getPlaylists:true,getPlaylistTracks:true,getLyrics:true,resolvePlayback:true,getRecommendations:true,reportListening:false,...neteaseLibraryCapabilities(false)})
 });
@@ -20,8 +20,11 @@ export function capabilitiesForHost(host) {
    desktopLyric:host.desktopLyric,
    closeBehavior:host.closeBehavior,
    appUpdater:host.appUpdater===true,
-   customTitlebar:host.customTitlebar===true
+   customTitlebar:host.customTitlebar===true,
+   autostart:host.autostart===true,
+   customPlaylistsStorage:host.customPlaylistsStorage===true
   }),
+  local:Object.freeze({...capabilities.local,getCover:host.localTrackCover===true}),
   qqmusic:Object.freeze({...capabilities.qqmusic,available:host.qqMusic})
  });
 }
@@ -34,6 +37,7 @@ export const local = Object.freeze({
  getTracks:({offset=0,limit=100}={})=>invoke('local_library_tracks_get',{offset,limit}),
  resolvePlayback:id=>invoke('local_track_resolve',{id}),
  getLyrics:id=>invoke('local_track_lyric',{id}),
+ getCover:id=>invoke('local_track_cover',{id}),
  getQueue:()=>invoke('local_queue_get'),
  setQueue:queue=>invoke('local_queue_set',{queue})
 });
@@ -49,6 +53,10 @@ export const desktop = Object.freeze({
  updaterCheck:options=>invoke('app_update_check',options||{}),
  updaterDownload:()=>invoke('app_update_download'),
  updaterInstall:()=>invoke('app_update_install'),
+ customPlaylistsLoad:()=>invoke('custom_playlists_load'),
+ customPlaylistsSave:data=>invoke('custom_playlists_save',{data}),
+ autostartGet:()=>invoke('autostart_get'),
+ autostartSet:enabled=>invoke('autostart_set',{enabled}),
  events:Object.freeze({globalShortcut:'prism:global-shortcut',desktopLyricState:'prism:desktop-lyric-state',updateProgress:'prism:app-update-progress'})
 });
 export const platformFlavor=Object.freeze({netease:'netease',qqmusic:'community'});

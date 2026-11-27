@@ -57,7 +57,13 @@ window.__TAURI_INTERNALS__ = {
     calls.push({ cmd, args });
     switch (cmd) {
       case 'host_capabilities':
-        return { qqMusic: false, globalShortcuts: false, desktopLyric: false, closeBehavior: false };
+        return {
+          qqMusic: false,
+          globalShortcuts: false,
+          desktopLyric: false,
+          closeBehavior: false,
+          localTrackCover: true,
+        };
       case 'playback_state_load':
         if (args.provider === 'last') return { status: 'ok', provider: 'qqmusic' };
         return { status: 'empty' };
@@ -106,6 +112,11 @@ window.__TAURI_INTERNALS__ = {
       case 'local_track_lyric':
         if (args.id === 'loc-1') return '[00:10.00]窗外雨滴落下来\n[00:50.00]耳机里正播到半夜';
         return null;
+      case 'local_track_cover':
+        if (args.id === 'loc-1') {
+          return 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+ip1sAAAAASUVORK5CYII=';
+        }
+        return null;
       case 'local_queue_get':
         return savedQueue;
       case 'local_queue_set':
@@ -145,6 +156,12 @@ try {
 
   await wait(() => [...document.querySelectorAll('.song')].some(x => x.textContent.includes('雨夜归途')), '展示本地曲目');
   await wait(() => document.querySelector('.nr-current-copy b')?.textContent === '雨夜归途', '恢复上次本地曲目');
+  await wait(
+    () => document.querySelector('footer img.cover')?.getAttribute('src')?.startsWith('data:image/png;base64,'),
+    '本地内嵌封面按需加载到播放底栏'
+  );
+  const coverCallsForLoc1 = calls.filter(c => c.cmd === 'local_track_cover' && c.args?.id === 'loc-1').length;
+  assert.equal(coverCallsForLoc1, 1, '相同本地曲目内嵌封面应命中前端内存缓存并去重');
   await wait(
     () => document.querySelector('input[aria-label="播放进度"]')?.value === '42',
     '恢复本地播放位置 42 秒'

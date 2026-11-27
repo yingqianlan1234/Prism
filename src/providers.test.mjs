@@ -8,14 +8,14 @@ globalThis.window={__TAURI_INTERNALS__:{invoke:async(command,args)=>{calls.push(
 const {getProvider,capabilities,capabilitiesForHost,recommendationCapabilities,desktop}=await import('./providers.js');
 
 test('macOS 保留三个音乐来源，Windows 桌面能力随宿主关闭',()=>{
- const mac=capabilitiesForHost({qqMusic:true,globalShortcuts:false,desktopLyric:false,closeBehavior:false,appUpdater:false,customTitlebar:false});
- assert.equal(mac.local,capabilities.local);
+ const mac=capabilitiesForHost({qqMusic:true,globalShortcuts:false,desktopLyric:false,closeBehavior:false,appUpdater:false,customTitlebar:false,autostart:false,customPlaylistsStorage:true,localTrackCover:true});
+ assert.deepEqual(mac.local,{...capabilities.local,getCover:true});
  assert.equal(mac.netease,capabilities.netease);
  assert.equal(mac.qqmusic.available,true);
- assert.deepEqual(mac.desktop,{globalShortcuts:false,desktopLyric:false,closeBehavior:false,appUpdater:false,customTitlebar:false});
- const windows=capabilitiesForHost({qqMusic:true,globalShortcuts:true,desktopLyric:true,closeBehavior:true,appUpdater:true,customTitlebar:true});
+ assert.deepEqual(mac.desktop,{globalShortcuts:false,desktopLyric:false,closeBehavior:false,appUpdater:false,customTitlebar:false,autostart:false,customPlaylistsStorage:true});
+ const windows=capabilitiesForHost({qqMusic:true,globalShortcuts:true,desktopLyric:true,closeBehavior:true,appUpdater:true,customTitlebar:true,autostart:true,customPlaylistsStorage:true,localTrackCover:true});
  assert.equal(windows.qqmusic.available,true);
- assert.deepEqual(windows.desktop,{globalShortcuts:true,desktopLyric:true,closeBehavior:true,appUpdater:true,customTitlebar:true});
+ assert.deepEqual(windows.desktop,{globalShortcuts:true,desktopLyric:true,closeBehavior:true,appUpdater:true,customTitlebar:true,autostart:true,customPlaylistsStorage:true});
  assert.equal(capabilitiesForHost(undefined),capabilities);
 });
 
@@ -31,7 +31,7 @@ test('QQ 播放回滚只接受 Windows 和 macOS 的本地媒体句柄',()=>{
 test('本地曲库由独立 provider 注入，IPC 参数只包含曲库标识和状态', async () => {
  const local=await getProvider('local');
  assert.equal(local.capabilities,capabilities.local);
- assert.deepEqual(capabilities.local,{manageFolders:true,scanLibrary:true,getTracks:true,resolvePlayback:true,getLyrics:true,persistQueue:true});
+ assert.deepEqual(capabilities.local,{manageFolders:true,scanLibrary:true,getTracks:true,resolvePlayback:true,getLyrics:true,persistQueue:true,getCover:false});
  const queue={ids:['a'.repeat(64)],index:0,position:3};
  for(const [method,params,command,args] of [
   ['getFolders',[],'local_library_folders_get',{}],
@@ -41,6 +41,7 @@ test('本地曲库由独立 provider 注入，IPC 参数只包含曲库标识和
   ['getTracks',[{offset:200,limit:20}],'local_library_tracks_get',{offset:200,limit:20}],
   ['resolvePlayback',['track'],'local_track_resolve',{id:'track'}],
   ['getLyrics',['track'],'local_track_lyric',{id:'track'}],
+  ['getCover',['track'],'local_track_cover',{id:'track'}],
   ['getQueue',[],'local_queue_get',{}],
   ['setQueue',[queue],'local_queue_set',{queue}]
  ]){
@@ -184,7 +185,7 @@ test('QQ Mock 与社区适配器分别声明真实能力',async()=>{
 });
 
 test('桌面功能能力位、事件名与 P2-A IPC 命令参数映射正确',async()=>{
- assert.deepEqual(capabilities.desktop,{globalShortcuts:true,desktopLyric:true,appUpdater:true});
+ assert.deepEqual(capabilities.desktop,{globalShortcuts:true,desktopLyric:true,appUpdater:true,autostart:false,customPlaylistsStorage:false});
  assert(Object.isFrozen(capabilities.desktop));
  assert.equal(desktop.capabilities,capabilities.desktop);
  assert.deepEqual(desktop.events,{globalShortcut:'prism:global-shortcut',desktopLyricState:'prism:desktop-lyric-state',updateProgress:'prism:app-update-progress'});
@@ -217,4 +218,12 @@ test('桌面功能能力位、事件名与 P2-A IPC 命令参数映射正确',as
  assert.deepEqual(calls.at(-1),{command:'app_update_download',args:{}});
  await desktop.updaterInstall();
  assert.deepEqual(calls.at(-1),{command:'app_update_install',args:{}});
+ await desktop.customPlaylistsLoad();
+ assert.deepEqual(calls.at(-1),{command:'custom_playlists_load',args:{}});
+ await desktop.customPlaylistsSave({version:1,playlists:[]});
+ assert.deepEqual(calls.at(-1),{command:'custom_playlists_save',args:{data:{version:1,playlists:[]}}});
+ await desktop.autostartGet();
+ assert.deepEqual(calls.at(-1),{command:'autostart_get',args:{}});
+ await desktop.autostartSet(true);
+ assert.deepEqual(calls.at(-1),{command:'autostart_set',args:{enabled:true}});
 });

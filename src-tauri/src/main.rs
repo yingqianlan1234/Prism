@@ -38,6 +38,9 @@ mod qq_catalog;
 mod netease_recommendations;
 mod netease_library;
 mod playback_storage;
+mod custom_playlists_storage;
+#[cfg(windows)]
+mod autostart;
 #[cfg(windows)]
 mod updater;
 use aes::cipher::{block_padding::Pkcs7, BlockEncryptMut, KeyIvInit};
@@ -342,6 +345,9 @@ fn host_capabilities() -> Value {
         "closeBehavior": cfg!(windows),
         "appUpdater": cfg!(windows),
         "customTitlebar": cfg!(windows),
+        "localTrackCover": cfg!(any(windows, target_os = "macos")),
+        "customPlaylistsStorage": true,
+        "autostart": cfg!(windows),
     })
 }
 
@@ -435,6 +441,13 @@ fn main() {
             local_library::local_library_tracks_get,
             local_library::local_track_resolve,
             local_library::local_track_lyric,
+            local_library::local_track_cover,
+            custom_playlists_storage::custom_playlists_load,
+            custom_playlists_storage::custom_playlists_save,
+            #[cfg(windows)]
+            autostart::autostart_get,
+            #[cfg(windows)]
+            autostart::autostart_set,
             local_library::local_queue_get,
             local_library::local_queue_set,
             #[cfg(windows)]

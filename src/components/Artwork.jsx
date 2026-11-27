@@ -1,5 +1,11 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { playlistCoverUrl, coverUrl } from '../cover.js';
+import {
+  getCachedLocalCover,
+  getLocalCoverFetcher,
+  loadLocalCover,
+  subscribeLocalCoverFetcher,
+} from '../local-cover-cache.js';
 import { providerLabel } from '../utils/format.js';
 
 function useImageFailure(src) {
@@ -27,7 +33,37 @@ export function PlaylistCover({ url, className }) {
 }
 
 export function SongArtwork({ song, size, className, variant = 'small' }) {
-  const src = coverUrl(song, size);
+  const directSrc = coverUrl(song, size);
+  const localId = !directSrc && song?.provider === 'local' && song?.id ? String(song.id) : null;
+  const [fetcher, setFetcher] = useState(() => getLocalCoverFetcher());
+  const [resolvedLocal, setResolvedLocal] = useState(() => ({
+    id: localId,
+    src: localId ? getCachedLocalCover(localId) || null : null,
+  }));
+
+  useEffect(() => subscribeLocalCoverFetcher(() => setFetcher(() => getLocalCoverFetcher())), []);
+
+  useEffect(() => {
+    if (!localId || !fetcher) {
+      setResolvedLocal({ id: localId, src: null });
+      return undefined;
+    }
+    const cached = getCachedLocalCover(localId);
+    if (cached !== undefined) {
+      setResolvedLocal({ id: localId, src: cached });
+      return undefined;
+    }
+    let alive = true;
+    setResolvedLocal({ id: localId, src: null });
+    void loadLocalCover(localId, fetcher).then(dataUrl => {
+      if (alive) setResolvedLocal({ id: localId, src: dataUrl || null });
+    });
+    return () => {
+      alive = false;
+    };
+  }, [localId, fetcher]);
+
+  const src = directSrc || (localId && resolvedLocal.id === localId ? resolvedLocal.src : null);
   const [failed, markFailed] = useImageFailure(src);
   if (src && !failed) {
     return (

@@ -19,6 +19,10 @@ for (const n of ['MutationObserver', 'HTMLElement', 'Event', 'KeyboardEvent', 'M
 let paused = true;
 const calls = [];
 let closeMode = 'ask';
+let autostartEnabled = false;
+let persistedPlaylists = { version: 1, playlists: [] };
+const samplePngDataUrl =
+  'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+ip1sAAAAASUVORK5CYII=';
 
 Object.defineProperty(dom.window.HTMLMediaElement.prototype, 'paused', {
   configurable: true,
@@ -46,7 +50,29 @@ window.__TAURI_INTERNALS__ = {
     calls.push({ cmd, args });
     switch (cmd) {
       case 'host_capabilities':
-        return { qqMusic: true, globalShortcuts: !macos, desktopLyric: !macos, closeBehavior: !macos, appUpdater: !macos, customTitlebar: !macos };
+        return {
+          qqMusic: true,
+          globalShortcuts: !macos,
+          desktopLyric: !macos,
+          closeBehavior: !macos,
+          appUpdater: !macos,
+          customTitlebar: !macos,
+          autostart: !macos,
+          customPlaylistsStorage: true,
+          localTrackCover: true,
+        };
+      case 'custom_playlists_load':
+        return persistedPlaylists.playlists.length
+          ? { status: 'ok', data: persistedPlaylists }
+          : { status: 'empty' };
+      case 'custom_playlists_save':
+        persistedPlaylists = args.data;
+        return { saved: true };
+      case 'autostart_get':
+        return { enabled: autostartEnabled };
+      case 'autostart_set':
+        autostartEnabled = Boolean(args.enabled);
+        return { enabled: autostartEnabled };
       case 'plugin:event|listen':
         return 1;
       case 'plugin:event|unlisten':
@@ -140,6 +166,8 @@ window.__TAURI_INTERNALS__ = {
         return { url: `${localMediaOrigin}/${args.id}.flac` };
       case 'local_track_lyric':
         return '[00:05.00]本地歌词';
+      case 'local_track_cover':
+        return args.id === 'loc-1' ? samplePngDataUrl : null;
       case 'global_shortcuts_get':
         return { enabled: false, bindings: {} };
       case 'desktop_lyric_get':
@@ -220,6 +248,10 @@ try {
   );
   customItem2.click();
   await wait(() => !document.querySelector('.nr-picker-dialog'), '本地歌曲加入完成');
+  await wait(
+    () => persistedPlaylists.playlists.some(p => p.name === '深夜混音' && p.tracks.length === 3),
+    '跨源歌单变更同步落盘到 app_data_dir'
+  );
 
   // 4. 打开「深夜混音」，验证三源统计、歌单内筛选与跨源连续自动切歌（本地 -> QQ -> 网易）
   const customNavBtn = await wait(
@@ -276,10 +308,26 @@ try {
 
   if (macos) {
     assert.equal(buttonByText('完全退出并停止播放'), undefined);
-    assert.equal(calls.some(c => c.cmd === 'close_behavior_get' || c.cmd === 'app_update_config_get'), false);
+    assert.equal(buttonByText('开机自启'), undefined);
+    assert.equal(
+      calls.some(
+        c =>
+          c.cmd === 'close_behavior_get' ||
+          c.cmd === 'app_update_config_get' ||
+          c.cmd === 'autostart_get'
+      ),
+      false
+    );
   } else {
     buttonByText('完全退出并停止播放').click();
     await wait(() => closeMode === 'exit', '独立设置页修改关闭行为生效');
+    const autostartBtn = buttonByText('开机自启');
+    assert(autostartBtn, 'Windows 设置页应显示开机自动启动选项');
+    assert.equal(autostartBtn.getAttribute('aria-pressed'), 'false');
+    autostartBtn.click();
+    await wait(() => autostartEnabled === true && autostartBtn.getAttribute('aria-pressed') === 'true', '切换开启开机自启');
+    buttonByText('关闭（默认）').click();
+    await wait(() => autostartEnabled === false && autostartBtn.getAttribute('aria-pressed') === 'false', '切回关闭开机自启');
   }
 
   buttonByText('外观与主题').click();

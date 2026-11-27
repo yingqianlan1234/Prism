@@ -1,7 +1,9 @@
 use crate::{err, local_media, Result};
+use base64::{engine::general_purpose::STANDARD, Engine};
 use lofty::{
     config::{apply_global_options, GlobalOptions, ParseOptions},
     file::{AudioFile, FileType, TaggedFileExt},
+    picture::PictureType,
     probe::Probe,
     tag::Accessor,
 };
@@ -31,6 +33,9 @@ const MAX_QUEUE: usize = 1_000;
 const CONFIG_BYTES: usize = 512 * 1024;
 const MAX_STREAMS: usize = 8;
 const STREAM_TTL: Duration = Duration::from_secs(12 * 3600);
+const MAX_COVER_BYTES: usize = 2 * 1024 * 1024;
+const MAX_CACHED_COVERS: usize = 64;
+const MAX_CACHED_COVER_BYTES: usize = 16 * 1024 * 1024;
 
 #[derive(Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -144,6 +149,13 @@ struct Lease {
     expires: Instant,
 }
 
+struct CachedCover {
+    id: String,
+    identity: local_media::Identity,
+    data_url: Option<String>,
+    byte_len: usize,
+}
+
 #[derive(Default)]
 struct Library {
     folders: Vec<Folder>,
@@ -152,6 +164,33 @@ struct Library {
     revision: u64,
     scanning: bool,
     leases: VecDeque<Lease>,
+    covers: VecDeque<CachedCover>,
+}
+
+impl Library {
+    fn prune_covers(&mut self) {
+        self.covers.retain(|cover| {
+            self.catalog
+                .tracks
+                .get(&cover.id)
+                .is_some_and(|track| track.identity == cover.identity)
+        });
+    }
+
+    fn cache_cover(&mut self, id: String, track: &Track, data_url: Option<String>) {
+        self.covers.retain(|cover| cover.id != id);
+        let byte_len = data_url.as_ref().map_or(0, String::len);
+        let mut total = byte_len + self.covers.iter().map(|cover| cover.byte_len).sum::<usize>();
+        while self.covers.len() >= MAX_CACHED_COVERS || total > MAX_CACHED_COVER_BYTES {
+            total -= self.covers.pop_front().unwrap().byte_len;
+        }
+        self.covers.push_back(CachedCover {
+            id,
+            identity: track.identity,
+            data_url,
+            byte_len,
+        });
+    }
 }
 
 pub(crate) struct LocalLibrary {
@@ -469,6 +508,7 @@ pub(crate) fn local_library_folder_remove(
     library
         .leases
         .retain(|lease| library.catalog.tracks.contains_key(&lease.id));
+    library.prune_covers();
     Ok(())
 }
 
@@ -516,6 +556,7 @@ pub(crate) async fn local_library_scan(window: WebviewWindow) -> Result<ScanInfo
             unavailable_folder_ids: catalog.unavailable_folder_ids.clone(),
         };
         library.catalog = catalog;
+        library.prune_covers();
         library.scanned = true;
         Ok(info)
     })
@@ -688,6 +729,86 @@ pub(crate) async fn local_track_lyric(window: WebviewWindow, id: String) -> Resu
     })
     .await
     .map_err(|_| err("unavailable", "无法读取本地歌词"))?
+}
+
+fn detect_image_mime(bytes: &[u8]) -> Option<&'static str> {
+    if bytes.starts_with(&[0xff, 0xd8, 0xff]) {
+        Some("image/jpeg")
+    } else if bytes.starts_with(b"\x89PNG\r\n\x1a\n") {
+        Some("image/png")
+    } else if bytes.starts_with(b"RIFF") && bytes.get(8..12) == Some(b"WEBP") {
+        Some("image/webp")
+    } else {
+        None
+    }
+}
+
+fn extract_cover_data_url(file: File) -> Option<String> {
+    let tagged = Probe::new(io::BufReader::new(file))
+        .options(ParseOptions::new().read_cover_art(true).read_properties(false))
+        .guess_file_type()
+        .ok()?
+        .read()
+        .ok()?;
+    let mut fallback = None;
+    for picture in tagged
+        .primary_tag()
+        .into_iter()
+        .chain(tagged.tags())
+        .flat_map(|tag| tag.pictures())
+    {
+        let bytes = picture.data();
+        if bytes.is_empty() || bytes.len() > MAX_COVER_BYTES {
+            continue;
+        }
+        let Some(mime) = detect_image_mime(bytes) else {
+            continue;
+        };
+        if picture.pic_type() == PictureType::CoverFront {
+            return Some(format!("data:{mime};base64,{}", STANDARD.encode(bytes)));
+        }
+        fallback.get_or_insert((mime, bytes));
+    }
+    fallback.map(|(mime, bytes)| format!("data:{mime};base64,{}", STANDARD.encode(bytes)))
+}
+
+#[tauri::command]
+pub(crate) async fn local_track_cover(window: WebviewWindow, id: String) -> Result<Option<String>> {
+    authorize(&window)?;
+    let app = window.app_handle().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = app.state::<LocalLibrary>();
+        let track = registered_track(state.lock()?.as_ref().unwrap(), &id)?;
+        let file = checked_file(&track)?;
+        let current_track = |library: &Library| -> Result<()> {
+            let current = registered_track(library, &id)?;
+            if current.identity != track.identity || current.path != track.path {
+                return Err(err("not_found", "本地曲目已变化"));
+            }
+            Ok(())
+        };
+        {
+            let guard = state.lock()?;
+            let library = guard.as_ref().unwrap();
+            current_track(library)?;
+            if let Some(cover) = library
+                .covers
+                .iter()
+                .find(|cover| cover.id == id && cover.identity == track.identity)
+            {
+                return Ok(cover.data_url.clone());
+            }
+        }
+        let data_url = extract_cover_data_url(file);
+        let _checked = checked_file(&track)?;
+        let mut guard = state.lock()?;
+        let library = guard.as_mut().unwrap();
+        current_track(library)?;
+        library.cache_cover(id, &track, data_url.clone());
+        Ok(data_url)
+    })
+    .await
+    .map_err(|_| err("unavailable", "无法读取本地封面"))?
 }
 
 #[tauri::command]
@@ -866,6 +987,102 @@ mod tests {
         let mut riff = Vec::new();
         chunk(&mut riff, b"RIFF", &wave);
         riff
+    }
+
+    #[test]
+    fn cover_mime_checks_magic_and_length() {
+        for (bytes, mime) in [
+            (b"\xff\xd8\xff".as_slice(), "image/jpeg"),
+            (b"\x89PNG\r\n\x1a\n", "image/png"),
+            (b"RIFF\x00\x00\x00\x00WEBP", "image/webp"),
+        ] {
+            assert_eq!(detect_image_mime(bytes), Some(mime));
+            assert_eq!(detect_image_mime(&bytes[..bytes.len() - 1]), None);
+        }
+        for bytes in [
+            b"<svg />".as_slice(),
+            b"GIF89a",
+            b"<html>",
+            b"text",
+            b"",
+            b"RIFFxxxxWAVE",
+        ] {
+            assert_eq!(detect_image_mime(bytes), None);
+        }
+    }
+
+    #[test]
+    fn extracts_only_valid_embedded_covers_and_prefers_front() {
+        use lofty::{
+            config::WriteOptions,
+            picture::{MimeType, Picture},
+            tag::{Tag, TagExt, TagType},
+        };
+
+        let fixture = Fixture::new();
+        let path = fixture.0.join("cover.wav");
+        fs::write(&path, wav(false)).unwrap();
+        let extract = || extract_cover_data_url(File::open(&path).unwrap());
+        assert_eq!(extract(), None);
+
+        let png = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+ip1sAAAAASUVORK5CYII=";
+        let picture = |bytes, kind| {
+            Picture::unchecked(bytes)
+                .pic_type(kind)
+                .mime_type(MimeType::Jpeg)
+                .build()
+        };
+        let png_bytes = STANDARD.decode(png).unwrap();
+        let jpeg = [0xff, 0xd8, 0xff, 0xe0];
+        let mut tag = Tag::new(TagType::Id3v2);
+        tag.push_picture(picture(jpeg.to_vec(), PictureType::CoverBack));
+        tag.save_to_path(&path, WriteOptions::default()).unwrap();
+        assert_eq!(
+            extract().unwrap(),
+            format!("data:image/jpeg;base64,{}", STANDARD.encode(jpeg))
+        );
+
+        tag.push_picture(picture(png_bytes.clone(), PictureType::CoverFront));
+        tag.save_to_path(&path, WriteOptions::default()).unwrap();
+        let expected_png = format!("data:image/png;base64,{png}");
+        assert_eq!(extract().as_deref(), Some(expected_png.as_str()));
+
+        let mut oversized = png_bytes;
+        oversized.resize(MAX_COVER_BYTES + 1, 0);
+        for rejected in [oversized, b"<svg />".to_vec()] {
+            let mut tag = Tag::new(TagType::Id3v2);
+            tag.push_picture(picture(rejected, PictureType::CoverFront));
+            tag.save_to_path(&path, WriteOptions::default()).unwrap();
+            assert_eq!(extract(), None);
+        }
+    }
+
+    #[test]
+    fn cover_cache_evicts_by_bytes_and_count_and_prunes_removed_tracks() {
+        let fixture = Fixture::new();
+        let path = fixture.0.join("cover.wav");
+        fs::write(&path, wav(false)).unwrap();
+        let track = scan_track(&fixture.folder(), path).unwrap();
+        let mut library = Library::default();
+        for i in 0..9 {
+            library.cache_cover(i.to_string(), &track, Some("x".repeat(MAX_COVER_BYTES)));
+        }
+        assert_eq!(library.covers.len(), 8);
+        assert_eq!(library.covers.front().unwrap().id, "1");
+        for i in 9..=MAX_CACHED_COVERS + 9 {
+            library.cache_cover(i.to_string(), &track, None);
+        }
+        assert_eq!(library.covers.len(), MAX_CACHED_COVERS);
+        assert_eq!(library.covers.front().unwrap().id, "10");
+        let id = track.info.id.clone();
+        library.cache_cover(id.clone(), &track, None);
+        library.catalog.tracks.insert(id.clone(), track);
+        library.prune_covers();
+        assert_eq!(library.covers.len(), 1);
+        assert_eq!(library.covers.front().unwrap().id, id);
+        library.catalog.tracks.clear();
+        library.prune_covers();
+        assert!(library.covers.is_empty());
     }
 
     #[test]

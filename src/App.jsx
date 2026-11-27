@@ -69,6 +69,7 @@ import {
 import {
   loadCustomPlaylists,
   saveCustomPlaylists,
+  sanitizeCustomPlaylistsList,
   createCustomPlaylist,
   renameCustomPlaylist,
   deleteCustomPlaylist,
@@ -81,6 +82,11 @@ import {
   hydrateCustomTrack,
   customTrackKey,
 } from './custom-playlists.js';
+import {
+  clearLocalCoverCache,
+  loadLocalCover,
+  setLocalCoverFetcher,
+} from './local-cover-cache.js';
 import {
   loadAudioPrefs,
   saveAudioPrefs,
@@ -159,6 +165,15 @@ export function App({
   const canDesktopLyric = Boolean(capabilities?.desktop?.desktopLyric && desktop?.desktopLyricGet);
   const canAppUpdater = Boolean(capabilities?.desktop?.appUpdater && desktop?.updaterConfigGet);
   const canLocalLibrary = Boolean(capabilities?.local?.getTracks && local?.getFolders);
+  const canLocalCover = Boolean(capabilities?.local?.getCover && local?.getCover);
+  const canCustomPlaylistsStorage = Boolean(
+    capabilities?.desktop?.customPlaylistsStorage &&
+      desktop?.customPlaylistsLoad &&
+      desktop?.customPlaylistsSave
+  );
+  const canAutostart = Boolean(
+    capabilities?.desktop?.autostart && desktop?.autostartGet && desktop?.autostartSet
+  );
   const canUseQq = capabilities?.qqmusic?.available !== false;
   const canChooseCloseBehavior = capabilities?.desktop?.closeBehavior !== false;
   const [closeMode, setCloseMode] = useState('ask');
@@ -166,6 +181,9 @@ export function App({
   const [closeDialog, setCloseDialog] = useState(null);
   const [closeError, setCloseError] = useState('');
   const [closeBusy, setCloseBusy] = useState(false);
+  const [autostartEnabled, setAutostartEnabled] = useState(false);
+  const [autostartBusy, setAutostartBusy] = useState(false);
+  const [autostartError, setAutostartError] = useState('');
 
   const [view, setView] = useState('library');
   const [settingsSection, setSettingsSection] = useState('general');
@@ -247,6 +265,8 @@ export function App({
   // Vesper 本机跨源歌单 + 独立音频偏好（柔和淡入 / 输出设备）
   const [customPlaylists, setCustomPlaylists] = useState(() => loadCustomPlaylists());
   const customPlaylistsRef = useRef(customPlaylists);
+  const customPlaylistsSaveSeqRef = useRef(0);
+  const customPlaylistsSaveChainRef = useRef(Promise.resolve());
   const [activeCustomPlaylistId, setActiveCustomPlaylistId] = useState(null);
   const [customPlaylistFilter, setCustomPlaylistFilter] = useState('');
   const [customPlaylistNotice, setCustomPlaylistNotice] = useState('');
@@ -1343,6 +1363,7 @@ export function App({
 
   const scanAndReloadLocal = async ({ messageOverride = '' } = {}) => {
     const scanRes = await local.scan();
+    clearLocalCoverCache();
     setLocalTruncated(Boolean(scanRes?.truncated));
     const unavailable = Array.isArray(scanRes?.unavailableFolderIds) ? scanRes.unavailableFolderIds : [];
     setLocalUnavailableIds(unavailable);
@@ -1411,6 +1432,7 @@ export function App({
     setLocalBusy(true);
     try {
       await local.removeFolder(folderId);
+      clearLocalCoverCache();
       const folders = (await local.getFolders()) || [];
       localFoldersRef.current = folders;
       setLocalFolders(folders);
@@ -2106,10 +2128,26 @@ export function App({
     setPickerTrack(track);
   };
 
+  const persistCustomPlaylistsToDisk = (list, seq) => {
+    if (!canCustomPlaylistsStorage) return;
+    customPlaylistsSaveChainRef.current = customPlaylistsSaveChainRef.current
+      .catch(() => {})
+      .then(async () => {
+        if (seq !== customPlaylistsSaveSeqRef.current) return;
+        await desktop.customPlaylistsSave({
+          version: 1,
+          playlists: Array.isArray(list) ? list : [],
+        });
+      })
+      .catch(() => {});
+  };
+
   const commitCustomPlaylists = next => {
     customPlaylistsRef.current = next;
     setCustomPlaylists(next);
     saveCustomPlaylists(next);
+    const seq = ++customPlaylistsSaveSeqRef.current;
+    persistCustomPlaylistsToDisk(next, seq);
     return next;
   };
 
@@ -3458,6 +3496,74 @@ export function App({
     };
   }, [canChooseCloseBehavior]);
 
+  // 同步 Windows 开机自动启动状态
+  useEffect(() => {
+    if (!canAutostart) return undefined;
+    let active = true;
+    desktop
+      .autostartGet()
+      .then(res => {
+        if (active) setAutostartEnabled(Boolean(res?.enabled));
+      })
+      .catch(() => {});
+    return () => {
+      active = false;
+    };
+  }, [canAutostart]);
+
+  // 启动同步本机跨源歌单持久化文件（app_data_dir()/custom-playlists.json）与旧缓存自动迁移
+  useEffect(() => {
+    if (!canCustomPlaylistsStorage) return undefined;
+    let active = true;
+    const seqAtLoad = customPlaylistsSaveSeqRef.current;
+    desktop
+      .customPlaylistsLoad()
+      .then(res => {
+        if (!active) return;
+        const diskList =
+          res?.status === 'ok' && Array.isArray(res?.data?.playlists)
+            ? sanitizeCustomPlaylistsList(res.data.playlists)
+            : [];
+        if (diskList.length > 0) {
+          if (customPlaylistsSaveSeqRef.current !== seqAtLoad) {
+            const diskIds = new Set(diskList.map(pl => pl.id));
+            const localChanges = customPlaylistsRef.current.filter(pl => !diskIds.has(pl.id));
+            const merged = sanitizeCustomPlaylistsList([...localChanges, ...diskList]);
+            customPlaylistsRef.current = merged;
+            setCustomPlaylists(merged);
+            saveCustomPlaylists(merged);
+            const seq = ++customPlaylistsSaveSeqRef.current;
+            persistCustomPlaylistsToDisk(merged, seq);
+          } else {
+            customPlaylistsRef.current = diskList;
+            setCustomPlaylists(diskList);
+            saveCustomPlaylists(diskList);
+          }
+        } else if (
+          (res?.status === 'empty' || (res?.status === 'ok' && diskList.length === 0)) &&
+          customPlaylistsRef.current.length > 0
+        ) {
+          const seq = ++customPlaylistsSaveSeqRef.current;
+          persistCustomPlaylistsToDisk(customPlaylistsRef.current, seq);
+        }
+      })
+      .catch(() => {});
+    return () => {
+      active = false;
+    };
+  }, [canCustomPlaylistsStorage]);
+
+  // 注册或注销本地内嵌封面按需拉取函数
+  useEffect(() => {
+    if (!canLocalCover) {
+      setLocalCoverFetcher(null);
+      return undefined;
+    }
+    const fetcher = id => local.getCover(id);
+    setLocalCoverFetcher(fetcher);
+    return () => setLocalCoverFetcher(null);
+  }, [canLocalCover]);
+
   // 客户端更新：启动配置读取、延迟静默检查与下载进度监听
   useEffect(() => {
     if (!canAppUpdater) return undefined;
@@ -4104,20 +4210,41 @@ export function App({
         }
       }
     };
-    const src = coverUrl(song, 500);
-    root.dataset.accentSrc = src || '';
-    if (!src) {
-      apply(null);
-      return;
+    const directSrc = coverUrl(song, 500);
+    if (directSrc) {
+      root.dataset.accentSrc = directSrc;
+      let live = true;
+      extractAccent(directSrc).then(c => {
+        if (live) apply(c);
+      });
+      return () => {
+        live = false;
+      };
     }
-    let live = true;
-    extractAccent(src).then(c => {
-      if (live) apply(c);
-    });
-    return () => {
-      live = false;
-    };
-  }, [song]);
+    if (song?.provider === 'local' && song?.id && canLocalCover) {
+      let live = true;
+      root.dataset.accentSrc = '';
+      apply(null);
+      void loadLocalCover(String(song.id), id => local.getCover(id)).then(dataUrl => {
+        if (!live) return;
+        if (!dataUrl) {
+          root.dataset.accentSrc = '';
+          apply(null);
+          return;
+        }
+        root.dataset.accentSrc = dataUrl;
+        extractAccent(dataUrl).then(c => {
+          if (live) apply(c);
+        });
+      });
+      return () => {
+        live = false;
+      };
+    }
+    root.dataset.accentSrc = '';
+    apply(null);
+    return undefined;
+  }, [song, canLocalCover]);
 
   // 暂停 <-> 播放平滑调节环境波浪速率（Web Animations API playbackRate 缓动，零跳变、无常驻 rAF）
   useEffect(() => {
@@ -5000,6 +5127,20 @@ export function App({
               .catch(e => setCloseError(e?.message || '无法保存关闭设置，请重试'))
               .finally(() => setCloseBusy(false));
           } : null}
+          canAutostart={canAutostart}
+          autostartEnabled={autostartEnabled}
+          autostartBusy={autostartBusy}
+          autostartError={autostartError}
+          onToggleAutostart={nextEnabled => {
+            if (!canAutostart || autostartBusy) return;
+            setAutostartBusy(true);
+            setAutostartError('');
+            desktop
+              .autostartSet(Boolean(nextEnabled))
+              .then(res => setAutostartEnabled(Boolean(res?.enabled)))
+              .catch(e => setAutostartError(e?.message || '无法更新开机自启设置，请重试'))
+              .finally(() => setAutostartBusy(false));
+          }}
           customPlaylistCount={customPlaylists.length}
           customTrackCount={customTotalTracks}
           onExportCustomPlaylists={handleExportCustomPlaylists}
