@@ -1,4 +1,4 @@
-name: Verify Windows updater integration after syncing main
+name: Verify latest PR two desktop integration
 on:
   push:
     branches: [ci/macos-wechat-windows-check]
@@ -11,10 +11,24 @@ jobs:
     steps:
       - uses: actions/checkout@v6
         with:
-          ref: 915b10a8dc782b81044f39317e55b259b9ae6ce3
+          ref: 8f4f67f62fdfea4abe458fd0b6261d6d74f09a9d
           persist-credentials: false
       - run: git rev-parse HEAD
       - run: npm ci --no-audit --no-fund
-      - run: npm run build
+        id: install
+      - name: Test the frontend suite
+        run: npm test
+      - name: Verify three-source continuity and account restore on Windows
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        shell: pwsh
+        run: |
+          if (-not (Test-Path dist/index.html)) {
+            npm run build
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          }
+          node src/custom-playlists-settings-integration.test.mjs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          node src/qq-playback-state-integration.test.mjs
       - name: Compile and test the Windows desktop executable
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
         run: cargo test --locked --manifest-path src-tauri/Cargo.toml

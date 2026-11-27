@@ -1,51 +1,45 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { PlaylistCover } from './Artwork.jsx';
 import { Icon } from './Icons.jsx';
 
-export function RecommendationNav({ openFm, openRecent, recommend, ws }) {
+const DISCOVER_TITLES = new Set(['每日推荐', '推荐新歌', '为你推荐的歌单', '推荐歌单', '发现音乐']);
+
+export function RecommendationNav({ openFm, openRecent, recommend, ws, isFmPlaying }) {
+  const isDiscoverActive =
+    ws?.trackOrigin === 'recommendation' ||
+    (ws?.trackOrigin !== 'recent' && ws?.trackOrigin !== 'playlist' && DISCOVER_TITLES.has(ws?.title));
+
   return (
-    <nav className="recommend-nav" aria-label="网易推荐">
+    <nav className="nr-side-quick" aria-label="网易推荐">
       <button
         type="button"
-        className={ws?.fmView ? 'is-active' : ''}
-        onClick={openFm}
-      >
-        私人 FM
-      </button>
-      <button
-        type="button"
-        className={ws?.trackOrigin === 'recent' ? 'is-active' : ''}
-        onClick={openRecent}
-      >
-        本地最近播放
-      </button>
-      <button
-        type="button"
-        className={ws?.title === '每日推荐' ? 'is-active' : ''}
+        className={'playlist nr-quick-btn' + (isDiscoverActive ? ' is-active' : '')}
         onClick={() => recommend('daily')}
       >
-        每日推荐
+        <span className="nr-quick-ico" aria-hidden="true">
+          <Icon name="compass" className="nr-icon is-sm" />
+        </span>
+        <span className="nr-pl-name">发现音乐</span>
       </button>
       <button
         type="button"
-        className={ws?.title === '推荐新歌' ? 'is-active' : ''}
-        onClick={() => recommend('newsong')}
+        className={'playlist nr-quick-btn' + (isFmPlaying ? ' is-active' : '')}
+        onClick={openFm}
       >
-        推荐新歌
+        <span className="nr-quick-ico" aria-hidden="true">
+          <Icon name="radio" className="nr-icon is-sm" />
+        </span>
+        <span className="nr-pl-name">私人 FM</span>
       </button>
       <button
         type="button"
-        className={ws?.title === '为你推荐的歌单' ? 'is-active' : ''}
-        onClick={() => recommend('resources')}
+        className={'playlist nr-quick-btn' + (ws?.trackOrigin === 'recent' ? ' is-active' : '')}
+        onClick={openRecent}
       >
-        为你推荐的歌单
-      </button>
-      <button
-        type="button"
-        className={ws?.title === '推荐歌单' ? 'is-active' : ''}
-        onClick={() => recommend('playlists')}
-      >
-        推荐歌单
+        <span className="nr-quick-ico" aria-hidden="true">
+          <Icon name="history" className="nr-icon is-sm" />
+        </span>
+        <span className="nr-pl-name">本地最近播放</span>
       </button>
     </nav>
   );
@@ -66,6 +60,7 @@ export function LibraryBar({
   openList,
   listStatus,
   ws,
+  isFmPlaying = false,
   onMore,
   localFolders = [],
   localActiveFolderId = null,
@@ -76,8 +71,33 @@ export function LibraryBar({
   onPickLocalFolder,
   onRemoveLocalFolder,
   onScanLocalLibrary,
+  customPlaylists = [],
+  activeCustomPlaylistId = null,
+  onOpenCustomPlaylist,
+  onCreateCustomPlaylist,
 }) {
   const unavailableSet = new Set(localUnavailableIds);
+  const [creatingCustom, setCreatingCustom] = useState(false);
+  const [customDraft, setCustomDraft] = useState('');
+  const [customError, setCustomError] = useState('');
+
+  const submitCustomCreate = e => {
+    e.preventDefault();
+    const res = onCreateCustomPlaylist?.(customDraft);
+    if (res?.error) {
+      setCustomError(res.error);
+      return;
+    }
+    setCustomDraft('');
+    setCustomError('');
+    setCreatingCustom(false);
+  };
+
+  const qqDefaultDiscoverKind = qqRecommendationCapabilities?.newsong ? 'newsong' : 'playlists';
+  const qqDiscoverActive =
+    ws?.trackOrigin === 'recommendation' ||
+    (ws?.trackOrigin !== 'playlist' && (ws?.title === '推荐新歌' || ws?.title === '推荐歌单'));
+
   return (
     <aside className="library-bar" data-expanded={sideExpanded}>
       <button
@@ -93,7 +113,9 @@ export function LibraryBar({
       <div
         className="lw-side-menu"
         onClickCapture={e => {
-          if (e.target.closest('button')) setSideExpanded(false);
+          if (e.target.closest('button') && !e.target.closest('.nr-custom-side-head,.nr-custom-side-form')) {
+            setSideExpanded(false);
+          }
         }}
       >
         {activeProvider === 'local' ? (
@@ -176,12 +198,13 @@ export function LibraryBar({
           <>
             {activeProvider === 'netease' && profile && !identityUnknown && (
               <div className="nr-side-section">
-                <span className="nr-side-kicker">电台与推荐</span>
+                <span className="nr-side-kicker">电台与发现</span>
                 <RecommendationNav
                   openFm={openFm}
                   openRecent={openRecent}
                   recommend={recommend}
                   ws={ws}
+                  isFmPlaying={isFmPlaying}
                 />
               </div>
             )}
@@ -194,25 +217,17 @@ export function LibraryBar({
                 qqRecommendationCapabilities?.playlists) && (
                 <div className="nr-side-section">
                   <span className="nr-side-kicker">发现与推荐</span>
-                  <nav className="recommend-nav" aria-label="QQ 推荐">
-                    {qqRecommendationCapabilities.newsong && (
-                      <button
-                        type="button"
-                        className={ws?.title === '推荐新歌' ? 'is-active' : ''}
-                        onClick={() => recommend('newsong')}
-                      >
-                        推荐新歌
-                      </button>
-                    )}
-                    {qqRecommendationCapabilities.playlists && (
-                      <button
-                        type="button"
-                        className={ws?.title === '推荐歌单' ? 'is-active' : ''}
-                        onClick={() => recommend('playlists')}
-                      >
-                        推荐歌单
-                      </button>
-                    )}
+                  <nav className="nr-side-quick" aria-label="QQ 推荐">
+                    <button
+                      type="button"
+                      className={'playlist nr-quick-btn' + (qqDiscoverActive ? ' is-active' : '')}
+                      onClick={() => recommend(qqDefaultDiscoverKind)}
+                    >
+                      <span className="nr-quick-ico" aria-hidden="true">
+                        <Icon name="compass" className="nr-icon is-sm" />
+                      </span>
+                      <span className="nr-pl-name">发现音乐</span>
+                    </button>
                   </nav>
                 </div>
               )}
@@ -280,6 +295,84 @@ export function LibraryBar({
             </div>
           </>
         )}
+
+        <div className="nr-side-section nr-custom-side">
+          <div className="nr-custom-side-head">
+            <span className="library-label">
+              本机歌单 <i>{customPlaylists.length || ''}</i>
+            </span>
+            <button
+              type="button"
+              className="nr-custom-add-btn"
+              aria-label={creatingCustom ? '取消新建本机歌单' : '新建本机歌单'}
+              title={creatingCustom ? '取消新建' : '新建本机歌单'}
+              onClick={() => {
+                setCreatingCustom(v => !v);
+                setCustomError('');
+              }}
+            >
+              <Icon name={creatingCustom ? 'close' : 'plus'} className="nr-icon is-xs" />
+            </button>
+          </div>
+
+          {creatingCustom && (
+            <form className="nr-custom-side-form" onSubmit={submitCustomCreate}>
+              <input
+                type="text"
+                className="nr-custom-side-input"
+                maxLength={40}
+                value={customDraft}
+                placeholder="输入本机歌单名…"
+                aria-label="新建本机歌单名称"
+                autoFocus
+                onChange={e => {
+                  setCustomDraft(e.target.value);
+                  if (customError) setCustomError('');
+                }}
+              />
+              <button type="submit" className="nr-primary-btn nr-custom-side-submit">
+                创建
+              </button>
+              {customError && (
+                <span className="nr-custom-side-err" role="alert">
+                  {customError}
+                </span>
+              )}
+            </form>
+          )}
+
+          {customPlaylists.length > 0 ? (
+            <div className="lists nr-custom-side-list">
+              {customPlaylists.map(pl => {
+                const active = activeCustomPlaylistId === pl.id;
+                return (
+                  <button
+                    key={pl.id}
+                    type="button"
+                    className={'playlist nr-custom-playlist-btn' + (active ? ' is-active' : '')}
+                    title={pl.name}
+                    onClick={() => {
+                      setSideExpanded(false);
+                      onOpenCustomPlaylist?.(pl.id);
+                    }}
+                  >
+                    <span className="nr-custom-badge-ico" aria-hidden="true">
+                      <Icon name="collection" className="nr-icon is-xs" />
+                    </span>
+                    <span className="nr-pl-name">{pl.name}</span>
+                    <small className="playlist-kind">{pl.tracks.length}</small>
+                  </button>
+                );
+              })}
+            </div>
+          ) : (
+            !creatingCustom && (
+              <span className="side-note">
+                跨平台自建歌单保存在本机，可混搭网易云、QQ 与本地歌曲。
+              </span>
+            )
+          )}
+        </div>
       </div>
     </aside>
   );

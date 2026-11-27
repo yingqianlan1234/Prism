@@ -197,11 +197,11 @@ try {
   await wait(() => audio.src.endsWith('/501.mp3') && !paused, '播放第一首');
   assert.equal(countCmd('desktop_lyric_update'), 0, '未开启桌面歌词时播歌也不应推送');
 
-  // 2. 打开更多设置 -> 全局快捷键弹窗 -> 开启、冲突回滚提示、修改保存
-  document.querySelector('[aria-label="更多设置"]').click();
-  await wait(() => buttonIncludes('全局快捷键：已关闭'), '更多设置中全局快捷键入口');
-  buttonIncludes('全局快捷键：已关闭').click();
-  await wait(() => document.querySelector('.nr-shortcuts-dialog'), '全局快捷键弹窗');
+  // 2. 打开设置页 -> 全局快捷键 -> 开启、冲突回滚提示、修改保存
+  document.querySelector('.nr-top-settings-btn').click();
+  await wait(() => document.querySelector('.nr-settings-page'), '打开独立设置页');
+  buttonByText('全局快捷键').click();
+  await wait(() => buttonByText('已关闭'), '进入全局快捷键设置');
 
   buttonByText('已关闭').click();
   await wait(() => buttonByText('已开启'), '总开关成功开启');
@@ -215,7 +215,7 @@ try {
   await wait(() => buttonByText('保存快捷键') && !buttonByText('保存快捷键').disabled, '保存按钮可点击');
   buttonByText('保存快捷键').click();
   await wait(
-    () => document.querySelector('.nr-shortcuts-dialog [role="alert"]')?.textContent.includes('系统快捷键已被占用'),
+    () => document.querySelector('.nr-settings-card [role="alert"]')?.textContent.includes('系统快捷键已被占用'),
     '展示快捷键冲突原因'
   );
   assert.equal(shortcutsState.bindings.togglePlayback, 'Ctrl+Alt+P', '冲突时不得覆盖原有效绑定');
@@ -238,9 +238,9 @@ try {
   // 再次保存成功
   buttonByText('保存快捷键').click();
   await wait(() => shortcutsState.bindings.togglePlayback === 'Ctrl+Shift+Space', '修改绑定保存成功');
-  assert.equal(document.querySelector('.nr-shortcuts-dialog [role="alert"]'), null);
-  document.querySelector('[aria-label="关闭全局快捷键设置"]').click();
-  await wait(() => !document.querySelector('.nr-shortcuts-dialog'), '关闭快捷键弹窗');
+  assert.equal(document.querySelector('.nr-settings-card [role="alert"]'), null);
+  buttonByText('返回音乐库').click();
+  await wait(() => document.querySelector('.app').dataset.view === 'library', '退出设置页返回音乐库');
 
   // 3. 验证 prism:global-shortcut 全动作驱动唯一 <audio>
   listeners.get('prism:global-shortcut')({ payload: { action: 'togglePlayback' } });
@@ -298,9 +298,11 @@ try {
     '切到第二句推送歌词'
   );
 
-  // 更多设置内锁定穿透 -> 底栏出现解锁图标 -> 点击解锁
-  document.querySelector('[aria-label="更多设置"]').click();
-  await wait(() => buttonIncludes('穿透锁定：未锁定'), '更多设置锁定入口');
+  // 设置页桌面歌词内锁定穿透 -> 底栏出现解锁图标 -> 点击解锁
+  document.querySelector('.nr-top-settings-btn').click();
+  await wait(() => document.querySelector('.nr-settings-page'), '打开设置页');
+  buttonByText('桌面歌词').click();
+  await wait(() => buttonIncludes('穿透锁定：未锁定'), '设置页锁定入口');
   buttonIncludes('穿透锁定：未锁定').click();
   await wait(() => document.querySelector('[aria-label="解除桌面歌词锁定"]'), '底栏出现锁定解锁键');
   assert.deepEqual(calls.filter(c => c.cmd === 'desktop_lyric_set').at(-1).args, {
@@ -315,9 +317,7 @@ try {
     locked: false,
   });
 
-  // 展开桌面歌词外观与字幕设置并切换主题/字号/模式/推进/透明度
-  buttonIncludes('外观与字幕设置').click();
-  await wait(() => document.querySelector('[aria-label="桌面歌词外观设置"]'), '展开桌面歌词外观设置');
+  // 在设置页桌面歌词面板切换主题/字号/模式/推进/透明度
   buttonByText('高对比').click();
   await wait(() => lyricWindowState.style.theme === 'contrast', '切换桌面歌词配色');
   buttonByText('单行').click();
@@ -329,7 +329,7 @@ try {
   buttonByText('音译').click();
   await wait(() => lyricWindowState.style.showRomaji === true, '开启音译字幕');
 
-  const opacitySlider = document.querySelector('#nr-dlyric-opacity');
+  const opacitySlider = document.querySelector('#nr-settings-dlyric-opacity');
   Object.getOwnPropertyDescriptor(dom.window.HTMLInputElement.prototype, 'value').set.call(
     opacitySlider,
     '64'
@@ -348,7 +348,7 @@ try {
       style: { ...lyricWindowState.style, fontSize: 38, layout: 'dual' },
     },
   });
-  await wait(() => document.querySelector('#lw-more-panel')?.textContent.includes('38px'), '同步悬浮窗修改字号');
+  await wait(() => document.querySelector('.nr-settings-page')?.textContent.includes('38px'), '同步悬浮窗修改字号');
 
   // 模拟原生桌面歌词窗关闭 -> 派发 prism:desktop-lyric-state
   const beforeCloseCount = countCmd('desktop_lyric_update');

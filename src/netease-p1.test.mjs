@@ -153,15 +153,18 @@ try {
   await wait(() => document.querySelector('[aria-label="取消喜欢 自建歌一"]'));
   assert(document.querySelector('[aria-label="从歌单移出 自建歌一"]'), '自建歌单应显示移出按钮');
 
-  // 2. 在更多设置切换到无损音质后播放歌曲，检验 level 与试听徽章
-  document.querySelector('[aria-label="更多设置"]').click();
+  // 2. 点击底栏音质芯片切换到无损音质后播放歌曲，检验 level 与试听徽章
+  document.querySelector('.nr-quality-btn').click();
   await wait(() => buttonByText('无损'));
   buttonByText('无损').click();
   activateSong([...document.querySelectorAll('.song')][0]);
-  await wait(() => document.querySelector('.nr-quality-chip')?.textContent === '无损 SQ');
+  await wait(() => document.querySelector('.nr-quality-btn')?.textContent === '无损 SQ');
   const urlCall = calls.filter(c => c.cmd === 'netease_url').at(-1);
   assert.deepEqual(urlCall.args, { id: 10, level: 'lossless' });
   assert.equal(document.querySelector('.nr-trial-chip')?.textContent, '试听');
+  await wait(() => document.querySelector('.app')?.dataset.view === 'stage');
+  buttonByText('返回曲库').click();
+  await wait(() => document.querySelector('.app')?.dataset.view === 'library');
 
   // 3. 点赞取消喜欢 + 收藏到自建歌单 + 从自建歌单移出
   document.querySelector('[aria-label="取消喜欢 自建歌一"]').click();
@@ -228,7 +231,7 @@ try {
   document.querySelector('[aria-label="私人 FM 不喜欢并跳过"]').click();
   await wait(() => document.querySelector('.nr-stage-heading h1')?.textContent === 'FM 次曲');
   assert.deepEqual(calls.filter(c => c.cmd === 'netease_fm_trash').at(-1).args, { id: 301 });
-  buttonByText('曲库').click();
+  buttonByText('返回曲库').click();
   await wait(() => document.querySelector('.app')?.dataset.view === 'library');
 
   // 7. AbortError（play() 在途被 pause() 打断）与 Space 长按 repeat 不应报错或误回滚

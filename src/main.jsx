@@ -5,7 +5,10 @@ import './styles/tokens.css';
 import './styles/night-radio.css';
 import * as providers from './providers.js';
 import { ListeningTracker } from './listening.js';
+import { applyThemePrefsToDocument, loadThemePrefs } from './theme-prefs.js';
 import { App } from './App.jsx';
+
+applyThemePrefsToDocument(loadThemePrefs());
 
 async function start() {
   let host;

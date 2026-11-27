@@ -157,13 +157,14 @@ try {
   audio.dispatchEvent(new Event('loadedmetadata'));
   await wait(() => Math.round(audio.currentTime) === 42, '恢复位置跳至 42 秒');
 
-  // 2. 同名 .lrc 歌词高亮同步
-  document.querySelector('[aria-label="歌词"]').click();
-  await wait(() => document.querySelector('.lyric-panel'), '打开歌词面板');
+  // 2. 同名 .lrc 歌词高亮同步（点击底部封面进入一体舞台）
+  document.querySelector('.nr-current-trigger').click();
+  await wait(() => document.querySelector('.lyric-panel'), '打开一体舞台歌词');
   audio.currentTime = 52;
   audio.dispatchEvent(new Event('timeupdate'));
   await wait(() => document.querySelector('.lyric-panel .current-line')?.textContent === '耳机里正播到半夜', '本地 LRC 歌词同步高亮');
-  document.querySelector('[aria-label="关闭歌词"]').click();
+  document.querySelector('.nr-top-back').click();
+  await wait(() => document.querySelector('.app')?.dataset.view === 'library', '返回曲库');
 
   // 3. 取消选目录 -> 添加新目录 -> 按目录与关键词筛选 -> 移除目录
   buttonIncludes('添加文件夹').click();

@@ -1,31 +1,37 @@
-// 仅 Windows：给 Prism 主窗口的**系统标题栏**精确着色。
-// 边界（不得越界）：
-// - 只作用于 main 窗口，不改窗口装饰模式，不设置 decorations:false，不启用 Mica / Acrylic / 透明窗口；
-// - 不支持 DWMWA_CAPTION_COLOR 的 Windows 版本（Windows 10 及更早）会返回错误，这里按设计静默降级；
-// - 任何失败都不得影响窗口创建、几何恢复或启动流程，因此本模块不向外返回 Result。
-use tauri::{App, Manager};
+// Windows 11 的 DWM 圆角及边框配色。旧版 Windows 会忽略不支持的属性。
+use std::sync::Mutex;
+use tauri::{App, Manager, WebviewWindow};
 use windows::Win32::Foundation::HWND;
 use windows::Win32::Graphics::Dwm::{
     DwmSetWindowAttribute, DWMWA_BORDER_COLOR, DWMWA_CAPTION_COLOR, DWMWA_TEXT_COLOR,
+    DWMWA_WINDOW_CORNER_PREFERENCE, DWMWCP_ROUND,
 };
 
-/// 把 web 十六进制颜色（0x00RRGGBB）转成 DWM 期望的 COLORREF（0x00BBGGRR）。
+// 依次记录背景、边框和文字的 RGB 色值。
+static THEME: Mutex<[u32; 3]> = Mutex::new(OBSIDIAN);
+const OBSIDIAN: [u32; 3] = [0x080A0F, 0x232A38, 0xF2F4F8];
+
+fn theme_colors(theme: &str) -> [u32; 3] {
+    match theme {
+        "warm" => [0x100F0E, 0x2E2924, 0xF4F0E8],
+        "night-radio" => [0x0E1624, 0x22324B, 0xF0F4FA],
+        "crystal" => [0xEEF3FA, 0xCBD5E1, 0x0F172A],
+        _ => OBSIDIAN,
+    }
+}
+
+/// 将 RGB 十六进制色值（0x00RRGGBB）转为 DWM 的 COLORREF（0x00BBGGRR）。
 const fn colorref(hex: u32) -> u32 {
     ((hex & 0x0000_00FF) << 16) | (hex & 0x0000_FF00) | ((hex & 0x00FF_0000) >> 16)
 }
 
-/// 深靛夜色 #0E1624：标题栏背景与边框同色，让系统标题栏和深夜电台页面连成一片。
-pub(crate) const CAPTION: u32 = colorref(0x0E1624);
-/// #F0F4FA：标题栏文字沿用深夜电台主字色。
-pub(crate) const TEXT: u32 = colorref(0xF0F4FA);
-
-fn paint(hwnd: HWND) {
+fn paint(hwnd: HWND, [background, border, text]: [u32; 3]) {
     for (attribute, value) in [
-        (DWMWA_CAPTION_COLOR, CAPTION),
-        (DWMWA_TEXT_COLOR, TEXT),
-        (DWMWA_BORDER_COLOR, CAPTION),
+        (DWMWA_WINDOW_CORNER_PREFERENCE, DWMWCP_ROUND.0 as u32),
+        (DWMWA_CAPTION_COLOR, colorref(background)),
+        (DWMWA_BORDER_COLOR, colorref(border)),
+        (DWMWA_TEXT_COLOR, colorref(text)),
     ] {
-        // DWM 在 Windows 10 上对这些属性返回 E_INVALIDARG；丢弃错误就是既定的降级路径。
         let _ = unsafe {
             DwmSetWindowAttribute(
                 hwnd,
@@ -37,19 +43,23 @@ fn paint(hwnd: HWND) {
     }
 }
 
-/// 在主窗口创建后调用；窗口不存在或拿不到 HWND 时直接返回。
 pub fn install(app: &App) {
-    let Some(window) = app.get_webview_window("main") else {
-        return;
-    };
-    apply_for(&window);
+    if let Some(window) = app.get_webview_window("main") {
+        apply_for(&window);
+    }
 }
 
-/// 对任意窗口应用标题栏配色。
-/// 隐藏窗口不会被 DWM 合成，属性可能被忽略，所以窗口显示后必须再调用一次。
-pub fn apply_for(window: &tauri::WebviewWindow) {
+pub fn sync_theme(window: &WebviewWindow, theme: &str) {
+    *THEME.lock().unwrap_or_else(|err| err.into_inner()) = theme_colors(theme);
+    apply_for(window);
+}
+
+/// 隐藏窗口的 DWM 属性可能被忽略，显示后用当前主题重新应用。
+pub fn apply_for(window: &WebviewWindow) {
     if let Ok(hwnd) = window.hwnd() {
-        paint(hwnd);
+        // 应用期间持锁，避免窗口恢复时用旧配色覆盖刚同步的主题。
+        let colors = THEME.lock().unwrap_or_else(|err| err.into_inner());
+        paint(hwnd, *colors);
     }
 }
 
@@ -58,10 +68,18 @@ mod tests {
     use super::*;
 
     #[test]
+    fn theme_colors_match_palette_and_fall_back_to_obsidian() {
+        assert_eq!(theme_colors("obsidian"), [0x080A0F, 0x232A38, 0xF2F4F8]);
+        assert_eq!(theme_colors("warm"), [0x100F0E, 0x2E2924, 0xF4F0E8]);
+        assert_eq!(theme_colors("night-radio"), [0x0E1624, 0x22324B, 0xF0F4FA]);
+        assert_eq!(theme_colors("crystal"), [0xEEF3FA, 0xCBD5E1, 0x0F172A]);
+        assert_eq!(theme_colors("unknown"), theme_colors("obsidian"));
+    }
+
+    #[test]
     fn colorref_matches_dwm_byte_order() {
-        // #0E1624 的 RGB 是 0x0E/0x16/0x24，COLORREF 是 0x00BBGGRR。
-        assert_eq!(CAPTION, 0x0024_160E);
-        assert_eq!(TEXT, 0x00FA_F4F0);
+        assert_eq!(colorref(0x0E1624), 0x0024_160E);
+        assert_eq!(colorref(0xF0F4FA), 0x00FA_F4F0);
         assert_eq!(colorref(0x000000), 0);
         assert_eq!(colorref(0xFF0000), 0x0000_00FF);
         assert_eq!(colorref(0x00FF00), 0x0000_FF00);

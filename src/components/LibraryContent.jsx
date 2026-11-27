@@ -125,16 +125,20 @@ export function SongList({
   neteaseSignedIn,
   canLike,
   canCollect,
+  canCollectCustom = false,
   canRemoveFromPlaylist,
+  canRemoveCustom = false,
+  showSourceTag = false,
   likedIds,
   likedBusyIds,
   removingTrackKey,
   onToggleLike,
   onOpenPlaylistPicker,
   onRemoveFromPlaylist,
+  onRemoveFromCustom,
 }) {
-  const visibleSongs = activeProvider === 'netease' && ws.fmView ? songs.slice(-200) : songs;
-  const showRowActions =
+  const visibleSongs = songs;
+  const showNeteaseActions =
     activeProvider === 'netease' && neteaseSignedIn && (canLike || canCollect || canRemoveFromPlaylist);
   return (
     <div className="table">
@@ -155,31 +159,35 @@ export function SongList({
         const numericId = Number(s.id);
         const isLiked = s.provider === 'netease' && likedIds?.has(numericId);
         const likeBusy = s.provider === 'netease' && likedBusyIds?.has(numericId);
-        const removeKey = ws.qqPlaylist ? `${ws.qqPlaylist.id}:${s.id}` : '';
+        const removeKey = ws?.qqPlaylist ? `${ws.qqPlaylist.id}:${s.id}` : '';
         const isRemoving = !!removingTrackKey && removingTrackKey === removeKey;
+        const hasNeteaseRowBtn = showNeteaseActions && s.provider === 'netease';
+        const hasCustomRowBtn = canCollectCustom || canRemoveCustom;
+        const hasRowActions = hasNeteaseRowBtn || hasCustomRowBtn;
+        const clickPlaysDirectly = showSourceTag || s.provider !== 'netease';
         return (
           <div
             className={
               'nr-song-row-wrap' +
               (isPlayingRow ? ' is-selected' : isPickedRow ? ' is-picked' : '') +
-              (showRowActions ? ' has-actions' : '')
+              (hasRowActions ? ' has-actions' : '')
             }
-            key={`${s.id}-${i}`}
+            key={`${s.provider || activeProvider}-${s.id}-${i}`}
           >
             <button
               type="button"
               className={'row song ' + (isPlayingRow ? 'selected' : isPickedRow ? 'picked' : '')}
               aria-current={isPlayingRow ? 'true' : undefined}
               onClick={() =>
-                s.provider === 'netease'
-                  ? setSelectedTrack({ provider: s.provider, id: s.id, accountId: s.accountId })
-                  : play(s)
+                clickPlaysDirectly
+                  ? play(s)
+                  : setSelectedTrack({ provider: s.provider, id: s.id, accountId: s.accountId })
               }
               onDoubleClick={() => {
-                if (s.provider === 'netease') play(s);
+                if (!clickPlaysDirectly) play(s);
               }}
               onKeyDown={e => {
-                if (s.provider === 'netease' && e.key === 'Enter') {
+                if (!clickPlaysDirectly && e.key === 'Enter') {
                   e.preventDefault();
                   play(s);
                 }
@@ -205,6 +213,7 @@ export function SongList({
                 <span className="lw-track-copy">
                   <span className="lw-track-title-row">
                     <b title={s.name}>{s.name}</b>
+                    {showSourceTag && <SourceTag provider={s.provider} />}
                     {s.vip && (
                       <span className="nr-vip-chip" title="需要平台会员或绿钻完整播放">
                         VIP
@@ -224,9 +233,9 @@ export function SongList({
                 {s.duration || s.dt ? time((s.duration || s.dt) / 1000) : '—'}
               </span>
             </button>
-            {showRowActions && s.provider === 'netease' && (
+            {hasRowActions && (
               <div className="nr-row-actions">
-                {canLike && (
+                {hasNeteaseRowBtn && canLike && (
                   <button
                     type="button"
                     className={'nr-row-act nr-heart-btn' + (isLiked ? ' is-liked' : '')}
@@ -239,7 +248,7 @@ export function SongList({
                     <Icon name={isLiked ? 'heartFill' : 'heart'} className="nr-icon is-xs" />
                   </button>
                 )}
-                {canCollect && (
+                {((hasNeteaseRowBtn && canCollect) || canCollectCustom) && (
                   <button
                     type="button"
                     className="nr-row-act"
@@ -250,7 +259,7 @@ export function SongList({
                     <Icon name="plus" className="nr-icon is-xs" />
                   </button>
                 )}
-                {canRemoveFromPlaylist && (
+                {hasNeteaseRowBtn && canRemoveFromPlaylist && (
                   <button
                     type="button"
                     className="nr-row-act is-danger"
@@ -258,6 +267,17 @@ export function SongList({
                     title="从当前歌单移出"
                     disabled={isRemoving}
                     onClick={() => onRemoveFromPlaylist(s)}
+                  >
+                    <Icon name="trash" className="nr-icon is-xs" />
+                  </button>
+                )}
+                {canRemoveCustom && (
+                  <button
+                    type="button"
+                    className="nr-row-act is-danger"
+                    aria-label={`从本机歌单移出 ${s.name}`}
+                    title="从本机歌单移出"
+                    onClick={() => onRemoveFromCustom?.(s)}
                   >
                     <Icon name="trash" className="nr-icon is-xs" />
                   </button>
@@ -523,6 +543,7 @@ export function NowPanel({
   buffering,
   activeProvider,
   ws,
+  mixedQueue = null,
   lwPreview,
   lyricStatus,
   showLyrics,
@@ -594,7 +615,9 @@ export function NowPanel({
             setConfirmClear(false);
           }}
         >
-          播放队列 · {ws.queue?.tracks?.length || 0} 首
+          {mixedQueue?.tracks?.length
+            ? `跨源队列 · ${mixedQueue.tracks.length} 首`
+            : `播放队列 · ${ws.queue?.tracks?.length || 0} 首`}
         </button>
       </div>
 
