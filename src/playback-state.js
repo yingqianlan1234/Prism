@@ -17,3 +17,25 @@ export function nextIndex(mode,index,length,random=Math.random){if(length<=0)ret
 export function manualIndex(mode,index,length,delta,random=Math.random){if(length<=0)return -1;if(mode==='shuffle'&&length>1)return (index+1+Math.floor(random()*(length-1)))%length;const next=index+delta;if(mode==='list-loop')return (next+length)%length;return next>=0&&next<length?next:-1;}
 
 export function queueMode(mode,queue){return queue?.type==='fm'||queue?.source==='fm'?'sequential':mode;}
+
+export function reorderQueueTracks(tracks, currentIndex, fromIndex, toIndex) {
+  if (!Array.isArray(tracks) || tracks.length < 2) return null;
+  if (!Number.isInteger(fromIndex) || !Number.isInteger(toIndex)) return null;
+  if (fromIndex < 0 || fromIndex >= tracks.length || toIndex < 0 || toIndex >= tracks.length) return null;
+  if (fromIndex === toIndex) return null;
+  const nextTracks = [...tracks];
+  const [moved] = nextTracks.splice(fromIndex, 1);
+  nextTracks.splice(toIndex, 0, moved);
+  let nextIndex = Number.isInteger(currentIndex) ? currentIndex : 0;
+  if (nextIndex === fromIndex) nextIndex = toIndex;
+  else if (fromIndex < nextIndex && toIndex >= nextIndex) nextIndex -= 1;
+  else if (fromIndex > nextIndex && toIndex <= nextIndex) nextIndex += 1;
+  return { tracks: nextTracks, index: Math.max(0, Math.min(nextTracks.length - 1, nextIndex)) };
+}
+
+export function computePlayNextTarget(currentIndex, fromIndex, total) {
+  if (!Number.isInteger(currentIndex) || !Number.isInteger(fromIndex) || !Number.isInteger(total)) return -1;
+  if (total < 2 || currentIndex < 0 || currentIndex >= total || fromIndex < 0 || fromIndex >= total) return -1;
+  if (fromIndex === currentIndex || fromIndex === currentIndex + 1) return -1;
+  return fromIndex > currentIndex ? currentIndex + 1 : currentIndex;
+}

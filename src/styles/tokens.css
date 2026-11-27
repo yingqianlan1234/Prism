@@ -57,6 +57,7 @@
   --nr-glow: #F2A65A;
   --nr-danger: #F27D83;
   --nr-danger-soft: rgba(242, 125, 131, 0.16);
+  --nr-danger-border: rgba(242, 125, 131, 0.38);
   --nr-danger-ink: #FFD2D5;
   --nr-ok: #7BD4AE;
 
@@ -206,13 +207,13 @@
   --nr-thumb-bg: rgba(15, 23, 42, 0.18);
   --nr-thumb-hover: rgba(15, 23, 42, 0.34);
 
-  --nr-horizon-cool: rgba(37, 99, 235, 0.18);
-  --nr-horizon-cool-soft: rgba(56, 189, 248, 0.12);
-  --nr-dot-color: rgba(15, 23, 42, 0.075);
+  --nr-horizon-cool: rgba(37, 99, 235, 0.34);
+  --nr-horizon-cool-soft: rgba(56, 189, 248, 0.20);
+  --nr-dot-color: rgba(15, 23, 42, 0.085);
 
   --nr-ink: #0F172A;
-  --nr-muted: #475569;
-  --nr-faint: #64748B;
+  --nr-muted: #334155;
+  --nr-faint: #4B5563;
 
   --nr-accent: #C2591A;
   --nr-accent-soft: rgba(194, 89, 26, 0.11);
@@ -220,6 +221,7 @@
   --nr-accent-ink: #FFFFFF;
   --nr-danger: #DC2626;
   --nr-danger-soft: rgba(220, 38, 38, 0.10);
+  --nr-danger-border: rgba(220, 38, 38, 0.34);
   --nr-danger-ink: #B91C1C;
   --nr-ok: #059669;
 

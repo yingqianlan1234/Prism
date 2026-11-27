@@ -16,6 +16,7 @@ import {
   queueMode,
   cleanTrack,
   coverForStorage,
+  reorderQueueTracks,
 } from './playback-state.js';
 import { extractAccent } from './accent.js';
 import {
@@ -265,6 +266,8 @@ export function App({
   const cancelFadeRef = useRef(null);
 
   const [themePrefs, setThemePrefs] = useState(() => loadThemePrefs());
+  const ambientLayerRef = useRef(null);
+  const ambientRateRef = useRef({ rate: 0.38, initialized: false, rafId: null });
 
   const [reportAllowed, setReportAllowed] = useState(false);
   const [showDiagnostics, setShowDiagnostics] = useState(false);
@@ -3281,6 +3284,45 @@ export function App({
     setConfirmClear(false);
   };
 
+  const reorderQueue = (fromIndex, toIndex) => {
+    const id = activeRef.current;
+    const q = workRef.current[id].queue;
+    if (!q || q.type === 'fm' || q.source === 'fm') return;
+    if (pendingPlay.current) {
+      update(id, { message: '歌曲切换中，请稍后修改队列' });
+      return;
+    }
+    const reordered = reorderQueueTracks(q.tracks, q.index, fromIndex, toIndex);
+    if (!reordered) return;
+    rollbackRef.current = null;
+    const next = { ...q, tracks: reordered.tracks, index: reordered.index };
+    update(id, { queue: next });
+    if (id === 'netease') {
+      saved.current.normal = next;
+      if (saved.current.current?.kind === 'normal') {
+        saved.current.current = { ...saved.current.current, index: next.index };
+      }
+    } else if (id === 'qqmusic') {
+      qqSaved.current.queue = next;
+    }
+    scheduleSave(true);
+  };
+
+  const reorderMixedQueue = (fromIndex, toIndex) => {
+    const mq = mixedQueueRef.current;
+    if (!mq) return;
+    if (pendingPlay.current) {
+      setCustomPlaylistNotice('歌曲切换中，请稍后修改队列');
+      return;
+    }
+    const reordered = reorderQueueTracks(mq.tracks, mq.index, fromIndex, toIndex);
+    if (!reordered) return;
+    rollbackRef.current = null;
+    const next = { ...mq, tracks: reordered.tracks, index: reordered.index };
+    mixedQueueRef.current = next;
+    setMixedQueue(next);
+  };
+
   const closeQr = () => {
     const id = qr?.provider || 'netease';
     qrRequest.current.next();
@@ -4077,6 +4119,78 @@ export function App({
     };
   }, [song]);
 
+  // 暂停 <-> 播放平滑调节环境波浪速率（Web Animations API playbackRate 缓动，零跳变、无常驻 rAF）
+  useEffect(() => {
+    const state = ambientRateRef.current;
+    if (state.rafId != null && typeof globalThis.cancelAnimationFrame === 'function') {
+      globalThis.cancelAnimationFrame(state.rafId);
+      state.rafId = null;
+    }
+    const reduced =
+      typeof globalThis.matchMedia === 'function' &&
+      globalThis.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    const layer = ambientLayerRef.current;
+    if (
+      themePrefs.ambient === 'off' ||
+      reduced ||
+      !layer ||
+      typeof layer.getAnimations !== 'function'
+    ) {
+      state.rate = playing ? 1 : 0.38;
+      state.initialized = false;
+      return undefined;
+    }
+
+    const applyRate = nextRate => {
+      state.rate = nextRate;
+      const anims = layer.getAnimations({ subtree: true });
+      for (const anim of anims) {
+        try {
+          if (anim.playbackRate !== nextRate) anim.playbackRate = nextRate;
+        } catch {}
+      }
+    };
+
+    const targetRate = playing ? 1 : 0.38;
+    if (
+      !state.initialized ||
+      typeof globalThis.requestAnimationFrame !== 'function' ||
+      typeof globalThis.cancelAnimationFrame !== 'function'
+    ) {
+      state.initialized = true;
+      applyRate(targetRate);
+      return undefined;
+    }
+
+    const startRate = state.rate;
+    if (Math.abs(targetRate - startRate) < 0.005) {
+      applyRate(targetRate);
+      return undefined;
+    }
+
+    const duration = 720;
+    const startTime = typeof performance !== 'undefined' ? performance.now() : Date.now();
+    const step = now => {
+      const elapsed = Math.max(0, (typeof now === 'number' ? now : Date.now()) - startTime);
+      const t = Math.min(1, elapsed / duration);
+      const eased = 1 - Math.pow(1 - t, 3);
+      applyRate(startRate + (targetRate - startRate) * eased);
+      if (t < 1) {
+        state.rafId = globalThis.requestAnimationFrame(step);
+      } else {
+        state.rafId = null;
+      }
+    };
+    state.rafId = globalThis.requestAnimationFrame(step);
+
+    return () => {
+      if (state.rafId != null) {
+        globalThis.cancelAnimationFrame(state.rafId);
+        state.rafId = null;
+      }
+    };
+  }, [playing, themePrefs.ambient]);
+
   // 原生窗口标题跟随实际播放曲目
   useEffect(() => {
     const nextTitle = song ? [song.name, artist(song)].filter(Boolean).join(' — ') : 'Vesper';
@@ -4203,11 +4317,13 @@ export function App({
       data-playing={playing ? 'true' : 'false'}
       style={{ '--lw-accent': accentFor(song) }}
     >
-      <div className="nr-ambient-layer" aria-hidden="true">
+      <div className="nr-ambient-layer" ref={ambientLayerRef} aria-hidden="true">
         <span className="nr-ambient-grid" />
-        <span className="nr-orb is-tide" />
-        <span className="nr-orb is-warm" />
-        <span className="nr-orb is-cool" />
+        <div className="nr-ambient-orbs">
+          <span className="nr-orb is-tide" />
+          <span className="nr-orb is-warm" />
+          <span className="nr-orb is-cool" />
+        </div>
       </div>
       <AppHeader
         capabilities={capabilities}
@@ -4648,8 +4764,10 @@ export function App({
                     className="playlist nr-rec-card"
                     onClick={() => openList(l)}
                   >
-                    <PlaylistCover className="nr-rec-cover" url={l.picUrl || l.coverImgUrl} />
-                    <span>{l.name}</span>
+                    <span className="lw-card-cover">
+                      <PlaylistCover className="nr-rec-cover" url={l.picUrl || l.coverImgUrl} />
+                    </span>
+                    <span className="nr-rec-title">{l.name}</span>
                   </button>
                 ))}
                 {message && <p role="status">{message}</p>}
@@ -5246,6 +5364,8 @@ export function App({
         play={play}
         editQueue={editQueue}
         editMixedQueue={editMixedQueue}
+        reorderQueue={reorderQueue}
+        reorderMixedQueue={reorderMixedQueue}
       />
 
       <QqAuthDialog

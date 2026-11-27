@@ -337,6 +337,25 @@ const ICONS = {
       <path d="m16.8 7.2-9.6 9.6" />
     </>
   ),
+  grip: (
+    <>
+      <circle cx="9" cy="6.5" r="1.25" fill="currentColor" stroke="none" />
+      <circle cx="15" cy="6.5" r="1.25" fill="currentColor" stroke="none" />
+      <circle cx="9" cy="12" r="1.25" fill="currentColor" stroke="none" />
+      <circle cx="15" cy="12" r="1.25" fill="currentColor" stroke="none" />
+      <circle cx="9" cy="17.5" r="1.25" fill="currentColor" stroke="none" />
+      <circle cx="15" cy="17.5" r="1.25" fill="currentColor" stroke="none" />
+    </>
+  ),
+  playNext: (
+    <>
+      <path d="M5.5 7.5h7.5" />
+      <path d="M5.5 12h11" />
+      <path d="M5.5 16.5h7.5" />
+      <path d="M17.5 4.8v6" />
+      <path d="M14.8 7.4 17.5 4.7l2.7 2.7" />
+    </>
+  ),
 };
 
 export function Icon({ name, className = 'nr-icon' }) {

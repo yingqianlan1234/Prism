@@ -1,4 +1,4 @@
-import test from 'node:test';import assert from 'node:assert/strict';import {makePlaybackState,restorePlaybackState,makeQqPlaybackState,restoreQqPlaybackState,nextIndex,coverForStorage} from './playback-state.js';
+import test from 'node:test';import assert from 'node:assert/strict';import {makePlaybackState,restorePlaybackState,makeQqPlaybackState,restoreQqPlaybackState,nextIndex,coverForStorage,reorderQueueTracks,computePlayNextTarget} from './playback-state.js';
 const track={id:12,name:'合成歌曲',ar:[{name:'合成歌手'}],al:{name:'合成专辑',picUrl:'https://example.invalid/private'},url:'https://example.invalid/audio?token=secret',cookie:'secret',dt:120000,provider:'netease',accountId:1};
 const queue={tracks:[track],index:0,source:'playlist'};
 test('只保存白名单，恢复时拒绝不同平台和账号',()=>{const s=makePlaybackState({accountId:1,normalQueue:queue,fmQueue:null,current:{provider:'netease',kind:'normal',index:0,position:17},mode:'shuffle',volume:.4,muted:true});assert(!JSON.stringify(s).includes('https'));assert(!JSON.stringify(s).includes('secret'));assert.equal(restorePlaybackState(s,2),null);assert.equal(restorePlaybackState({...s,provider:'qqmusic'},1),null);const r=restorePlaybackState(s,1);assert.equal(r.normalQueue.tracks[0].name,'合成歌曲');assert.equal(r.current.position,17);assert.equal(r.mode,'shuffle');assert.equal(r.muted,true);});
@@ -15,3 +15,35 @@ test('私人 FM 仅保存受限的无参数网易封面并在恢复时保留',()
 });
 
 test('普通队列封面仅保留安全尺寸参数并自动升级 http',()=>{const s={album:{picUrl:'http://p1.music.126.net/img/1.jpg?token=synthetic&param=300y300'}};assert.equal(coverForStorage(s),'https://p1.music.126.net/img/1.jpg?param=300y300');s.album.picUrl='https://p1.music.126.net/img/1.jpg?param=secret';assert.equal(coverForStorage(s),'https://p1.music.126.net/img/1.jpg');s.album.picUrl='https://other.invalid/img.jpg?param=300y300';assert.equal(coverForStorage(s),null);});
+
+test('reorderQueueTracks 与 computePlayNextTarget 精准重算队列顺序与当前播放索引', () => {
+  const tracks = ['A', 'B', 'C', 'D'];
+  // 拖动当前正在播的 B(1) 到 D(3) 的位置
+  const moveCurrent = reorderQueueTracks(tracks, 1, 1, 3);
+  assert.deepEqual(moveCurrent, { tracks: ['A', 'C', 'D', 'B'], index: 3 });
+
+  // 把当前 B(1) 之后的 D(3) 拖到 A(0) 前，当前索引应右移至 2
+  const moveAfterToBefore = reorderQueueTracks(tracks, 1, 3, 0);
+  assert.deepEqual(moveAfterToBefore, { tracks: ['D', 'A', 'B', 'C'], index: 2 });
+
+  // 把当前 C(2) 之前的 A(0) 拖到 D(3) 后，当前索引应左移至 1
+  const moveBeforeToAfter = reorderQueueTracks(tracks, 2, 0, 3);
+  assert.deepEqual(moveBeforeToAfter, { tracks: ['B', 'C', 'D', 'A'], index: 1 });
+
+  // 边界与非法输入
+  assert.equal(reorderQueueTracks(tracks, 0, 1, 1), null);
+  assert.equal(reorderQueueTracks(['A'], 0, 0, 0), null);
+  assert.equal(reorderQueueTracks(tracks, 0, -1, 2), null);
+
+  // computePlayNextTarget：当前播放 C(2)
+  assert.equal(computePlayNextTarget(2, 2, 4), -1);
+  assert.equal(computePlayNextTarget(2, 3, 4), -1);
+  assert.equal(computePlayNextTarget(2, 0, 4), 2);
+  const putBeforeAsNext = reorderQueueTracks(tracks, 2, 0, computePlayNextTarget(2, 0, 4));
+  assert.deepEqual(putBeforeAsNext, { tracks: ['B', 'C', 'A', 'D'], index: 1 });
+
+  // 当前播放 A(0)，把 D(3) 设为下一首
+  assert.equal(computePlayNextTarget(0, 3, 4), 1);
+  const putAfterAsNext = reorderQueueTracks(tracks, 0, 3, computePlayNextTarget(0, 3, 4));
+  assert.deepEqual(putAfterAsNext, { tracks: ['A', 'D', 'B', 'C'], index: 0 });
+});

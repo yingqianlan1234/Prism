@@ -16,6 +16,7 @@ import {
 import { Icon } from './Icons.jsx';
 import { PlaylistCover, SourceTag } from './Artwork.jsx';
 import { customTrackKey } from '../custom-playlists.js';
+import { computePlayNextTarget } from '../playback-state.js';
 import {
   formatBytes,
   isSwitchableSourceError,
@@ -447,28 +448,244 @@ export function QueueDrawer({
   play,
   editQueue,
   editMixedQueue,
+  reorderQueue,
+  reorderMixedQueue,
 }) {
-  if (!showQueue) return null;
+  const [rendered, setRendered] = useState(showQueue);
+  const [closing, setClosing] = useState(false);
+  const closeTimerRef = useRef(null);
+  const listRef = useRef(null);
+  const dragRef = useRef(null);
+  const ghostRef = useRef(null);
+  const scrollRafRef = useRef(null);
+  const tracksRef = useRef([]);
+  const [dragUi, setDragUi] = useState(null);
+
+  const stopDrag = () => {
+    if (scrollRafRef.current != null && typeof globalThis.cancelAnimationFrame === 'function') {
+      globalThis.cancelAnimationFrame(scrollRafRef.current);
+      scrollRafRef.current = null;
+    }
+    dragRef.current = null;
+    setDragUi(null);
+  };
+
+  useEffect(() => {
+    if (closeTimerRef.current) {
+      clearTimeout(closeTimerRef.current);
+      closeTimerRef.current = null;
+    }
+    if (showQueue) {
+      setRendered(true);
+      setClosing(false);
+      return;
+    }
+    stopDrag();
+    if (!rendered) return;
+    const reduced =
+      typeof globalThis.matchMedia === 'function' &&
+      globalThis.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    if (reduced) {
+      setRendered(false);
+      setClosing(false);
+      return;
+    }
+    setClosing(true);
+    closeTimerRef.current = setTimeout(() => {
+      closeTimerRef.current = null;
+      setRendered(false);
+      setClosing(false);
+    }, 210);
+  }, [showQueue, rendered]);
+
+  useEffect(
+    () => () => {
+      if (closeTimerRef.current) clearTimeout(closeTimerRef.current);
+      if (scrollRafRef.current != null && typeof globalThis.cancelAnimationFrame === 'function') {
+        globalThis.cancelAnimationFrame(scrollRafRef.current);
+        scrollRafRef.current = null;
+      }
+    },
+    []
+  );
+
   const isMixed = Boolean(mixedQueue?.tracks?.length);
   const activeQueue = isMixed ? mixedQueue : ws.queue;
   const tracks = activeQueue?.tracks || [];
+  tracksRef.current = tracks;
   const isFm = !isMixed && (ws.queue?.type === 'fm' || ws.queue?.source === 'fm');
   const removeAction = isMixed ? editMixedQueue : editQueue;
+  const reorderAction = isMixed ? reorderMixedQueue : reorderQueue;
+  const canReorder = rendered && !closing && !isFm && !pendingPlay && tracks.length > 1 && Boolean(reorderAction);
+
+  useEffect(() => {
+    if (!canReorder) stopDrag();
+  }, [canReorder]);
+
+  useEffect(() => {
+    if (!canReorder) return undefined;
+
+    const resolveTargetIndex = (clientY, fromIndex) => {
+      const listEl = listRef.current;
+      if (!listEl) return fromIndex;
+      const items = listEl.querySelectorAll('.queue-item');
+      if (!items.length) return fromIndex;
+      const listRect = listEl.getBoundingClientRect();
+      const contentY = clientY - listRect.top + listEl.scrollTop;
+      let slot = 0;
+      for (let i = 0; i < items.length; i++) {
+        const midY = items[i].offsetTop + items[i].offsetHeight / 2;
+        if (contentY >= midY) slot = i + 1;
+        else break;
+      }
+      const next = slot > fromIndex ? slot - 1 : slot;
+      return Math.max(0, Math.min(items.length - 1, next));
+    };
+
+    const syncDropTarget = clientY => {
+      const st = dragRef.current;
+      const listEl = listRef.current;
+      if (!st || !listEl) return;
+      st.currentY = clientY;
+      if (!st.active) {
+        if (Math.abs(clientY - st.startY) < 4) return;
+        const items = listEl.querySelectorAll('.queue-item');
+        const srcEl = items[st.fromIndex];
+        if (!srcEl) return;
+        const srcRect = srcEl.getBoundingClientRect();
+        const step =
+          items.length > 1
+            ? Math.max(srcRect.height, items[1].offsetTop - items[0].offsetTop)
+            : srcRect.height + 6;
+        st.active = true;
+        st.left = srcRect.left;
+        st.width = srcRect.width;
+        st.height = srcRect.height;
+        st.rowStep = step || 58;
+        st.pointerOffsetY = st.startY - srcRect.top;
+      }
+
+      const listRect = listEl.getBoundingClientRect();
+      const rawTop = clientY - st.pointerOffsetY;
+      const clampedTop = Math.max(
+        listRect.top - 10,
+        Math.min(listRect.bottom - st.height + 10, rawTop)
+      );
+      st.top = clampedTop;
+      if (ghostRef.current) {
+        ghostRef.current.style.transform = `translate3d(0, ${clampedTop}px, 0) scale(1.02)`;
+      }
+
+      const targetIndex = resolveTargetIndex(clientY, st.fromIndex);
+      if (!st.uiActive || st.targetIndex !== targetIndex) {
+        st.targetIndex = targetIndex;
+        st.uiActive = true;
+        setDragUi({
+          fromIndex: st.fromIndex,
+          targetIndex,
+          rowStep: st.rowStep,
+          left: st.left,
+          width: st.width,
+          height: st.height,
+          initialTop: clampedTop,
+          track: tracksRef.current[st.fromIndex] || null,
+        });
+      }
+    };
+
+    const tickAutoScroll = () => {
+      const st = dragRef.current;
+      const listEl = listRef.current;
+      if (!st || !st.active || !listEl) {
+        scrollRafRef.current = null;
+        return;
+      }
+      const rect = listEl.getBoundingClientRect();
+      const edge = 44;
+      let delta = 0;
+      if (st.currentY < rect.top + edge) {
+        delta = -Math.ceil(((rect.top + edge - st.currentY) / edge) * 10);
+      } else if (st.currentY > rect.bottom - edge) {
+        delta = Math.ceil(((st.currentY - (rect.bottom - edge)) / edge) * 10);
+      }
+      if (delta !== 0) {
+        listEl.scrollTop += delta;
+        syncDropTarget(st.currentY);
+      }
+      scrollRafRef.current = globalThis.requestAnimationFrame(tickAutoScroll);
+    };
+
+    const onPointerMove = e => {
+      const st = dragRef.current;
+      if (!st || (st.pointerId != null && e.pointerId != null && e.pointerId !== st.pointerId)) return;
+      syncDropTarget(e.clientY);
+      if (
+        st.active &&
+        scrollRafRef.current == null &&
+        typeof globalThis.requestAnimationFrame === 'function'
+      ) {
+        scrollRafRef.current = globalThis.requestAnimationFrame(tickAutoScroll);
+      }
+    };
+
+    const onPointerEnd = e => {
+      const st = dragRef.current;
+      if (!st || (st.pointerId != null && e.pointerId != null && e.pointerId !== st.pointerId)) return;
+      const shouldCommit = st.active && Number.isInteger(st.targetIndex);
+      const fromIndex = st.fromIndex;
+      const toIndex = st.targetIndex;
+      stopDrag();
+      if (shouldCommit && toIndex !== fromIndex) {
+        reorderAction?.(fromIndex, toIndex);
+      }
+    };
+
+    const onKeyDown = e => {
+      if (e.key === 'Escape' && dragRef.current) {
+        e.preventDefault();
+        e.stopPropagation();
+        stopDrag();
+      }
+    };
+
+    window.addEventListener('pointermove', onPointerMove);
+    window.addEventListener('pointerup', onPointerEnd);
+    window.addEventListener('pointercancel', onPointerEnd);
+    window.addEventListener('keydown', onKeyDown, true);
+    return () => {
+      window.removeEventListener('pointermove', onPointerMove);
+      window.removeEventListener('pointerup', onPointerEnd);
+      window.removeEventListener('pointercancel', onPointerEnd);
+      window.removeEventListener('keydown', onKeyDown, true);
+    };
+  }, [canReorder, reorderAction]);
+
+  if (!rendered) return null;
+
+  const focusGripAt = targetIdx => {
+    if (typeof globalThis.requestAnimationFrame !== 'function') return;
+    globalThis.requestAnimationFrame(() => {
+      const grips = listRef.current?.querySelectorAll('.nr-queue-grip');
+      grips?.[targetIdx]?.focus();
+    });
+  };
 
   return (
     <div
-      className="overlay queue-overlay"
+      className={'overlay queue-overlay' + (closing ? ' is-closing' : '')}
+      aria-hidden={closing || undefined}
       onClick={() => {
+        if (closing) return;
         setShowQueue(false);
         setConfirmClear(false);
       }}
     >
       <div
         className="dialog queue-dialog"
-        role="dialog"
-        aria-modal="true"
-        aria-label="播放队列"
-        aria-labelledby="queue-heading"
+        role={closing ? undefined : 'dialog'}
+        aria-modal={closing ? undefined : 'true'}
+        aria-label={closing ? undefined : '播放队列'}
+        aria-labelledby={closing ? undefined : 'queue-heading'}
         onClick={e => e.stopPropagation()}
       >
         <div className="queue-header">
@@ -507,7 +724,7 @@ export function QueueDrawer({
 
         {tracks.length ? (
           <>
-            <div className="queue-list">
+            <div className={'queue-list' + (dragUi ? ' is-dragging' : '')} ref={listRef}>
               {tracks.map((track, index) => {
                 const current = isMixed
                   ? song?.provider === track.provider &&
@@ -521,12 +738,83 @@ export function QueueDrawer({
                   selectedTrack?.provider === track.provider &&
                   selectedTrack?.id === track.id &&
                   selectedTrack?.accountId === track.accountId;
+                const playNextTarget =
+                  !isFm && !current && reorderAction
+                    ? computePlayNextTarget(activeQueue?.index ?? -1, index, tracks.length)
+                    : -1;
+                const isPlaceholder = dragUi?.fromIndex === index;
+                let shiftY = 0;
+                if (dragUi) {
+                  const { fromIndex, targetIndex, rowStep } = dragUi;
+                  if (index === fromIndex) {
+                    shiftY = (targetIndex - fromIndex) * rowStep;
+                  } else if (fromIndex < targetIndex && index > fromIndex && index <= targetIndex) {
+                    shiftY = -rowStep;
+                  } else if (fromIndex > targetIndex && index >= targetIndex && index < fromIndex) {
+                    shiftY = rowStep;
+                  }
+                }
 
                 return (
                   <div
-                    className={'queue-item' + (current ? ' selected' : picked ? ' picked' : '')}
+                    className={
+                      'queue-item' +
+                      (current ? ' selected' : picked ? ' picked' : '') +
+                      (isPlaceholder ? ' is-drag-placeholder' : '')
+                    }
+                    style={
+                      dragUi
+                        ? { transform: `translate3d(0, ${shiftY}px, 0)` }
+                        : undefined
+                    }
                     key={`${track.provider || activeProvider}-${track.id}-${index}`}
                   >
+                    {isPlaceholder && (
+                      <div className="nr-queue-slot-hint" aria-hidden="true">
+                        {dragUi.targetIndex === dragUi.fromIndex
+                          ? `当前第 ${dragUi.fromIndex + 1} 位`
+                          : `松手移至第 ${dragUi.targetIndex + 1} 位`}
+                      </div>
+                    )}
+                    {!isFm && tracks.length > 1 && reorderAction && (
+                      <button
+                        type="button"
+                        className="nr-queue-grip"
+                        disabled={pendingPlay}
+                        aria-label={`拖动调整 ${track.name} 顺位`}
+                        title="按住上下拖动调序（或用 ↑/↓ 键）"
+                        onPointerDown={e => {
+                          if (!canReorder || e.button !== 0) return;
+                          e.preventDefault();
+                          dragRef.current = {
+                            fromIndex: index,
+                            targetIndex: index,
+                            startY: e.clientY,
+                            currentY: e.clientY,
+                            active: false,
+                            uiActive: false,
+                            pointerId: e.pointerId,
+                          };
+                        }}
+                        onKeyDown={e => {
+                          if (!canReorder) return;
+                          if (e.key === 'ArrowUp' && index > 0) {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            reorderAction(index, index - 1);
+                            focusGripAt(index - 1);
+                          } else if (e.key === 'ArrowDown' && index < tracks.length - 1) {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            reorderAction(index, index + 1);
+                            focusGripAt(index + 1);
+                          }
+                        }}
+                      >
+                        <Icon name="grip" className="nr-icon is-sm" />
+                      </button>
+                    )}
+
                     <button
                       type="button"
                       className="queue-song"
@@ -560,16 +848,31 @@ export function QueueDrawer({
                     </button>
 
                     {!isFm && (
-                      <button
-                        type="button"
-                        className="nr-remove-btn"
-                        disabled={pendingPlay}
-                        aria-disabled={pendingPlay}
-                        onClick={() => removeAction?.(index)}
-                        aria-label={(current ? '移除并停止 ' : '移除 ') + track.name}
-                      >
-                        {current ? '移除并停止' : '移除'}
-                      </button>
+                      <div className="nr-queue-actions">
+                        {playNextTarget >= 0 && (
+                          <button
+                            type="button"
+                            className="nr-play-next-btn"
+                            disabled={pendingPlay}
+                            aria-disabled={pendingPlay}
+                            aria-label={`将 ${track.name} 设为下一首播放`}
+                            title="下一首播放"
+                            onClick={() => reorderAction(index, playNextTarget)}
+                          >
+                            <Icon name="playNext" className="nr-icon is-xs" />
+                          </button>
+                        )}
+                        <button
+                          type="button"
+                          className="nr-remove-btn"
+                          disabled={pendingPlay}
+                          aria-disabled={pendingPlay}
+                          onClick={() => removeAction?.(index)}
+                          aria-label={(current ? '移除并停止 ' : '移除 ') + track.name}
+                        >
+                          {current ? '移除并停止' : '移除'}
+                        </button>
+                      </div>
                     )}
                   </div>
                 );
@@ -625,6 +928,38 @@ export function QueueDrawer({
           <p className="nr-queue-empty">队列为空，选择歌曲后会显示在这里。</p>
         )}
       </div>
+
+      {dragUi && dragUi.track && (
+        <div
+          ref={ghostRef}
+          className="nr-queue-drag-ghost"
+          aria-hidden="true"
+          style={{
+            left: `${dragUi.left}px`,
+            width: `${dragUi.width}px`,
+            height: `${dragUi.height}px`,
+            transform: `translate3d(0, ${dragRef.current?.top ?? dragUi.initialTop}px, 0) scale(1.02)`,
+          }}
+        >
+          <span className="nr-queue-grip">
+            <Icon name="grip" className="nr-icon is-sm" />
+          </span>
+          <div className="queue-song">
+            <span className="nr-queue-title-line">
+              <span>
+                {dragUi.fromIndex + 1}. {dragUi.track.name}
+              </span>
+              {isMixed && <SourceTag provider={dragUi.track.provider} />}
+            </span>
+            <small>{artist(dragUi.track)}</small>
+          </div>
+          <span className="nr-drag-ghost-badge">
+            {dragUi.targetIndex === dragUi.fromIndex
+              ? `第 ${dragUi.fromIndex + 1} 位`
+              : `→ 第 ${dragUi.targetIndex + 1} 位`}
+          </span>
+        </div>
+      )}
     </div>
   );
 }
