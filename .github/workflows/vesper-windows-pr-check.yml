@@ -11,7 +11,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
         with:
-          ref: 888cb88a6fd1d380d95a7b717fe6f16f9b18457f
+          ref: 07aa78c4fe5097218eb9b8f48a56d4a75df9ece6
           persist-credentials: false
       - run: git rev-parse HEAD
       - run: npm ci --no-audit --no-fund
