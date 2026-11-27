@@ -167,6 +167,18 @@ fn valid_id(id: u64) -> Result<()> { if id == 0 || id > 9_007_199_254_740_991 {E
 /// 显示与标题栏着色放在同一个调用栈里：隐藏窗口不会被 DWM 合成，属性要等窗口显示后才生效，
 /// 先设一次、show 之后再设一次，把白标题栏压缩到不足一帧。
 #[tauri::command]
+fn window_theme_sync(window: tauri::WebviewWindow, theme: String) -> Result<()> {
+    if window.label() != "main" {
+        return Err(err("permission", "无权同步窗口主题"));
+    }
+    #[cfg(windows)]
+    window_dwm::sync_theme(&window, &theme);
+    #[cfg(not(windows))]
+    let _ = theme;
+    Ok(())
+}
+
+#[tauri::command]
 fn reveal_main_window(app: tauri::AppHandle) {
     let Some(window) = app.get_webview_window("main") else { return };
     #[cfg(windows)] if !background::may_reveal(&app){return;}
@@ -319,6 +331,7 @@ fn host_capabilities() -> Value {
         "desktopLyric": cfg!(windows),
         "closeBehavior": cfg!(windows),
         "appUpdater": cfg!(windows),
+        "customTitlebar": cfg!(windows),
     })
 }
 
@@ -403,6 +416,7 @@ fn main() {
             #[cfg(windows)]
             updater::app_update_install,
             reveal_main_window,
+            window_theme_sync,
             host_capabilities,
             local_library::local_library_folders_get,
             local_library::local_library_folder_pick,

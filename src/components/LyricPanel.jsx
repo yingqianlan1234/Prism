@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { Icon } from './Icons.jsx';
 
-export function LyricPanel({ lyrics, index, status, onClose, onSeek, stage }) {
+export function LyricPanel({ lyrics, index, status, onClose, onSeek, stage, embedded = false }) {
   const box = useRef(null);
   const timer = useRef(null);
   const [following, setFollowing] = useState(true);
@@ -61,7 +61,10 @@ export function LyricPanel({ lyrics, index, status, onClose, onSeek, stage }) {
   }, [index, following, lyrics]);
 
   return (
-    <div className="lyric-panel" data-stage={stage ? 'true' : 'false'}>
+    <div
+      className={'lyric-panel' + (embedded ? ' is-embedded' : '')}
+      data-stage={stage ? 'true' : 'false'}
+    >
       <div className="nr-lyric-header">
         <div className="nr-lyric-title-group">
           <h2>歌词</h2>
@@ -105,9 +108,11 @@ export function LyricPanel({ lyrics, index, status, onClose, onSeek, stage }) {
               回到当前行
             </button>
           )}
-          <button type="button" className="nr-close-btn" onClick={onClose} aria-label="关闭歌词">
-            <Icon name="close" />
-          </button>
+          {!embedded && (
+            <button type="button" className="nr-close-btn" onClick={onClose} aria-label="关闭歌词">
+              <Icon name="close" />
+            </button>
+          )}
         </div>
       </div>
 

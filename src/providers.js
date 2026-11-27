@@ -15,7 +15,13 @@ export function capabilitiesForHost(host) {
  if(typeof host?.qqMusic!=='boolean') return capabilities;
  return Object.freeze({
   ...capabilities,
-  desktop:Object.freeze({globalShortcuts:host.globalShortcuts,desktopLyric:host.desktopLyric,closeBehavior:host.closeBehavior,appUpdater:host.appUpdater===true}),
+  desktop:Object.freeze({
+   globalShortcuts:host.globalShortcuts,
+   desktopLyric:host.desktopLyric,
+   closeBehavior:host.closeBehavior,
+   appUpdater:host.appUpdater===true,
+   customTitlebar:host.customTitlebar===true
+  }),
   qqmusic:Object.freeze({...capabilities.qqmusic,available:host.qqMusic})
  });
 }

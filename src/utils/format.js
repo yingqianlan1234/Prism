@@ -5,7 +5,11 @@ export const time = n =>
     ? Math.floor(n / 60) + ':' + String(Math.floor(n % 60)).padStart(2, '0')
     : '0:00';
 
-export const artist = s => (s?.artists || s?.ar || []).map(x => x.name).join(' / ');
+export const artist = s =>
+  (s?.artists || s?.ar || [])
+    .map(x => (typeof x === 'string' ? x : x?.name))
+    .filter(Boolean)
+    .join(' / ');
 
 export const album = songAlbum;
 

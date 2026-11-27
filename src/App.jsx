@@ -49,8 +49,8 @@ import {
 import { RadioStage } from './components/RadioStage.jsx';
 import { FloatingDock } from './components/FloatingDock.jsx';
 import { LyricPanel } from './components/LyricPanel.jsx';
+import { SettingsPage } from './components/SettingsPage.jsx';
 import {
-  MoreSettingsPanel,
   QueueDrawer,
   QqAuthDialog,
   CloseBehaviorDialog,
@@ -65,6 +65,34 @@ import {
   hasUpdateBadge,
   shouldAutoPromptUpdate,
 } from './updater.js';
+import {
+  loadCustomPlaylists,
+  saveCustomPlaylists,
+  createCustomPlaylist,
+  renameCustomPlaylist,
+  deleteCustomPlaylist,
+  addTrackToCustomPlaylist,
+  removeTrackFromCustomPlaylist,
+  filterCustomPlaylistTracks,
+  summarizeCustomPlaylistSources,
+  exportCustomPlaylistsJson,
+  importCustomPlaylistsJson,
+  hydrateCustomTrack,
+  customTrackKey,
+} from './custom-playlists.js';
+import {
+  loadAudioPrefs,
+  saveAudioPrefs,
+  supportsAudioOutputSelection,
+  listAudioOutputDevices,
+  applyAudioOutputDevice,
+  runSmoothFadeIn,
+} from './audio-prefs.js';
+import {
+  loadThemePrefs,
+  saveThemePrefs,
+  applyThemePrefsToDocument,
+} from './theme-prefs.js';
 
 const DEFAULT_DESKTOP_LYRIC_STYLE = Object.freeze({
   fontSize: 28,
@@ -113,7 +141,6 @@ const makeWorkspace = () => ({
   searchTotal: null,
   searchItems: [],
   searching: false,
-  fmView: false,
   trackOrigin: 'unknown',
   listPage: 0,
   listsBusy: false,
@@ -140,7 +167,7 @@ export function App({
   const [closeBusy, setCloseBusy] = useState(false);
 
   const [view, setView] = useState('library');
-  const [showMore, setShowMore] = useState(false);
+  const [settingsSection, setSettingsSection] = useState('general');
   const [showNowDetails, setShowNowDetails] = useState(false);
   const [sideExpanded, setSideExpanded] = useState(false);
   const [selectedTrack, setSelectedTrack] = useState(null);
@@ -209,10 +236,35 @@ export function App({
   const [likedIds, setLikedIds] = useState(() => new Set());
   const [likedBusyIds, setLikedBusyIds] = useState(() => new Set());
   const [fmTrashBusy, setFmTrashBusy] = useState(false);
+  const [fmError, setFmError] = useState('');
+  const [fmStageFocus, setFmStageFocus] = useState(false);
   const [pickerTrack, setPickerTrack] = useState(null);
   const [pickerBusyId, setPickerBusyId] = useState(null);
   const [pickerError, setPickerError] = useState('');
   const [removingTrackKey, setRemovingTrackKey] = useState(null);
+
+  // Vesper 本机跨源歌单 + 独立音频偏好（柔和淡入 / 输出设备）
+  const [customPlaylists, setCustomPlaylists] = useState(() => loadCustomPlaylists());
+  const customPlaylistsRef = useRef(customPlaylists);
+  const [activeCustomPlaylistId, setActiveCustomPlaylistId] = useState(null);
+  const [customPlaylistFilter, setCustomPlaylistFilter] = useState('');
+  const [customPlaylistNotice, setCustomPlaylistNotice] = useState('');
+  const [renamingCustomPlaylist, setRenamingCustomPlaylist] = useState(false);
+  const [renameCustomDraft, setRenameCustomDraft] = useState('');
+  const [confirmDeleteCustom, setConfirmDeleteCustom] = useState(false);
+  const [customImportStatus, setCustomImportStatus] = useState('');
+  const [mixedQueue, setMixedQueue] = useState(null);
+  const mixedQueueRef = useRef(null);
+
+  const [audioPrefs, setAudioPrefs] = useState(() => loadAudioPrefs());
+  const audioPrefsRef = useRef(audioPrefs);
+  const [audioOutputSupported, setAudioOutputSupported] = useState(false);
+  const [audioOutputDevices, setAudioOutputDevices] = useState([]);
+  const [audioOutputError, setAudioOutputError] = useState('');
+  const fadeActiveRef = useRef(false);
+  const cancelFadeRef = useRef(null);
+
+  const [themePrefs, setThemePrefs] = useState(() => loadThemePrefs());
 
   const [reportAllowed, setReportAllowed] = useState(false);
   const [showDiagnostics, setShowDiagnostics] = useState(false);
@@ -262,7 +314,6 @@ export function App({
   const lyricsRef = useRef([]);
   const [lyricIndex, setLyricIndex] = useState(-1);
   const lyricIndexRef = useRef(-1);
-  const [showLyrics, setShowLyrics] = useState(false);
   const [lyricStatus, setLyricStatus] = useState('idle');
   const [showQueue, setShowQueue] = useState(false);
   const [confirmClear, setConfirmClear] = useState(false);
@@ -672,6 +723,7 @@ export function App({
   };
 
   const saveNow = () => {
+    if (mixedQueueRef.current) return;
     saveQq();
     saveLocalQueue();
     const user = workRef.current.netease.profile?.userId;
@@ -822,6 +874,7 @@ export function App({
             error: '',
             generation: fm.current.generation + 1,
           };
+          setFmError('');
         }
         saved.current.current = state.current ? { provider: 'netease', ...state.current } : null;
         const queue = state.current?.kind === 'fm' ? saved.current.fm : saved.current.normal;
@@ -849,6 +902,7 @@ export function App({
           error: '',
           generation: fm.current.generation + 1,
         };
+        setFmError('');
       }
       const c = state.current;
       const q = c?.kind === 'fm' ? saved.current.fm : saved.current.normal;
@@ -985,6 +1039,8 @@ export function App({
         error: '',
         generation: fm.current.generation + 1,
       };
+      setFmError('');
+      setFmStageFocus(false);
       setLikedIds(new Set());
       setLikedBusyIds(new Set());
       setFmTrashBusy(false);
@@ -1015,7 +1071,6 @@ export function App({
       lists: [],
       recommendLists: null,
       queue: null,
-      fmView: false,
       listPage: 0,
       listsBusy: false,
       qqPlaylist: null,
@@ -1412,6 +1467,10 @@ export function App({
   };
 
   const switchProvider = id => {
+    setActiveCustomPlaylistId(null);
+    setRenamingCustomPlaylist(false);
+    setConfirmDeleteCustom(false);
+    if (view === 'settings') setView('library');
     if (activeRef.current !== id) {
       const prevId = activeRef.current;
       fmAutoStartRef.current = null;
@@ -1432,6 +1491,7 @@ export function App({
 
   const search = async (e, page = 1, explicitTerm = null, explicitType = null) => {
     e?.preventDefault();
+    setActiveCustomPlaylistId(null);
     const id = activeRef.current;
     if (id === 'local') {
       const term = explicitTerm != null ? explicitTerm : workRef.current.local.query;
@@ -1462,7 +1522,6 @@ export function App({
     update(id, {
       message: '正在搜索…',
       searching: true,
-      fmView: false,
       trackOrigin: 'search',
       searchType: nextType,
       qqPlaylist: null,
@@ -1567,6 +1626,7 @@ export function App({
   };
 
   const openRecent = async () => {
+    setActiveCustomPlaylistId(null);
     const id = 'netease';
     const user = workRef.current.netease.profile?.userId;
     if (!user || workRef.current.netease.identityUnknown) return;
@@ -1577,7 +1637,6 @@ export function App({
       songs: [],
       searchItems: [],
       searchTotal: null,
-      fmView: false,
       recommendLists: null,
       trackOrigin: 'recent',
       qqPlaylist: null,
@@ -1673,6 +1732,7 @@ export function App({
   };
 
   const openList = async (list, page = 1) => {
+    setActiveCustomPlaylistId(null);
     recommendationPending.current = false;
     const id = activeRef.current;
     const w = workRef.current[id];
@@ -1688,7 +1748,6 @@ export function App({
       searchItems: [],
       searchTotal: null,
       recommendLists: null,
-      fmView: false,
       trackOrigin: 'playlist',
       qqPlaylist: list,
       qqTrackPage: page,
@@ -1740,6 +1799,7 @@ export function App({
   };
 
   const recommend = async kind => {
+    setActiveCustomPlaylistId(null);
     const id = activeRef.current;
     const w = workRef.current[id];
     if (!w || activeRef.current !== id || w.identityUnknown || !w.profile?.userId) return;
@@ -1759,7 +1819,6 @@ export function App({
       searchItems: [],
       searchTotal: null,
       recommendLists: null,
-      fmView: false,
       qqPlaylist: null,
       qqTrackPage: 0,
       trackOrigin: 'recommendation',
@@ -1810,6 +1869,7 @@ export function App({
     if (state.pending) return state.pending;
     const generation = state.generation;
     state.error = '';
+    setFmError('');
     const promise = (async () => {
       try {
         const d = await netease.getPrivateFm();
@@ -1833,16 +1893,12 @@ export function App({
           scheduleSave();
         }
         if (!next.length) state.error = '暂无新歌曲，请稍后重试';
+        setFmError(state.error);
         const current = workRef.current.netease;
         const q = current.queue;
-        const patch = {};
-        if (current.fmView) {
-          patch.message = state.error;
-        }
         if (q?.type === 'fm' && q.accountId === state.accountId) {
-          patch.queue = { ...q, tracks: [...state.tracks] };
+          update('netease', { queue: { ...q, tracks: [...state.tracks] } });
         }
-        update('netease', patch);
         const autoTarget = fmAutoStartRef.current;
         if (
           autoTarget &&
@@ -1874,7 +1930,7 @@ export function App({
         if (fm.current === state) {
           fmAutoStartRef.current = null;
           state.error = '私人 FM 加载失败：' + errorText(e);
-          if (workRef.current.netease.fmView) update('netease', { message: state.error });
+          setFmError(state.error);
         }
       } finally {
         if (fm.current === state) state.pending = null;
@@ -1899,9 +1955,6 @@ export function App({
   const openFm = () => {
     const w = workRef.current.netease;
     if (!w.profile?.userId || w.identityUnknown) return;
-    recommendationPending.current = false;
-    recommendation.current.next();
-    browse.current.netease.next();
     if (fm.current.accountId !== w.profile.userId) {
       fm.current = {
         accountId: w.profile.userId,
@@ -1911,22 +1964,10 @@ export function App({
         error: '',
         generation: fm.current.generation + 1,
       };
+      setFmError('');
     }
-    update('netease', {
-      fmView: true,
-      trackOrigin: 'fm',
-      title: '私人 FM',
-      songs: [],
-      searchItems: [],
-      searchTotal: null,
-      recommendLists: null,
-      qqPlaylist: null,
-      qqTrackPage: 0,
-      message: fm.current.error || (!fm.current.tracks.length ? '正在调频私人 FM…' : ''),
-    });
-    setShowMore(false);
+    setFmStageFocus(true);
     setView('stage');
-    setShowLyrics(true);
     const curSong = songRef.current;
     const alreadyPlayingFm =
       curSong?.provider === 'netease' &&
@@ -2026,7 +2067,6 @@ export function App({
       const nextQueue = nextTracks.length ? { ...queue, tracks: [...nextTracks], index: nextIdx } : null;
       saved.current.fm = nextQueue;
       update('netease', {
-        ...(workRef.current.netease.fmView ? { songs: [...nextTracks] } : {}),
         queue: nextQueue,
       });
       if (nextTracks.length - nextIdx <= 2 && !fm.current.error) void loadFm();
@@ -2058,14 +2098,237 @@ export function App({
   };
 
   const openPlaylistPicker = track => {
-    if (!track || track.provider !== 'netease' || !capabilities.netease.editPlaylistTracks) return;
-    const w = workRef.current.netease;
-    if (w.identityUnknown || !w.profile?.userId) {
-      update('netease', { message: '请先登录网易云音乐' });
-      return;
-    }
+    if (!track || !['netease', 'qqmusic', 'local'].includes(track.provider)) return;
     setPickerError('');
     setPickerTrack(track);
+  };
+
+  const commitCustomPlaylists = next => {
+    customPlaylistsRef.current = next;
+    setCustomPlaylists(next);
+    saveCustomPlaylists(next);
+    return next;
+  };
+
+  const handleCreateCustomPlaylist = rawName => {
+    const res = createCustomPlaylist(customPlaylistsRef.current, rawName);
+    if (res.error) return res;
+    commitCustomPlaylists(res.playlists);
+    setActiveCustomPlaylistId(res.created.id);
+    setCustomPlaylistFilter('');
+    setCustomPlaylistNotice(`已创建本机歌单「${res.created.name}」`);
+    setRenamingCustomPlaylist(false);
+    setConfirmDeleteCustom(false);
+    if (view !== 'library') setView('library');
+    return res;
+  };
+
+  const handleOpenCustomPlaylist = playlistId => {
+    setActiveCustomPlaylistId(playlistId);
+    setCustomPlaylistFilter('');
+    setCustomPlaylistNotice('');
+    setRenamingCustomPlaylist(false);
+    setConfirmDeleteCustom(false);
+    if (view !== 'library') setView('library');
+  };
+
+  const handleRenameCustomPlaylist = rawName => {
+    if (!activeCustomPlaylistId) return { error: '未选中本机歌单' };
+    const res = renameCustomPlaylist(customPlaylistsRef.current, activeCustomPlaylistId, rawName);
+    if (res.error) {
+      setCustomPlaylistNotice(res.error);
+      return res;
+    }
+    commitCustomPlaylists(res.playlists);
+    if (mixedQueueRef.current?.playlistId === activeCustomPlaylistId) {
+      const nextMq = { ...mixedQueueRef.current, playlistName: res.renamed.name };
+      mixedQueueRef.current = nextMq;
+      setMixedQueue(nextMq);
+    }
+    setRenamingCustomPlaylist(false);
+    setCustomPlaylistNotice(`已重命名为「${res.renamed.name}」`);
+    return res;
+  };
+
+  const handleDeleteCustomPlaylist = playlistId => {
+    const target = customPlaylistsRef.current.find(p => p.id === playlistId);
+    const res = deleteCustomPlaylist(customPlaylistsRef.current, playlistId);
+    if (!res.deleted) return;
+    commitCustomPlaylists(res.playlists);
+    if (activeCustomPlaylistId === playlistId) {
+      setActiveCustomPlaylistId(null);
+      setConfirmDeleteCustom(false);
+      setCustomPlaylistNotice('');
+    } else if (target) {
+      setCustomPlaylistNotice(`已删除本机歌单「${target.name}」`);
+    }
+  };
+
+  const handleAddTrackToCustom = (playlistId, track) => {
+    const res = addTrackToCustomPlaylist(customPlaylistsRef.current, playlistId, track);
+    if (res.error) {
+      setPickerError(res.error);
+      return;
+    }
+    if (res.duplicate) {
+      setPickerError('该歌曲已在这个本机歌单中');
+      return;
+    }
+    commitCustomPlaylists(res.playlists);
+    const target = res.playlists.find(p => p.id === playlistId);
+    const note = target ? `已加入本机歌单「${target.name}」` : '已加入本机歌单';
+    if (activeCustomPlaylistId === playlistId) setCustomPlaylistNotice(note);
+    else update(activeRef.current, { message: note });
+    setPickerTrack(null);
+    setPickerError('');
+  };
+
+  const handleCreateAndAddCustom = (rawName, track) => {
+    const created = createCustomPlaylist(customPlaylistsRef.current, rawName);
+    if (created.error) return created;
+    const added = addTrackToCustomPlaylist(created.playlists, created.created.id, track);
+    if (added.error) return added;
+    commitCustomPlaylists(added.playlists);
+    const note = `已新建「${created.created.name}」并收入 1 首歌曲`;
+    update(activeRef.current, { message: note });
+    setPickerTrack(null);
+    setPickerError('');
+    return added;
+  };
+
+  const handleRemoveTrackFromCustom = (playlistId, track) => {
+    const key = track.customKey || customTrackKey(track);
+    if (!key) return;
+    const res = removeTrackFromCustomPlaylist(customPlaylistsRef.current, playlistId, key);
+    if (!res.removed) return;
+    commitCustomPlaylists(res.playlists);
+    setCustomPlaylistNotice(`已从本机歌单移出「${track.name}」`);
+  };
+
+  const handleExportCustomPlaylists = () => {
+    const json = exportCustomPlaylistsJson(customPlaylistsRef.current);
+    try {
+      const blob = new Blob([json], { type: 'application/json;charset=utf-8' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `vesper-playlists-${new Date().toISOString().slice(0, 10)}.json`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+      setCustomImportStatus('已导出本机跨源歌单 JSON 备份');
+      if (activeCustomPlaylistId) setCustomPlaylistNotice('已导出本机跨源歌单 JSON 备份');
+    } catch {
+      setCustomImportStatus('导出备份失败，请重试');
+    }
+  };
+
+  const handleImportCustomPlaylists = async file => {
+    if (!file) return;
+    try {
+      const text = await file.text();
+      const res = importCustomPlaylistsJson(text, customPlaylistsRef.current);
+      if (res.error) {
+        setCustomImportStatus(res.error);
+        if (activeCustomPlaylistId) setCustomPlaylistNotice(res.error);
+        return;
+      }
+      commitCustomPlaylists(res.playlists);
+      const summary =
+        res.addedPlaylists || res.addedTracks
+          ? `已导入 ${res.addedPlaylists} 个歌单、新增 ${res.addedTracks} 首曲目`
+          : '备份内曲目已全部存在，未产生重复新增';
+      setCustomImportStatus(summary);
+      if (activeCustomPlaylistId) setCustomPlaylistNotice(summary);
+    } catch {
+      setCustomImportStatus('无法读取所选备份文件');
+    }
+  };
+
+  const refreshAudioOutputDevices = async () => {
+    const res = await listAudioOutputDevices();
+    setAudioOutputDevices(res.devices);
+    return res;
+  };
+
+  const handleToggleSmoothFadeIn = nextEnabled => {
+    const savedPrefs = saveAudioPrefs({
+      ...audioPrefsRef.current,
+      smoothFadeIn: Boolean(nextEnabled),
+    });
+    audioPrefsRef.current = savedPrefs;
+    setAudioPrefs(savedPrefs);
+  };
+
+  const handleToggleAutoOpenStage = nextEnabled => {
+    const savedPrefs = saveAudioPrefs({
+      ...audioPrefsRef.current,
+      autoOpenStageOnPlay: Boolean(nextEnabled),
+    });
+    audioPrefsRef.current = savedPrefs;
+    setAudioPrefs(savedPrefs);
+  };
+
+  const handleSelectOutputDevice = async deviceId => {
+    setAudioOutputError('');
+    const result = await applyAudioOutputDevice(audio.current, deviceId);
+    if (!result.ok && !result.unsupported) {
+      setAudioOutputError(result.error);
+      return;
+    }
+    const savedPrefs = saveAudioPrefs({
+      ...audioPrefsRef.current,
+      outputDeviceId: deviceId || '',
+    });
+    audioPrefsRef.current = savedPrefs;
+    setAudioPrefs(savedPrefs);
+  };
+
+  useEffect(() => {
+    applyThemePrefsToDocument(themePrefs);
+    if (typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window) {
+      Promise.resolve(invoke('window_theme_sync', { theme: themePrefs.theme })).catch(() => {});
+    }
+  }, [themePrefs]);
+
+  const handleChangeTheme = themeId => {
+    setThemePrefs(prev => saveThemePrefs({ ...prev, theme: themeId }));
+  };
+
+  const handleChangeAmbient = ambientId => {
+    setThemePrefs(prev => saveThemePrefs({ ...prev, ambient: ambientId }));
+  };
+
+  const stopSmoothFade = ({ restoreVolume = true } = {}) => {
+    if (cancelFadeRef.current) {
+      const cancel = cancelFadeRef.current;
+      cancelFadeRef.current = null;
+      cancel();
+    }
+    if (fadeActiveRef.current) {
+      fadeActiveRef.current = false;
+      if (restoreVolume && audio.current) {
+        audio.current.volume = settings.current.volume;
+      }
+    }
+  };
+
+  const triggerSmoothFade = targetVol => {
+    stopSmoothFade({ restoreVolume: false });
+    if (!audioPrefsRef.current.smoothFadeIn || !audio.current || audio.current.muted) return;
+    fadeActiveRef.current = true;
+    const cancel = runSmoothFadeIn(audio.current, targetVol, true, 140);
+    cancelFadeRef.current = () => {
+      cancel();
+      fadeActiveRef.current = false;
+    };
+    setTimeout(() => {
+      if (cancelFadeRef.current) {
+        cancelFadeRef.current = null;
+        fadeActiveRef.current = false;
+      }
+    }, 180);
   };
 
   const addTrackToPlaylist = async playlist => {
@@ -2164,64 +2427,83 @@ export function App({
     }
   };
 
-  const play = async (s, queueSnapshot) => {
+  const play = async (s, queueSnapshot, { autoOpenStage = false } = {}) => {
+    stopSmoothFade({ restoreVolume: false });
     const id = s.provider;
     const w = workRef.current[id];
-    if (w.identityUnknown || s.accountId !== (w.profile?.userId || null)) {
+    const isMixed = queueSnapshot?.type === 'custom';
+    let targetSong = s;
+    if (isMixed) {
+      if (id === 'local') {
+        if (!canLocalLibrary) {
+          setCustomPlaylistNotice('当前环境不支持本地曲库播放');
+          return;
+        }
+        targetSong = { ...s, accountId: 'local' };
+      } else if (id === 'netease') {
+        if (w.identityUnknown) {
+          setCustomPlaylistNotice('网易云账号正在验证中，请稍后再试');
+          return;
+        }
+        targetSong = { ...s, accountId: w.profile?.userId || null };
+      } else if (id === 'qqmusic') {
+        if (w.identityUnknown || (platformFlavor.qqmusic !== 'mock' && !w.profile?.userId)) {
+          setCustomPlaylistNotice('此歌曲来自 QQ 音乐，请先登录 QQ 音乐后播放');
+          return;
+        }
+        targetSong = { ...s, accountId: w.profile?.userId || null };
+      }
+    } else if (w.identityUnknown || s.accountId !== (w.profile?.userId || null)) {
       update(id, { message: '账号已变化，请重新浏览歌曲' });
       return;
     }
     if (!capabilities[id].resolvePlayback) {
-      update(id, {
-        message:
-          id === 'qqmusic' && platformFlavor.qqmusic === 'mock'
-            ? 'QQ 音乐模拟模式不支持播放'
-            : 'QQ 音乐播放暂不可用',
-      });
+      const msg =
+        id === 'qqmusic' && platformFlavor.qqmusic === 'mock'
+          ? 'QQ 音乐模拟模式不支持播放'
+          : 'QQ 音乐播放暂不可用';
+      if (isMixed) setCustomPlaylistNotice(msg);
+      else update(id, { message: msg });
       return;
     }
     const snapshot =
-      queueSnapshot ||
-      (id === 'netease' && w.fmView
-        ? {
-            type: 'fm',
-            source: 'fm',
-            tracks: [...fm.current.tracks],
-            index: fm.current.tracks.findIndex(item => item.id === s.id),
-            provider: id,
-            accountId: s.accountId,
-          }
-        : {
-            source: w.trackOrigin || 'unknown',
-            tracks: [...w.songs],
-            index: w.songs.findIndex(
-              item =>
-                item.id === s.id && item.provider === s.provider && item.accountId === s.accountId
-            ),
-            provider: id,
-            accountId: s.accountId,
-          });
-    if (snapshot.type !== 'fm') fmAutoStartRef.current = null;
+      queueSnapshot || {
+        source: w.trackOrigin || 'unknown',
+        tracks: [...w.songs],
+        index: w.songs.findIndex(
+          item =>
+            item.id === targetSong.id &&
+            item.provider === targetSong.provider &&
+            item.accountId === targetSong.accountId
+        ),
+        provider: id,
+        accountId: targetSong.accountId,
+      };
+    if (snapshot.type !== 'fm') {
+      fmAutoStartRef.current = null;
+      setFmStageFocus(false);
+    }
     const token = playback.current.next();
     const generation = identity.current[id].current();
     pendingPlay.current = { provider: id, generation };
     const valid = () => playback.current.isCurrent(token) && identity.current[id].isCurrent(generation);
     let prior = rollbackRef.current;
     let trialBanner = '';
-    update(id, { message: '正在获取歌曲…' });
+    if (isMixed) setCustomPlaylistNotice(`正在准备播放「${targetSong.name}」…`);
+    else update(id, { message: '正在获取歌曲…' });
     try {
       const p = await getProvider(id);
       const skipResumedLyric =
         !!resumedLyric.current &&
-        resumedLyric.current.id === s.id &&
-        resumedLyric.current.provider === s.provider &&
-        String(resumedLyric.current.accountId ?? '') === String(s.accountId ?? '') &&
+        resumedLyric.current.id === targetSong.id &&
+        resumedLyric.current.provider === targetSong.provider &&
+        String(resumedLyric.current.accountId ?? '') === String(targetSong.accountId ?? '') &&
         lyricStatus === 'ready';
       resumedLyric.current = null;
       const lyricRequest = skipResumedLyric
         ? null
         : Promise.resolve()
-            .then(() => p.getLyrics(s.id))
+            .then(() => p.getLyrics(targetSong.id))
             .then(
               data => ({ data }),
               () => ({ failed: true })
@@ -2229,14 +2511,14 @@ export function App({
       const url =
         id === 'netease'
           ? await p.resolvePlayback(
-              s.id,
+              targetSong.id,
               capabilities[id].playbackQuality && qualityRef.current !== 'standard'
                 ? { level: qualityRef.current }
                 : undefined
             )
           : id === 'local'
-            ? await p.resolvePlayback(s.id)
-            : await p.resolvePlayback(s.id, s.mediaMid);
+            ? await p.resolvePlayback(targetSong.id)
+            : await p.resolvePlayback(targetSong.id, targetSong.mediaMid);
       if (!valid()) return;
       let streamUrl = '';
       let info = null;
@@ -2272,6 +2554,7 @@ export function App({
           position: audio.current.currentTime,
           wasPlaying: !audio.current.paused,
           previousQueue: workRef.current[previousSong.provider].queue,
+          previousMixedQueue: mixedQueueRef.current,
           targetProvider: id,
           targetQueue: workRef.current[id].queue,
           queuesBefore: {
@@ -2302,29 +2585,32 @@ export function App({
       if (audio.current && !audio.current.paused && audio.current.readyState >= 3) {
         sampleListening(audio.current);
       }
-      saveNow();
+      if (!isMixed || (songRef.current && !mixedQueueRef.current)) saveNow();
       listening.current.settle();
       if (diagnosticsOn.current) setLastDiagnostic(listening.current.diagnosticSnapshot());
       listening.current.start({
-        provider: s.provider,
-        accountId: s.accountId,
-        trackId: s.id,
+        provider: targetSong.provider,
+        accountId: targetSong.accountId,
+        trackId: targetSong.id,
         source: snapshot.source || 'unknown',
       });
-      const resume =
-        id === 'qqmusic' && qqSaved.current.resume?.id === s.id
+      const resume = isMixed
+        ? 0
+        : id === 'qqmusic' && qqSaved.current.resume?.id === targetSong.id
           ? qqSaved.current.resume.position
-          : id === 'local' && localSaved.current.resume?.id === s.id
+          : id === 'local' && localSaved.current.resume?.id === targetSong.id
             ? localSaved.current.resume.position
-            : saved.current.resume?.provider === id && saved.current.resume?.id === s.id
+            : saved.current.resume?.provider === id && saved.current.resume?.id === targetSong.id
               ? saved.current.resume.position
               : 0;
-      saved.current.resume = null;
-      qqSaved.current.resume = null;
-      localSaved.current.resume = null;
+      if (!isMixed) {
+        saved.current.resume = null;
+        qqSaved.current.resume = null;
+        localSaved.current.resume = null;
+      }
       const changeSource = songRef.current?.provider !== id;
-      songRef.current = s;
-      if (changeSource) {
+      songRef.current = targetSong;
+      if (changeSource && !isMixed) {
         const target = providerSettings.current[id];
         if (target) {
           settings.current = { ...target };
@@ -2337,32 +2623,43 @@ export function App({
           providerSettings.current[id] = { ...settings.current };
         }
       }
-      setSong(s);
+      setSong(targetSong);
       setTrackQuality(nextTrackQuality);
       if (!skipResumedLyric) {
         replaceLyrics([]);
         setLyricStatus('loading');
-        loadLyricsFor(s, valid, undefined, p, undefined, lyricRequest);
+        loadLyricsFor(targetSong, valid, undefined, p, undefined, lyricRequest);
       }
       diagnosticTick.current = null;
       setRestoredProgress(null);
-      update(id, { queue: snapshot });
-      if (prior) prior.stagedQueues[id] = snapshot;
-      if (id === 'netease') {
-        if (snapshot.type === 'fm') saved.current.fm = snapshot;
-        else saved.current.normal = snapshot;
-        saved.current.current = {
-          provider: 'netease',
-          kind: snapshot.type === 'fm' ? 'fm' : 'normal',
-          index: snapshot.index,
-          position: resume,
+      if (isMixed) {
+        const nextMixed = {
+          ...snapshot,
+          tracks: snapshot.tracks.map((item, idx) => (idx === snapshot.index ? targetSong : item)),
         };
-      } else if (id === 'local') {
-        localSaved.current.position = resume;
-        localSaved.current.cleared = false;
-      }
-      if (snapshot.type === 'fm' && snapshot.tracks.length - snapshot.index <= 2 && !fm.current.error) {
-        loadFm();
+        mixedQueueRef.current = nextMixed;
+        setMixedQueue(nextMixed);
+      } else {
+        mixedQueueRef.current = null;
+        setMixedQueue(null);
+        update(id, { queue: snapshot });
+        if (prior) prior.stagedQueues[id] = snapshot;
+        if (id === 'netease') {
+          if (snapshot.type === 'fm') saved.current.fm = snapshot;
+          else saved.current.normal = snapshot;
+          saved.current.current = {
+            provider: 'netease',
+            kind: snapshot.type === 'fm' ? 'fm' : 'normal',
+            index: snapshot.index,
+            position: resume,
+          };
+        } else if (id === 'local') {
+          localSaved.current.position = resume;
+          localSaved.current.cleared = false;
+        }
+        if (snapshot.type === 'fm' && snapshot.tracks.length - snapshot.index <= 2 && !fm.current.error) {
+          loadFm();
+        }
       }
       audio.current.src = streamUrl;
       syncLyric(resume);
@@ -2372,7 +2669,7 @@ export function App({
         target.addEventListener(
           'loadedmetadata',
           () => {
-            if (valid() && songRef.current === s) {
+            if (valid() && songRef.current === targetSong) {
               try {
                 target.currentTime = Math.min(
                   resume,
@@ -2386,20 +2683,28 @@ export function App({
           { once: true }
         );
       }
+      triggerSmoothFade(settings.current.volume);
       await audio.current.play();
-      scheduleSave(true);
+      if (!isMixed) scheduleSave(true);
       if (valid()) {
         rollbackRef.current = null;
-        update(id, { message: trialBanner });
+        if (isMixed) setCustomPlaylistNotice(trialBanner);
+        else update(id, { message: trialBanner });
+        if (autoOpenStage && audioPrefsRef.current.autoOpenStageOnPlay !== false) {
+          setView('stage');
+        }
       }
     } catch (e) {
+      stopSmoothFade();
       if (valid()) {
         if (isPlayInterruptedError(e)) {
           rollbackRef.current = null;
           setBuffering(false);
           setPlaying(false);
           const curMsg = workRef.current[id].message;
-          if (trialBanner || curMsg === '正在获取歌曲…') {
+          if (isMixed) {
+            setCustomPlaylistNotice(trialBanner);
+          } else if (trialBanner || curMsg === '正在获取歌曲…') {
             update(id, { message: trialBanner });
           }
           return;
@@ -2424,7 +2729,8 @@ export function App({
             } catch {
               if (valid()) {
                 rollbackRef.current = null;
-                update(id, { message: '上一首音频会话已失效，请手动重试' });
+                if (isMixed) setCustomPlaylistNotice('上一首音频会话已失效，请手动重试');
+                else update(id, { message: '上一首音频会话已失效，请手动重试' });
               }
               return;
             }
@@ -2446,6 +2752,8 @@ export function App({
           setMuted(prior.settings.muted);
           audio.current.volume = prior.settings.volume;
           audio.current.muted = prior.settings.muted;
+          mixedQueueRef.current = prior.previousMixedQueue ?? null;
+          setMixedQueue(prior.previousMixedQueue ?? null);
           saved.current.normal = prior.normal;
           saved.current.fm = prior.fm;
           saved.current.current = prior.current;
@@ -2465,7 +2773,8 @@ export function App({
               update(provider, { queue: prior.queuesBefore[provider] });
             }
           }
-          update(id, { message: '新歌曲播放失败，已尝试恢复上一首' });
+          if (isMixed) setCustomPlaylistNotice('新歌曲播放失败，已尝试恢复上一首');
+          else update(id, { message: '新歌曲播放失败，已尝试恢复上一首' });
           replaceLyrics(prior.lyrics);
           setLyricStatus(prior.lyricStatus);
           setRestoredProgress(prior.restoredProgress);
@@ -2502,9 +2811,11 @@ export function App({
             target.removeAttribute('src');
             target.load();
           }
-          scheduleSave(true);
+          if (!prior.previousMixedQueue) scheduleSave(true);
         } else {
-          update(id, { message: '播放失败：' + errorText(e) });
+          const failMsg = '播放失败：' + errorText(e);
+          if (isMixed) setCustomPlaylistNotice(failMsg);
+          else update(id, { message: failMsg });
         }
       }
     } finally {
@@ -2516,6 +2827,21 @@ export function App({
   const skipTrack = delta => {
     const current = songRef.current;
     if (!current) return;
+    const mq = mixedQueueRef.current;
+    if (
+      mq &&
+      mq.tracks[mq.index]?.provider === current.provider &&
+      mq.tracks[mq.index]?.id === current.id
+    ) {
+      const idx = manualIndex(settings.current.mode, mq.index, mq.tracks.length, delta);
+      if (idx >= 0 && idx < mq.tracks.length) {
+        const nextTrack = hydrateCustomTrack(mq.tracks[idx], workRef.current);
+        void play(nextTrack, { ...mq, index: idx });
+      } else {
+        setCustomPlaylistNotice(delta > 0 ? '暂无下一首' : '暂无上一首');
+      }
+      return;
+    }
     const queue = workRef.current[current.provider].queue;
     if (
       !queue ||
@@ -2538,20 +2864,23 @@ export function App({
     const current = songRef.current;
     if (!current) return;
     if (!audio.current.paused) {
+      stopSmoothFade();
       audio.current.pause();
       return;
     }
     if (
-      (saved.current.resume && current.provider === 'netease') ||
-      (qqSaved.current.resume && current.provider === 'qqmusic') ||
-      (localSaved.current.resume && current.provider === 'local') ||
+      !mixedQueueRef.current &&
+      ((saved.current.resume && current.provider === 'netease') ||
+        (qqSaved.current.resume && current.provider === 'qqmusic') ||
+        (localSaved.current.resume && current.provider === 'local')) ||
       !audio.current.getAttribute('src')
     ) {
       if (pendingPlay.current) return;
-      const q = workRef.current[current.provider].queue;
+      const q = mixedQueueRef.current || workRef.current[current.provider].queue;
       if (q) play(current, q);
       return;
     }
+    triggerSmoothFade(settings.current.volume);
     audio.current
       .play()
       .then(() => {
@@ -2563,6 +2892,7 @@ export function App({
         }
       })
       .catch(e => {
+        stopSmoothFade();
         if (songRef.current !== current) return;
         if (isPlayInterruptedError(e)) {
           setBuffering(false);
@@ -2575,6 +2905,7 @@ export function App({
   const adjustVolume = delta => {
     const a = audio.current;
     if (!a) return;
+    stopSmoothFade({ restoreVolume: false });
     const next = Math.min(1, Math.max(0, Math.round((a.volume + delta) * 100) / 100));
     a.volume = next;
     if (delta > 0 && a.muted) a.muted = false;
@@ -2909,6 +3240,47 @@ export function App({
     scheduleSave(true);
   };
 
+  const editMixedQueue = (removeIndex, clear = false) => {
+    const mq = mixedQueueRef.current;
+    if (!mq) return;
+    if (pendingPlay.current) {
+      setCustomPlaylistNotice('歌曲切换中，请稍后修改队列');
+      return;
+    }
+    rollbackRef.current = null;
+    const current = songRef.current;
+    const removesCurrent =
+      clear ||
+      (current &&
+        mq.tracks[removeIndex]?.provider === current.provider &&
+        mq.tracks[removeIndex]?.id === current.id &&
+        mq.index === removeIndex);
+    const tracks = clear ? [] : mq.tracks.filter((_, index) => index !== removeIndex);
+    let next = null;
+    if (tracks.length) {
+      const index = clear ? 0 : Math.min(mq.index - (removeIndex < mq.index ? 1 : 0), tracks.length - 1);
+      next = { ...mq, tracks, index };
+    }
+    if (removesCurrent) {
+      stopSmoothFade();
+      listening.current.settle();
+      listening.current.clear();
+      audio.current.pause();
+      audio.current.removeAttribute('src');
+      audio.current.load();
+      songRef.current = null;
+      setSong(null);
+      setTrackQuality(null);
+      setPlaying(false);
+      replaceLyrics([]);
+      setLyricStatus('idle');
+      setRestoredProgress(null);
+    }
+    mixedQueueRef.current = next;
+    setMixedQueue(next);
+    setConfirmClear(false);
+  };
+
   const closeQr = () => {
     const id = qr?.provider || 'netease';
     qrRequest.current.next();
@@ -3104,6 +3476,22 @@ export function App({
     };
   }, [canAppUpdater]);
 
+  // 音频输出设备初始化与清理淡入
+  useEffect(() => {
+    const el = audio.current;
+    const supported = supportsAudioOutputSelection(el);
+    setAudioOutputSupported(supported);
+    if (supported) {
+      void listAudioOutputDevices().then(res => setAudioOutputDevices(res.devices));
+      if (audioPrefsRef.current.outputDeviceId) {
+        void applyAudioOutputDevice(el, audioPrefsRef.current.outputDeviceId);
+      }
+    }
+    return () => {
+      stopSmoothFade({ restoreVolume: false });
+    };
+  }, []);
+
   useEffect(() => {
     if (!closeDialog) return;
     const previous = document.activeElement;
@@ -3295,6 +3683,22 @@ export function App({
       if (unlistenProgress) unlistenProgress();
     };
   }, [canAppUpdater]);
+
+  // 音频输出设备初始化与清理淡入
+  useEffect(() => {
+    const el = audio.current;
+    const supported = supportsAudioOutputSelection(el);
+    setAudioOutputSupported(supported);
+    if (supported) {
+      void listAudioOutputDevices().then(res => setAudioOutputDevices(res.devices));
+      if (audioPrefsRef.current.outputDeviceId) {
+        void applyAudioOutputDevice(el, audioPrefsRef.current.outputDeviceId);
+      }
+    }
+    return () => {
+      stopSmoothFade({ restoreVolume: false });
+    };
+  }, []);
 
   // 事件驱动推送桌面悬浮歌词：仅在桌面歌词开启且当前行、歌名、播放态、倍速或手动拖动变化时触发
   useEffect(() => {
@@ -3540,16 +3944,10 @@ export function App({
         } else if (confirmRecent) {
           setConfirmRecent(false);
           e.preventDefault();
-        } else if (showMore) {
-          setShowMore(false);
-          e.preventDefault();
-        } else if (showLyrics) {
-          setShowLyrics(false);
-          e.preventDefault();
         } else if (showNowDetails && view === 'library') {
           setShowNowDetails(false);
           e.preventDefault();
-        } else if (view === 'stage') {
+        } else if (view === 'stage' || view === 'settings') {
           setView('library');
           e.preventDefault();
         }
@@ -3562,9 +3960,8 @@ export function App({
       );
       if (e.ctrlKey && !e.altKey && !e.metaKey && e.key.toLowerCase() === 'l') {
         e.preventDefault();
-        if (view === 'stage') {
+        if (view !== 'library') {
           setView('library');
-          setShowLyrics(false);
           setTimeout(() => searchInput.current?.focus(), 0);
         } else searchInput.current?.focus();
         return;
@@ -3582,7 +3979,6 @@ export function App({
           pickerTrack ||
           qr ||
           qqWebOpen ||
-          showLyrics ||
           confirmRecent ||
           closeDialog
         )
@@ -3751,7 +4147,36 @@ export function App({
     }));
   })();
 
-  const playingQueue = song ? workspaces[song.provider]?.queue : ws.queue;
+  const playingQueue = mixedQueue || (song ? workspaces[song.provider]?.queue : ws.queue);
+  const activeCustomPlaylist = activeCustomPlaylistId
+    ? customPlaylists.find(p => p.id === activeCustomPlaylistId) || null
+    : null;
+  const customFilteredSongs = activeCustomPlaylist
+    ? filterCustomPlaylistTracks(activeCustomPlaylist.tracks, customPlaylistFilter).map(t =>
+        hydrateCustomTrack(t, workRef.current)
+      )
+    : [];
+  const customSourceCounts = activeCustomPlaylist
+    ? summarizeCustomPlaylistSources(activeCustomPlaylist.tracks)
+    : null;
+  const customTotalTracks = customPlaylists.reduce((sum, pl) => sum + pl.tracks.length, 0);
+  const playCustomTrack = (track, list = customFilteredSongs) => {
+    if (!activeCustomPlaylist || !list.length) return;
+    const idx = list.findIndex(t => t.provider === track.provider && t.id === track.id);
+    if (idx < 0) return;
+    void play(
+      list[idx],
+      {
+        type: 'custom',
+        source: 'custom-playlist',
+        playlistId: activeCustomPlaylist.id,
+        playlistName: activeCustomPlaylist.name,
+        tracks: list,
+        index: idx,
+      },
+      { autoOpenStage: true }
+    );
+  };
 
   const cycleMode = () => {
     const all =
@@ -3771,12 +4196,16 @@ export function App({
     <div
       className="app"
       data-skin="night-radio"
+      data-theme={themePrefs.theme}
+      data-ambient={themePrefs.ambient}
       data-view={view}
       data-details={showNowDetails ? 'open' : 'closed'}
       data-playing={playing ? 'true' : 'false'}
       style={{ '--lw-accent': accentFor(song) }}
     >
       <div className="nr-ambient-layer" aria-hidden="true">
+        <span className="nr-ambient-grid" />
+        <span className="nr-orb is-tide" />
         <span className="nr-orb is-warm" />
         <span className="nr-orb is-cool" />
       </div>
@@ -3786,9 +4215,7 @@ export function App({
         canLocalLibrary={canLocalLibrary}
         isListLoading={isListLoading}
         view={view}
-        showLyrics={showLyrics}
         setView={setView}
-        setShowLyrics={setShowLyrics}
         activeProvider={activeProvider}
         switchProvider={switchProvider}
         songs={songs}
@@ -3803,7 +4230,13 @@ export function App({
         restore={restore}
         login={login}
         logout={logout}
+        updateAttention={updateAttention}
+        updateHint={updateSummary?.hint || ''}
         onHome={() => {
+          setActiveCustomPlaylistId(null);
+          setRenamingCustomPlaylist(false);
+          setConfirmDeleteCustom(false);
+          if (view !== 'library') setView('library');
           if (activeProvider === 'local') {
             selectLocalFolder(null);
             applyLocalView(localTracksRef.current, null, '');
@@ -3817,7 +4250,6 @@ export function App({
             searchItems: [],
             searchTotal: null,
             recommendLists: null,
-            fmView: false,
             trackOrigin: 'unknown',
             page: 0,
             searchQuery: '',
@@ -3846,6 +4278,7 @@ export function App({
         openList={openList}
         listStatus={listStatus}
         ws={ws}
+        isFmPlaying={Boolean(song?.provider === 'netease' && playingQueue?.type === 'fm')}
         onMore={() =>
           loadLists('qqmusic', account.current.qqmusic.current(), ws.listPage + 1, true)
         }
@@ -3858,6 +4291,10 @@ export function App({
         onPickLocalFolder={pickLocalFolder}
         onRemoveLocalFolder={removeLocalFolder}
         onScanLocalLibrary={scanLocalLibrary}
+        customPlaylists={customPlaylists}
+        activeCustomPlaylistId={activeCustomPlaylistId}
+        onOpenCustomPlaylist={handleOpenCustomPlaylist}
+        onCreateCustomPlaylist={handleCreateCustomPlaylist}
       />
 
       <main className="lw-library" hidden={view !== 'library'}>
@@ -3869,10 +4306,11 @@ export function App({
             buffering={buffering}
             activeProvider={activeProvider}
             ws={ws}
+            mixedQueue={mixedQueue}
             lwPreview={lwPreview}
             lyricStatus={lyricStatus}
-            showLyrics={showLyrics}
-            setShowLyrics={setShowLyrics}
+            showLyrics={view === 'stage'}
+            setShowLyrics={next => setView(next ? 'stage' : 'library')}
             setShowNowDetails={setShowNowDetails}
             setView={setView}
             setShowQueue={setShowQueue}
@@ -3883,63 +4321,270 @@ export function App({
           />
 
           <section className="content">
-            <div className="section-label">
-              <span>音乐库</span>
-              <span>
-                {ws.fmView
-                  ? '私人电台流'
-                  : songs.length
-                    ? `当前页 ${songs.length} 首`
-                    : '搜索与收藏'}
-              </span>
-            </div>
-
-            {songs.length > 0 && message && !['搜索歌曲，开始聆听', '歌单为空'].includes(message) && (
-              <InlineNotice tone={messageRole === 'alert' ? 'err' : 'ok'} role={messageRole}>
-                {message}
-              </InlineNotice>
-            )}
-
-            <div className="heading">
-              <div>
-                <h1>{title}</h1>
-                {songs.length > 0 && !(activeProvider === 'netease' && ws.fmView) && (
-                  <p>
-                    {capabilities[activeProvider].resolvePlayback
-                      ? activeProvider === 'netease'
-                        ? '双击歌曲播放 · 切换平台不打断播放'
-                        : '单击歌曲播放'
-                      : '搜索结果仅供浏览'}
-                  </p>
-                )}
-              </div>
-
-              {ws.trackOrigin === 'playlist' && ws.playlistMeta && (
-                <div className="playlist-meta">
-                  <PlaylistCover
-                    className="playlist-detail-cover"
-                    url={ws.playlistMeta.coverImgUrl}
-                  />
+            {activeCustomPlaylist ? (
+              <>
+                <div className="section-label">
+                  <span>本机跨源歌单</span>
                   <span>
-                    {ws.playlistMeta.creator ? `创建者：${ws.playlistMeta.creator}` : '创建者未知'}{' '}
-                    · {ws.playlistMeta.total ?? '未知'} 首
+                    {`共 ${activeCustomPlaylist.tracks.length} 首 · 网易云 ${customSourceCounts.netease} · QQ ${customSourceCounts.qqmusic} · 本地 ${customSourceCounts.local}`}
                   </span>
                 </div>
-              )}
 
-              {songs.length > 0 &&
-                !(activeProvider === 'netease' && ws.fmView) &&
-                capabilities[activeProvider].resolvePlayback && (
-                  <button
-                    type="button"
-                    className="primary"
-                    aria-label="播放第一首"
-                    onClick={() => play(songs[0])}
+                {customPlaylistNotice && (
+                  <InlineNotice
+                    tone={/失败|无法|请先|不支持|重名|已存在/.test(customPlaylistNotice) ? 'err' : 'ok'}
+                    role={/失败|无法|请先|不支持|重名|已存在/.test(customPlaylistNotice) ? 'alert' : 'status'}
                   >
-                    ▶ <span>播放第一首</span>
-                  </button>
+                    {customPlaylistNotice}
+                  </InlineNotice>
                 )}
-            </div>
+
+                <div className="heading">
+                  <div>
+                    <h1>{activeCustomPlaylist.name}</h1>
+                    <p>保存在本机，可混搭网易云 / QQ 音乐 / 本地曲目连播，绝不回写原平台接口</p>
+                  </div>
+
+                  {customFilteredSongs.length > 0 && (
+                    <button
+                      type="button"
+                      className="primary"
+                      aria-label="播放本机歌单第一首"
+                      onClick={() => playCustomTrack(customFilteredSongs[0], customFilteredSongs)}
+                    >
+                      ▶ <span>播放全部</span>
+                    </button>
+                  )}
+                </div>
+
+                <div className="nr-custom-hero-bar">
+                  <input
+                    type="search"
+                    className="nr-custom-filter-input"
+                    value={customPlaylistFilter}
+                    placeholder="在本机歌单内筛选歌名、歌手、来源…"
+                    aria-label="筛选本机歌单曲目"
+                    onChange={e => setCustomPlaylistFilter(e.target.value)}
+                  />
+                  <div className="nr-custom-toolbar-actions">
+                    <button
+                      type="button"
+                      className="nr-soft-btn"
+                      onClick={() => {
+                        setRenamingCustomPlaylist(v => !v);
+                        setRenameCustomDraft(activeCustomPlaylist.name);
+                      }}
+                    >
+                      重命名
+                    </button>
+                    <button type="button" className="nr-soft-btn" onClick={handleExportCustomPlaylists}>
+                      导出备份
+                    </button>
+                    {!confirmDeleteCustom ? (
+                      <button
+                        type="button"
+                        className="nr-danger-btn"
+                        onClick={() => setConfirmDeleteCustom(true)}
+                      >
+                        删除歌单
+                      </button>
+                    ) : (
+                      <>
+                        <button
+                          type="button"
+                          className="nr-danger-btn"
+                          onClick={() => handleDeleteCustomPlaylist(activeCustomPlaylist.id)}
+                        >
+                          确认删除
+                        </button>
+                        <button
+                          type="button"
+                          className="nr-soft-btn"
+                          onClick={() => setConfirmDeleteCustom(false)}
+                        >
+                          取消
+                        </button>
+                      </>
+                    )}
+                  </div>
+                </div>
+
+                {renamingCustomPlaylist && (
+                  <form
+                    className="nr-custom-rename-form"
+                    onSubmit={e => {
+                      e.preventDefault();
+                      handleRenameCustomPlaylist(renameCustomDraft);
+                    }}
+                  >
+                    <input
+                      type="text"
+                      className="nr-custom-side-input"
+                      maxLength={40}
+                      value={renameCustomDraft}
+                      aria-label="新歌单名称"
+                      onChange={e => setRenameCustomDraft(e.target.value)}
+                    />
+                    <button type="submit" className="nr-primary-btn nr-custom-side-submit">
+                      保存名称
+                    </button>
+                    <button
+                      type="button"
+                      className="nr-soft-btn"
+                      onClick={() => setRenamingCustomPlaylist(false)}
+                    >
+                      取消
+                    </button>
+                  </form>
+                )}
+
+                {customFilteredSongs.length > 0 ? (
+                  <SongList
+                    songs={customFilteredSongs}
+                    ws={ws}
+                    activeProvider={activeProvider}
+                    song={song}
+                    selectedTrack={selectedTrack}
+                    playing={playing}
+                    buffering={buffering}
+                    play={t => playCustomTrack(t, customFilteredSongs)}
+                    setSelectedTrack={setSelectedTrack}
+                    neteaseSignedIn={neteaseSignedIn}
+                    canLike={false}
+                    canCollect={false}
+                    canCollectCustom={true}
+                    canRemoveFromPlaylist={false}
+                    canRemoveCustom={true}
+                    showSourceTag={true}
+                    likedIds={likedIds}
+                    likedBusyIds={likedBusyIds}
+                    removingTrackKey={removingTrackKey}
+                    onToggleLike={toggleLike}
+                    onOpenPlaylistPicker={openPlaylistPicker}
+                    onRemoveFromCustom={t => handleRemoveTrackFromCustom(activeCustomPlaylist.id, t)}
+                  />
+                ) : (
+                  <div className="empty">
+                    <h2>{activeCustomPlaylist.tracks.length ? '没有匹配的歌曲' : '歌单还是空的'}</h2>
+                    <p>
+                      {activeCustomPlaylist.tracks.length
+                        ? '换个关键词或清空筛选条件试试。'
+                        : '在网易云、QQ 音乐或本地曲库任意歌曲右侧点击「+」，即可混搭加入此歌单。'}
+                    </p>
+                  </div>
+                )}
+              </>
+            ) : (
+              <>
+                <div className="section-label">
+                  <span>音乐库</span>
+                  <span>{songs.length ? `当前页 ${songs.length} 首` : '搜索与收藏'}</span>
+                </div>
+
+                {songs.length > 0 && message && !['搜索歌曲，开始聆听', '歌单为空'].includes(message) && (
+                  <InlineNotice tone={messageRole === 'alert' ? 'err' : 'ok'} role={messageRole}>
+                    {message}
+                  </InlineNotice>
+                )}
+
+                <div className="heading">
+                  <div>
+                    <h1>{title}</h1>
+                    {songs.length > 0 && (
+                      <p>
+                        {capabilities[activeProvider].resolvePlayback
+                          ? activeProvider === 'netease'
+                            ? '双击歌曲播放 · 切换平台不打断播放'
+                            : '单击歌曲播放'
+                          : '搜索结果仅供浏览'}
+                      </p>
+                    )}
+                  </div>
+
+                  {ws.trackOrigin === 'playlist' && ws.playlistMeta && (
+                    <div className="playlist-meta">
+                      <PlaylistCover
+                        className="playlist-detail-cover"
+                        url={ws.playlistMeta.coverImgUrl}
+                      />
+                      <span>
+                        {ws.playlistMeta.creator ? `创建者：${ws.playlistMeta.creator}` : '创建者未知'}{' '}
+                        · {ws.playlistMeta.total ?? '未知'} 首
+                      </span>
+                    </div>
+                  )}
+
+                  {songs.length > 0 && capabilities[activeProvider].resolvePlayback && (
+                    <button
+                      type="button"
+                      className="primary"
+                      aria-label="播放第一首"
+                      onClick={() => play(songs[0], undefined, { autoOpenStage: true })}
+                    >
+                      ▶ <span>播放第一首</span>
+                    </button>
+                  )}
+                </div>
+
+                {activeProvider === 'netease' &&
+                  profile &&
+                  !identityUnknown &&
+                  (ws.trackOrigin === 'recommendation' ||
+                    ['每日推荐', '推荐新歌', '为你推荐的歌单', '推荐歌单'].includes(title)) && (
+                    <div className="nr-discover-tabs" role="tablist" aria-label="发现音乐分类">
+                      {[
+                        { id: 'daily', label: '每日推荐' },
+                        { id: 'newsong', label: '推荐新歌' },
+                        { id: 'resources', label: '为你推荐的歌单' },
+                        { id: 'playlists', label: '推荐歌单' },
+                      ].map(tab => (
+                        <button
+                          key={tab.id}
+                          type="button"
+                          role="tab"
+                          aria-selected={title === tab.label}
+                          className={'nr-discover-tab' + (title === tab.label ? ' is-active' : '')}
+                          onClick={() => recommend(tab.id)}
+                        >
+                          {tab.label}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+
+                {activeProvider === 'qqmusic' &&
+                  profile &&
+                  !identityUnknown &&
+                  platformFlavor.qqmusic !== 'mock' &&
+                  (ws.trackOrigin === 'recommendation' ||
+                    ['推荐新歌', '推荐歌单'].includes(title)) && (
+                    <div className="nr-discover-tabs" role="tablist" aria-label="QQ 发现分类">
+                      {capabilities?.qqmusic?.getRecommendations &&
+                        recommendationCapabilities?.qqmusic?.newsong && (
+                          <button
+                            type="button"
+                            role="tab"
+                            aria-selected={title === '推荐新歌'}
+                            className={'nr-discover-tab' + (title === '推荐新歌' ? ' is-active' : '')}
+                            onClick={() => recommend('newsong')}
+                          >
+                            推荐新歌
+                          </button>
+                        )}
+                      {capabilities?.qqmusic?.getRecommendations &&
+                        recommendationCapabilities?.qqmusic?.playlists && (
+                          <button
+                            type="button"
+                            role="tab"
+                            aria-selected={title === '推荐歌单'}
+                            className={'nr-discover-tab' + (title === '推荐歌单' ? ' is-active' : '')}
+                            onClick={() => recommend('playlists')}
+                          >
+                            推荐歌单
+                          </button>
+                        )}
+                    </div>
+                  )}
 
             {activeProvider === 'netease' && ws.trackOrigin === 'recent' && (
               <div className="recent-controls">
@@ -4019,39 +4664,6 @@ export function App({
                 onOpenPlaylist={list => openList(list)}
                 onSearchKeyword={term => search(null, 1, term, 1)}
               />
-            ) : activeProvider === 'netease' && ws.fmView ? (
-              <div className="nr-fm-card" role="region" aria-label="私人 FM 沉浸电台">
-                <span className="nr-fm-card-kicker">ON AIR · 私人电台</span>
-                <h2>
-                  {song?.provider === 'netease' && playingQueue?.type === 'fm'
-                    ? song.name
-                    : '私人 FM 正在调频'}
-                </h2>
-                <p>
-                  {fm.current.error ||
-                    (song?.provider === 'netease' && playingQueue?.type === 'fm'
-                      ? `${artist(song)} · 专注电台播放中，无需翻找完整歌单`
-                      : message || '私人 FM 会自动起播并直接跳转歌词界面')}
-                </p>
-                <div className="nr-fm-card-actions">
-                  <button
-                    type="button"
-                    className="nr-primary-btn"
-                    onClick={() => {
-                      setShowMore(false);
-                      setView('stage');
-                      setShowLyrics(true);
-                    }}
-                  >
-                    进入歌词舞台
-                  </button>
-                  {fm.current.error && (
-                    <button type="button" className="nr-soft-btn" onClick={retryFm}>
-                      重试私人 FM
-                    </button>
-                  )}
-                </div>
-              </div>
             ) : songs.length ? (
               <SongList
                 songs={songs}
@@ -4061,11 +4673,12 @@ export function App({
                 selectedTrack={selectedTrack}
                 playing={playing}
                 buffering={buffering}
-                play={play}
+                play={s => play(s, undefined, { autoOpenStage: true })}
                 setSelectedTrack={setSelectedTrack}
                 neteaseSignedIn={neteaseSignedIn}
                 canLike={!!capabilities.netease.likeTrack}
                 canCollect={!!capabilities.netease.editPlaylistTracks && ownedPlaylists.length > 0}
+                canCollectCustom={true}
                 canRemoveFromPlaylist={canRemoveFromPlaylist}
                 likedIds={likedIds}
                 likedBusyIds={likedBusyIds}
@@ -4226,9 +4839,108 @@ export function App({
                 </button>
               </div>
             )}
+              </>
+            )}
           </section>
         </div>
       </main>
+
+      {view === 'settings' && (
+        <SettingsPage
+          activeSection={settingsSection}
+          onSelectSection={setSettingsSection}
+          onBackToLibrary={() => setView('library')}
+          themePrefs={themePrefs}
+          onChangeTheme={handleChangeTheme}
+          onChangeAmbient={handleChangeAmbient}
+          closeMode={closeMode}
+          closeBusy={closeBusy}
+          trayAvailable={trayAvailable}
+          closeError={closeError}
+          onChooseCloseMode={canChooseCloseBehavior ? nextMode => {
+            if (closeBusy) return;
+            setCloseBusy(true);
+            setCloseError('');
+            invoke('close_behavior_set', { mode: nextMode, closeNow: false })
+              .then(() => setCloseMode(nextMode))
+              .catch(e => setCloseError(e?.message || '无法保存关闭设置，请重试'))
+              .finally(() => setCloseBusy(false));
+          } : null}
+          customPlaylistCount={customPlaylists.length}
+          customTrackCount={customTotalTracks}
+          onExportCustomPlaylists={handleExportCustomPlaylists}
+          onImportCustomPlaylists={handleImportCustomPlaylists}
+          customImportStatus={customImportStatus}
+          playbackRate={playbackRate}
+          onChangeRate={changePlaybackRate}
+          sleepMode={sleepMode}
+          onSelectSleep={selectSleepMode}
+          canSelectQuality={!!capabilities.netease.playbackQuality}
+          neteaseQuality={neteaseQuality}
+          onChangeQuality={changeNeteaseQuality}
+          song={song}
+          trackQuality={trackQuality}
+          onReloadWithQuality={() => {
+            if (song?.provider === 'netease' && playingQueue) {
+              play(song, playingQueue);
+            }
+          }}
+          audioPrefs={audioPrefs}
+          onToggleSmoothFadeIn={handleToggleSmoothFadeIn}
+          onToggleAutoOpenStage={handleToggleAutoOpenStage}
+          audioOutputSupported={audioOutputSupported}
+          audioOutputDevices={audioOutputDevices}
+          audioOutputError={audioOutputError}
+          onSelectOutputDevice={handleSelectOutputDevice}
+          onRefreshOutputDevices={refreshAudioOutputDevices}
+          canDesktopLyric={canDesktopLyric}
+          desktopLyric={desktopLyric}
+          desktopLyricBusy={desktopLyricBusy}
+          desktopLyricError={desktopLyricError}
+          onToggleDesktopLyric={toggleDesktopLyric}
+          onToggleDesktopLyricLock={toggleDesktopLyricLock}
+          onUpdateDesktopLyricStyle={updateDesktopLyricStyle}
+          canGlobalShortcuts={canGlobalShortcuts}
+          globalShortcuts={globalShortcuts}
+          shortcutsBusy={shortcutsBusy}
+          shortcutsError={shortcutsError}
+          onToggleShortcutsEnabled={(nextEnabled, bindings) => {
+            void updateGlobalShortcuts({ enabled: nextEnabled, bindings });
+          }}
+          onSaveShortcutBindings={bindings => {
+            void updateGlobalShortcuts({ enabled: globalShortcuts.enabled, bindings });
+          }}
+          canAppUpdater={canAppUpdater}
+          updateConfig={updateConfig}
+          updateState={updateState}
+          updateSummary={updateSummary}
+          updaterBusy={updaterBusy}
+          onCheckUpdate={() => {
+            void runUpdateCheck({ silent: false });
+          }}
+          onDownloadUpdate={() => {
+            void startUpdateDownload();
+          }}
+          onInstallUpdate={() => {
+            void installDownloadedUpdate();
+          }}
+          onSkipUpdateVersion={version => {
+            void handleSkipUpdateVersion(version);
+          }}
+          onChangeUpdateSource={nextSource => {
+            void handleChangeUpdateSource(nextSource);
+          }}
+          onSaveMirror={nextMirror => {
+            void handleSaveCustomMirror(nextMirror);
+          }}
+          onToggleAutoCheck={nextAutoCheck => {
+            void handleToggleAutoCheck(nextAutoCheck);
+          }}
+          onSwitchSourceAndRetry={nextSource => {
+            void handleSwitchSourceAndRetry(nextSource);
+          }}
+        />
+      )}
 
       {view === 'stage' && (
         <RadioStage
@@ -4238,82 +4950,47 @@ export function App({
           pending={!!pendingPlay.current}
           activeProvider={activeProvider}
           playingQueue={playingQueue}
-          showLyrics={showLyrics}
-          setShowLyrics={setShowLyrics}
-          stagePreview={stagePreview}
-          lyricStatus={lyricStatus}
+          lyricSlot={
+            <LyricPanel
+              stage
+              embedded
+              lyrics={lyrics}
+              index={lyricIndex}
+              status={lyricStatus}
+              onSeek={at => {
+                if (
+                  audio.current &&
+                  !saved.current.resume &&
+                  !qqSaved.current.resume &&
+                  !localSaved.current.resume
+                ) {
+                  audio.current.currentTime = at;
+                  syncLyric(at);
+                  scheduleSave();
+                }
+              }}
+            />
+          }
           togglePlayback={togglePlayback}
           play={play}
           trackQuality={trackQuality}
           neteaseSignedIn={neteaseSignedIn}
           canLike={!!capabilities.netease.likeTrack}
-          canCollect={!!capabilities.netease.editPlaylistTracks && ownedPlaylists.length > 0}
+          canCollect={Boolean(song)}
           canTrashFm={!!capabilities.netease.trashFmTrack && playingQueue?.type === 'fm'}
           isLiked={song?.provider === 'netease' && likedIds.has(Number(song.id))}
           likeBusy={song?.provider === 'netease' && likedBusyIds.has(Number(song.id))}
           fmTrashBusy={fmTrashBusy}
           fmError={
-            activeProvider === 'netease' || song?.provider === 'netease' ? fm.current.error : ''
+            activeProvider === 'netease' || song?.provider === 'netease' || fmStageFocus ? fmError : ''
           }
+          fmStageFocus={fmStageFocus}
           onRetryFm={retryFm}
           onToggleLike={() => toggleLike(song)}
           onOpenPlaylistPicker={() => openPlaylistPicker(song)}
           onTrashFm={trashCurrentFmTrack}
         />
       )}
-
-      <MoreSettingsPanel
-        showMore={showMore}
-        setShowMore={setShowMore}
-        playbackRate={playbackRate}
-        onChangeRate={changePlaybackRate}
-        sleepMode={sleepMode}
-        onSelectSleep={selectSleepMode}
-        canSelectQuality={!!capabilities.netease.playbackQuality}
-        neteaseQuality={neteaseQuality}
-        onChangeQuality={changeNeteaseQuality}
-        song={song}
-        trackQuality={trackQuality}
-        onReloadWithQuality={() => {
-          if (song?.provider === 'netease' && playingQueue) {
-            setShowMore(false);
-            play(song, playingQueue);
-          }
-        }}
-        isStageActive={view === 'stage' && !showLyrics}
-        onOpenNowPlaying={() => {
-          setShowMore(false);
-          setShowNowDetails(false);
-          setView('stage');
-          setShowLyrics(false);
-        }}
-        closeMode={closeMode}
-        onOpenCloseSettings={canChooseCloseBehavior ? () => {
-          setShowMore(false);
-          setCloseError('');
-          setCloseDialog('settings');
-        } : null}
-        canDesktopLyric={canDesktopLyric}
-        desktopLyric={desktopLyric}
-        desktopLyricBusy={desktopLyricBusy}
-        desktopLyricError={desktopLyricError}
-        onToggleDesktopLyric={toggleDesktopLyric}
-        onToggleDesktopLyricLock={toggleDesktopLyricLock}
-        onUpdateDesktopLyricStyle={updateDesktopLyricStyle}
-        canGlobalShortcuts={canGlobalShortcuts}
-        globalShortcuts={globalShortcuts}
-        onOpenShortcuts={() => {
-          setShowMore(false);
-          setShortcutsError(globalShortcuts.error?.message || '');
-          setShowShortcuts(true);
-        }}
-        canAppUpdater={canAppUpdater}
-        updateSummary={updateSummary}
-        onOpenUpdater={() => {
-          setShowMore(false);
-          setShowUpdaterDialog('manual');
-        }}
-      />
 
       <FloatingDock
         view={view}
@@ -4324,11 +5001,9 @@ export function App({
         activeProvider={activeProvider}
         audio={audio}
         restoredProgress={restoredProgress}
-        onOpenLyrics={() => {
-          if (!song) return;
-          setShowMore(false);
-          setView('stage');
-          setShowLyrics(true);
+        onToggleStage={() => {
+          setShowNowDetails(false);
+          setView(v => (v === 'stage' ? 'library' : 'stage'));
         }}
         onSeekEnd={() => scheduleSave(true)}
         onSeek={value => {
@@ -4357,9 +5032,11 @@ export function App({
         muted={muted}
         volume={volume}
         onToggleMute={() => {
+          stopSmoothFade({ restoreVolume: false });
           audio.current.muted = !audio.current.muted;
         }}
         onVolumeChange={v => {
+          stopSmoothFade({ restoreVolume: false });
           audio.current.volume = v;
         }}
         onVolumeCommit={() => scheduleSave(true)}
@@ -4367,13 +5044,20 @@ export function App({
           setShowQueue(true);
           setConfirmClear(false);
         }}
-        showLyrics={showLyrics}
-        onToggleLyrics={() => setShowLyrics(!showLyrics)}
-        showMore={showMore}
-        onToggleMore={() => setShowMore(!showMore)}
         playbackRate={playbackRate}
+        onChangeRate={changePlaybackRate}
+        sleepMode={sleepMode}
         sleepLabel={sleepLabel}
-        queueCount={ws.queue?.tracks?.length || 0}
+        onSelectSleep={selectSleepMode}
+        canSelectQuality={!!capabilities.netease.playbackQuality}
+        neteaseQuality={neteaseQuality}
+        onChangeQuality={changeNeteaseQuality}
+        onReloadWithQuality={() => {
+          if (song?.provider === 'netease' && playingQueue) {
+            play(song, playingQueue);
+          }
+        }}
+        queueCount={mixedQueue ? mixedQueue.tracks.length : (ws.queue?.tracks?.length || 0)}
         trackQuality={trackQuality}
         neteaseSignedIn={neteaseSignedIn}
         canLike={!!capabilities.netease.likeTrack}
@@ -4389,8 +5073,6 @@ export function App({
         desktopLyricBusy={desktopLyricBusy}
         onToggleDesktopLyric={toggleDesktopLyric}
         onToggleDesktopLyricLock={toggleDesktopLyricLock}
-        updateAttention={updateAttention}
-        updateHint={updateSummary?.hint || ''}
       />
 
       {/* 全应用唯一 <audio> 实例，绝不因切换视图或平台重建 */}
@@ -4460,6 +5142,7 @@ export function App({
           }
         }}
         onVolumeChange={e => {
+          if (fadeActiveRef.current) return;
           const a = e.currentTarget;
           settings.current.volume = a.volume;
           settings.current.muted = a.muted;
@@ -4468,6 +5151,7 @@ export function App({
           scheduleSave();
         }}
         onPause={e => {
+          stopSmoothFade();
           setBuffering(false);
           scheduleSave(true);
           sampleListening(e.currentTarget);
@@ -4476,6 +5160,7 @@ export function App({
           setPlaying(false);
         }}
         onEnded={async e => {
+          stopSmoothFade();
           setBuffering(false);
           sampleListening(e.currentTarget);
           listening.current.settle();
@@ -4492,6 +5177,19 @@ export function App({
           if (pendingPlay.current) return;
           const current = songRef.current;
           if (!current) return;
+          const mq = mixedQueueRef.current;
+          if (
+            mq &&
+            mq.tracks[mq.index]?.provider === current.provider &&
+            mq.tracks[mq.index]?.id === current.id
+          ) {
+            const nextIdx = nextIndex(settings.current.mode, mq.index, mq.tracks.length);
+            if (nextIdx >= 0) {
+              const nextTrack = hydrateCustomTrack(mq.tracks[nextIdx], workRef.current);
+              void play(nextTrack, { ...mq, index: nextIdx });
+            }
+            return;
+          }
           let queue = workRef.current[current.provider].queue;
           if (
             !queue ||
@@ -4520,12 +5218,14 @@ export function App({
           else scheduleSave(true);
         }}
         onError={() => {
+          stopSmoothFade();
           setBuffering(false);
           setPlaying(false);
           listening.current.interrupt();
           const current = songRef.current;
           if (current) {
-            update(current.provider, { message: '音频加载失败，请重试' });
+            if (mixedQueueRef.current) setCustomPlaylistNotice('音频加载失败，请重试或切下一首');
+            else update(current.provider, { message: '音频加载失败，请重试' });
             if (current.provider === 'qqmusic') void refreshQqDiagnostic();
           }
         }}
@@ -4538,35 +5238,15 @@ export function App({
         setConfirmClear={setConfirmClear}
         activeProvider={activeProvider}
         ws={ws}
+        mixedQueue={mixedQueue}
         song={song}
         pendingPlay={!!pendingPlay.current}
         selectedTrack={selectedTrack}
         setSelectedTrack={setSelectedTrack}
         play={play}
         editQueue={editQueue}
+        editMixedQueue={editMixedQueue}
       />
-
-      {showLyrics && (
-        <LyricPanel
-          stage={view === 'stage'}
-          lyrics={lyrics}
-          index={lyricIndex}
-          status={lyricStatus}
-          onClose={() => setShowLyrics(false)}
-          onSeek={at => {
-            if (
-              audio.current &&
-              !saved.current.resume &&
-              !qqSaved.current.resume &&
-              !localSaved.current.resume
-            ) {
-              audio.current.currentTime = at;
-              syncLyric(at);
-              scheduleSave();
-            }
-          }}
-        />
-      )}
 
       <QqAuthDialog
         open={qqWebOpen}
@@ -4588,9 +5268,17 @@ export function App({
       <PlaylistPickerDialog
         track={pickerTrack}
         playlists={ownedPlaylists}
+        customPlaylists={customPlaylists}
+        canNeteaseCollect={
+          neteaseSignedIn &&
+          !!capabilities.netease.editPlaylistTracks &&
+          ownedPlaylists.length > 0
+        }
         busyId={pickerBusyId}
         error={pickerError}
         onSelect={addTrackToPlaylist}
+        onSelectCustom={handleAddTrackToCustom}
+        onCreateAndSelectCustom={handleCreateAndAddCustom}
         onClose={() => {
           setPickerTrack(null);
           setPickerError('');

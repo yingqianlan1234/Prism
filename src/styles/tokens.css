@@ -1,4 +1,4 @@
-/* Prism · Night Radio（深夜电台波段）设计变量 */
+/* Prism · Night Radio（深夜电台波段 / 黑曜光学体系）设计变量 */
 @property --nr-glow {
   syntax: '<color>';
   inherits: true;
@@ -8,30 +8,56 @@
 :root {
   color-scheme: dark;
 
-  /* 夜空与表面层次 */
-  --nr-night-0: #0E1624;
-  --nr-night-1: #132033;
-  --nr-night-2: #18263C;
-  --nr-surface: rgba(22, 34, 54, 0.78);
-  --nr-surface-hi: rgba(30, 46, 72, 0.90);
-  --nr-surface-pill: rgba(255, 255, 255, 0.065);
-  --nr-surface-hover: rgba(255, 255, 255, 0.11);
-  --nr-border: rgba(255, 255, 255, 0.09);
-  --nr-border-hi: rgba(255, 255, 255, 0.16);
+  /* 默认：深空黑曜（Obsidian）光学主题 */
+  --nr-night-0: #080A0F;
+  --nr-night-1: #0D1017;
+  --nr-night-2: #141822;
+  --nr-bg-canvas: linear-gradient(165deg, #07090D 0%, #0B0E15 54%, #080A0F 100%);
+  --nr-bg-top-wash: radial-gradient(880px 360px at 50% -8%, rgba(88, 146, 232, 0.12), transparent 72%);
+
+  --nr-surface: rgba(18, 22, 31, 0.78);
+  --nr-surface-hi: rgba(20, 24, 34, 0.90);
+  --nr-surface-aside: rgba(14, 17, 25, 0.72);
+  --nr-surface-card: rgba(18, 22, 31, 0.76);
+  --nr-surface-panel: rgba(15, 19, 28, 0.94);
+  --nr-surface-dialog: #121620;
+  --nr-surface-input: #0D1018;
+  --nr-surface-pill: rgba(255, 255, 255, 0.055);
+  --nr-surface-hover: rgba(255, 255, 255, 0.10);
+  --nr-surface-active: rgba(255, 255, 255, 0.14);
+  --nr-veil-1: rgba(255, 255, 255, 0.045);
+  --nr-veil-2: rgba(255, 255, 255, 0.085);
+  --nr-veil-3: rgba(255, 255, 255, 0.15);
+  --nr-track-bg: rgba(255, 255, 255, 0.16);
+  --nr-border: rgba(218, 228, 255, 0.08);
+  --nr-border-hi: rgba(218, 228, 255, 0.15);
+  --nr-specular: inset 0 1px 0 rgba(255, 255, 255, 0.085);
+  --nr-scrim: rgba(4, 6, 11, 0.68);
+  --nr-cover-overlay: rgba(8, 10, 15, 0.68);
+  --nr-cover-fallback: linear-gradient(145deg, #1A2131 0%, #101521 100%);
+  --nr-thumb-bg: rgba(255, 255, 255, 0.16);
+  --nr-thumb-hover: rgba(255, 255, 255, 0.28);
+
+  /* 地平线极光与电台微点阵 */
+  --nr-ambient-mul: 1;
+  --nr-horizon-cool: rgba(74, 152, 244, 0.28);
+  --nr-horizon-cool-soft: rgba(96, 174, 214, 0.12);
+  --nr-dot-color: rgba(210, 224, 255, 0.075);
 
   /* 文字层级（对比度全部实测 ≥ 4.5:1） */
-  --nr-ink: #F0F4FA;
-  --nr-muted: #A4B4C9;
-  --nr-faint: #8FA2BC;
+  --nr-ink: #F2F4F8;
+  --nr-muted: #A4AEBE;
+  --nr-faint: #8692A6;
 
   /* 暖灯强调色 + 封面动态漫反射色 */
   --nr-accent: #F2A65A;
-  --nr-accent-soft: rgba(242, 166, 90, 0.16);
+  --nr-accent-soft: rgba(242, 166, 90, 0.15);
   --nr-accent-border: rgba(242, 166, 90, 0.42);
-  --nr-accent-ink: #161C26;
+  --nr-accent-ink: #12151D;
   --nr-glow: #F2A65A;
   --nr-danger: #F27D83;
   --nr-danger-soft: rgba(242, 125, 131, 0.16);
+  --nr-danger-ink: #FFD2D5;
   --nr-ok: #7BD4AE;
 
   /* 兼容旧变量引用 */
@@ -39,7 +65,7 @@
   --lw-on: var(--nr-accent-ink);
   --lw-ink: var(--nr-ink);
 
-  /* 字体体系（脱离个人网站霞鹜漫黑，利落现代 + 唱片衬线 + 等宽数字） */
+  /* 字体体系（利落现代 + 唱片衬线 + 等宽数字） */
   --font-serif: 'Noto Serif SC', 'STZhongsong', 'Songti SC', serif;
   --font-sans: 'MiSans', 'Noto Sans SC', 'Microsoft YaHei UI', system-ui, sans-serif;
   --font-mono: 'Cascadia Mono', 'IBM Plex Mono', Consolas, monospace;
@@ -54,9 +80,9 @@
   --r-sm: 10px;
 
   /* 阴影层次 */
-  --shadow-island: 0 20px 44px -12px rgba(4, 9, 18, 0.72), inset 0 1px 0 rgba(255, 255, 255, 0.12);
-  --shadow-cover: 0 28px 56px -14px rgba(4, 9, 18, 0.78), 0 0 0 1px rgba(255, 255, 255, 0.12);
-  --shadow-card: 0 14px 32px -10px rgba(4, 9, 18, 0.52);
+  --shadow-island: 0 20px 44px -12px rgba(4, 6, 12, 0.78), inset 0 1px 0 rgba(255, 255, 255, 0.10);
+  --shadow-cover: 0 28px 56px -14px rgba(4, 6, 12, 0.82), 0 0 0 1px rgba(255, 255, 255, 0.10);
+  --shadow-card: 0 14px 32px -10px rgba(4, 6, 12, 0.56);
 
   /* 动效节奏（事件驱动，无常驻重循环） */
   --dur-press: 120ms;
@@ -69,4 +95,135 @@
   --z-drawer: 40;
   --z-more: 50;
   --z-overlay: 70;
+}
+
+/* 主题二：暖炭玄岩（Warm Charcoal） */
+:root[data-theme='warm'] {
+  color-scheme: dark;
+
+  --nr-night-0: #100F0E;
+  --nr-night-1: #161412;
+  --nr-night-2: #1E1B18;
+  --nr-bg-canvas: linear-gradient(165deg, #0F0E0D 0%, #161412 52%, #11100E 100%);
+  --nr-bg-top-wash: radial-gradient(880px 360px at 50% -8%, rgba(217, 134, 82, 0.11), transparent 72%);
+
+  --nr-surface: rgba(28, 25, 22, 0.80);
+  --nr-surface-hi: rgba(31, 28, 24, 0.92);
+  --nr-surface-aside: rgba(22, 20, 18, 0.76);
+  --nr-surface-card: rgba(28, 25, 22, 0.78);
+  --nr-surface-panel: rgba(25, 22, 20, 0.95);
+  --nr-surface-dialog: #1B1816;
+  --nr-surface-input: #141210;
+  --nr-border: rgba(245, 236, 222, 0.085);
+  --nr-border-hi: rgba(245, 236, 222, 0.155);
+  --nr-specular: inset 0 1px 0 rgba(255, 246, 234, 0.08);
+  --nr-scrim: rgba(10, 8, 6, 0.72);
+  --nr-cover-overlay: rgba(16, 14, 12, 0.68);
+  --nr-cover-fallback: linear-gradient(145deg, #2B241E 0%, #1B1714 100%);
+
+  --nr-horizon-cool: rgba(217, 119, 87, 0.25);
+  --nr-horizon-cool-soft: rgba(242, 184, 108, 0.11);
+  --nr-dot-color: rgba(245, 232, 214, 0.068);
+
+  --nr-ink: #F4F0E8;
+  --nr-muted: #B6ADA0;
+  --nr-faint: #948B7E;
+
+  --nr-accent: #F0A25E;
+  --nr-accent-soft: rgba(240, 162, 94, 0.16);
+  --nr-accent-border: rgba(240, 162, 94, 0.44);
+  --nr-accent-ink: #171411;
+}
+
+/* 主题三：深夜雨窗（原版 Night Radio 深蓝夜空） */
+:root[data-theme='night-radio'] {
+  color-scheme: dark;
+
+  --nr-night-0: #0E1624;
+  --nr-night-1: #132033;
+  --nr-night-2: #18263C;
+  --nr-bg-canvas: linear-gradient(160deg, #0D1522 0%, #132033 52%, #0E1624 100%);
+  --nr-bg-top-wash: radial-gradient(760px 520px at 80% 22%, rgba(86, 152, 226, 0.14), transparent 72%);
+
+  --nr-surface: rgba(22, 34, 54, 0.78);
+  --nr-surface-hi: rgba(30, 46, 72, 0.90);
+  --nr-surface-aside: rgba(19, 32, 51, 0.68);
+  --nr-surface-card: rgba(20, 32, 51, 0.74);
+  --nr-surface-panel: rgba(18, 29, 46, 0.95);
+  --nr-surface-dialog: #142033;
+  --nr-surface-input: #101A2B;
+  --nr-border: rgba(255, 255, 255, 0.09);
+  --nr-border-hi: rgba(255, 255, 255, 0.16);
+  --nr-specular: inset 0 1px 0 rgba(255, 255, 255, 0.08);
+  --nr-scrim: rgba(7, 13, 24, 0.68);
+  --nr-cover-overlay: rgba(14, 22, 36, 0.68);
+  --nr-cover-fallback: linear-gradient(145deg, #1F324D 0%, #152338 100%);
+
+  --nr-horizon-cool: rgba(96, 168, 240, 0.24);
+  --nr-horizon-cool-soft: rgba(114, 184, 198, 0.10);
+  --nr-dot-color: rgba(196, 218, 248, 0.072);
+
+  --nr-ink: #F0F4FA;
+  --nr-muted: #A4B4C9;
+  --nr-faint: #8FA2BC;
+
+  --nr-accent: #F2A65A;
+  --nr-accent-soft: rgba(242, 166, 90, 0.16);
+  --nr-accent-border: rgba(242, 166, 90, 0.42);
+  --nr-accent-ink: #161C26;
+}
+
+/* 主题四：白昼冷晶（Crystal Light） */
+:root[data-theme='crystal'] {
+  color-scheme: light;
+
+  --nr-night-0: #EEF3FA;
+  --nr-night-1: #F5F8FD;
+  --nr-night-2: #FFFFFF;
+  --nr-bg-canvas: linear-gradient(165deg, #EBF1F9 0%, #F5F8FD 54%, #E8EFF8 100%);
+  --nr-bg-top-wash: radial-gradient(920px 380px at 50% -10%, rgba(59, 130, 246, 0.11), transparent 72%);
+
+  --nr-surface: rgba(255, 255, 255, 0.78);
+  --nr-surface-hi: rgba(255, 255, 255, 0.92);
+  --nr-surface-aside: rgba(255, 255, 255, 0.76);
+  --nr-surface-card: rgba(255, 255, 255, 0.88);
+  --nr-surface-panel: #FFFFFF;
+  --nr-surface-dialog: #FFFFFF;
+  --nr-surface-input: #F2F6FC;
+  --nr-surface-pill: rgba(15, 23, 42, 0.055);
+  --nr-surface-hover: rgba(15, 23, 42, 0.10);
+  --nr-surface-active: rgba(15, 23, 42, 0.14);
+  --nr-veil-1: rgba(15, 23, 42, 0.04);
+  --nr-veil-2: rgba(15, 23, 42, 0.075);
+  --nr-veil-3: rgba(15, 23, 42, 0.13);
+  --nr-track-bg: rgba(15, 23, 42, 0.15);
+  --nr-border: rgba(15, 23, 42, 0.10);
+  --nr-border-hi: rgba(15, 23, 42, 0.17);
+  --nr-specular: inset 0 1px 0 rgba(255, 255, 255, 0.94);
+  --nr-scrim: rgba(15, 23, 42, 0.34);
+  --nr-cover-overlay: rgba(15, 23, 42, 0.56);
+  --nr-cover-fallback: linear-gradient(145deg, #D5E2F4 0%, #E7EFFA 100%);
+  --nr-thumb-bg: rgba(15, 23, 42, 0.18);
+  --nr-thumb-hover: rgba(15, 23, 42, 0.34);
+
+  --nr-horizon-cool: rgba(37, 99, 235, 0.18);
+  --nr-horizon-cool-soft: rgba(56, 189, 248, 0.12);
+  --nr-dot-color: rgba(15, 23, 42, 0.075);
+
+  --nr-ink: #0F172A;
+  --nr-muted: #475569;
+  --nr-faint: #64748B;
+
+  --nr-accent: #C2591A;
+  --nr-accent-soft: rgba(194, 89, 26, 0.11);
+  --nr-accent-border: rgba(194, 89, 26, 0.36);
+  --nr-accent-ink: #FFFFFF;
+  --nr-danger: #DC2626;
+  --nr-danger-soft: rgba(220, 38, 38, 0.10);
+  --nr-danger-ink: #B91C1C;
+  --nr-ok: #059669;
+
+  --shadow-island: 0 16px 36px -12px rgba(15, 23, 42, 0.16), inset 0 1px 0 rgba(255, 255, 255, 0.96);
+  --shadow-cover: 0 22px 44px -14px rgba(15, 23, 42, 0.22), 0 0 0 1px rgba(15, 23, 42, 0.08);
+  --shadow-card: 0 12px 28px -10px rgba(15, 23, 42, 0.13);
 }

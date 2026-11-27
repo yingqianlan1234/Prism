@@ -8,14 +8,14 @@ globalThis.window={__TAURI_INTERNALS__:{invoke:async(command,args)=>{calls.push(
 const {getProvider,capabilities,capabilitiesForHost,recommendationCapabilities,desktop}=await import('./providers.js');
 
 test('macOS 保留三个音乐来源，Windows 桌面能力随宿主关闭',()=>{
- const mac=capabilitiesForHost({qqMusic:true,globalShortcuts:false,desktopLyric:false,closeBehavior:false,appUpdater:false});
+ const mac=capabilitiesForHost({qqMusic:true,globalShortcuts:false,desktopLyric:false,closeBehavior:false,appUpdater:false,customTitlebar:false});
  assert.equal(mac.local,capabilities.local);
  assert.equal(mac.netease,capabilities.netease);
  assert.equal(mac.qqmusic.available,true);
- assert.deepEqual(mac.desktop,{globalShortcuts:false,desktopLyric:false,closeBehavior:false,appUpdater:false});
- const windows=capabilitiesForHost({qqMusic:true,globalShortcuts:true,desktopLyric:true,closeBehavior:true,appUpdater:true});
+ assert.deepEqual(mac.desktop,{globalShortcuts:false,desktopLyric:false,closeBehavior:false,appUpdater:false,customTitlebar:false});
+ const windows=capabilitiesForHost({qqMusic:true,globalShortcuts:true,desktopLyric:true,closeBehavior:true,appUpdater:true,customTitlebar:true});
  assert.equal(windows.qqmusic.available,true);
- assert.deepEqual(windows.desktop,{globalShortcuts:true,desktopLyric:true,closeBehavior:true,appUpdater:true});
+ assert.deepEqual(windows.desktop,{globalShortcuts:true,desktopLyric:true,closeBehavior:true,appUpdater:true,customTitlebar:true});
  assert.equal(capabilitiesForHost(undefined),capabilities);
 });
 
