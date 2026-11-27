@@ -18,6 +18,7 @@ let nextId = 1;
 const callbacks = new Map();
 const listeners = new Map();
 const calls = [];
+const restoredVolumeKey = 'F10';
 
 let shortcutsState = {
   enabled: false,
@@ -135,7 +136,11 @@ window.__TAURI_INTERNALS__ = {
           rejectNextShortcutConflict = false;
           throw { code: 'conflict', message: '系统快捷键已被占用或无法注册' };
         }
-        shortcutsState = { enabled: Boolean(args.enabled), bindings: { ...args.bindings } };
+        const bindings = { ...args.bindings };
+        if (args.enabled && !shortcutsState.enabled) {
+          bindings.volumeUp = `Ctrl+Alt+${restoredVolumeKey}`;
+        }
+        shortcutsState = { enabled: Boolean(args.enabled), bindings };
         return { ...shortcutsState, bindings: { ...shortcutsState.bindings } };
       }
       case 'desktop_lyric_get':
@@ -204,7 +209,10 @@ try {
   await wait(() => buttonByText('已关闭'), '进入全局快捷键设置');
 
   buttonByText('已关闭').click();
-  await wait(() => buttonByText('已开启'), '总开关成功开启');
+  await wait(() => {
+    const volumeKey = document.querySelector('select[aria-label="增大音量 主键"]');
+    return buttonByText('已开启') && volumeKey?.value === restoredVolumeKey && !volumeKey.disabled;
+  }, '总开关已开启且配置已同步到设置页');
   assert.equal(calls.filter(c => c.cmd === 'global_shortcuts_set').at(-1).args.enabled, true);
 
   // 模拟系统快捷键冲突

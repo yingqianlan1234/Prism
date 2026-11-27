@@ -19,9 +19,15 @@ const button=t=>[...document.querySelectorAll('button')].find(x=>x.textContent.t
 try{
  const built=await build({configFile:false,logLevel:'error',plugins:[react()],build:{outDir:temp,emptyOutDir:false,rollupOptions:{input:resolve('src/main.jsx')}}});
  await import(pathToFileURL(join(temp,built.output.find(x=>x.type==='chunk'&&x.isEntry).fileName)));
- await wait(()=>pending.length===1,'账号甲恢复歌词');
+ await wait(()=>{
+  const refresh=button('合成账号甲 · 刷新');
+  return pending.length===1&&refresh&&!refresh.disabled;
+ },'账号甲恢复歌词且刷新按钮可用');
  profile={userId:200,nickname:'合成账号乙'};button('合成账号甲 · 刷新').click();
- await wait(()=>button('合成账号乙 · 刷新')&&pending.length===2,'账号乙恢复相同歌曲');
+ await wait(()=>{
+  const play=document.querySelector('.play-toggle');
+  return button('合成账号乙 · 刷新')&&pending.length===2&&play&&!play.disabled;
+ },'账号乙恢复相同歌曲且可播放');
  document.querySelector('.play-toggle').click();await wait(()=>pending.length===3,'新账号主动播放再次请求歌词');
  pending[2]({lrc:{lyric:'[00:01]新账号新会话歌词'}});await wait(()=>document.body.textContent.includes('新账号新会话歌词'),'新账号新会话歌词');
  pending[1]({lrc:{lyric:'[00:01]新账号旧会话歌词'}});pending[0]({lrc:{lyric:'[00:01]旧账号歌词'}});await new Promise(r=>setTimeout(r,30));

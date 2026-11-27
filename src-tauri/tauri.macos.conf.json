@@ -1,0 +1,29 @@
+{
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "Vesper",
+        "width": 1280,
+        "height": 820,
+        "minWidth": 850,
+        "minHeight": 600,
+        "decorations": true,
+        "shadow": true,
+        "backgroundColor": "#080A0F",
+        "visible": false
+      }
+    ],
+    "security": {
+      "csp": "default-src 'self'; connect-src 'self' ipc: http://ipc.localhost; img-src 'self' data: https:; media-src 'self' https: http: prismlocal: prismmedia:; style-src 'self' 'unsafe-inline'"
+    }
+  },
+  "bundle": {
+    "createUpdaterArtifacts": false,
+    "icon": [
+      "icons/icon.icns",
+      "icons/128x128.png",
+      "icons/128x128@2x.png"
+    ]
+  }
+}

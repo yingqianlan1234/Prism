@@ -1,20 +1,21 @@
-#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+#![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
+
 mod netease_recent;
 mod window_state;
 #[cfg(windows)]
 mod desktop_shortcuts;
 #[cfg(windows)]
 mod desktop_lyric;
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "macos"))]
 mod local_library;
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "macos"))]
 mod local_media;
 #[cfg(windows)]
 mod background;
 #[cfg(windows)]
 mod window_dwm;
 mod qq_login_offline;
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "macos"))]
 mod qq_web_auth;
 #[cfg(test)]
 #[allow(dead_code)]
@@ -22,11 +23,12 @@ mod qq_login;
 #[cfg(test)]
 mod qq_research;
 mod qq_search_candidate;
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "macos"))]
 mod qq_catalog;
 mod netease_recommendations;
 mod netease_library;
 mod playback_storage;
+#[cfg(windows)]
 mod updater;
 use aes::cipher::{block_padding::Pkcs7, BlockEncryptMut, KeyIvInit};
 use base64::{engine::general_purpose::STANDARD, Engine};
@@ -184,6 +186,7 @@ fn reveal_main_window(app: tauri::AppHandle) {
     window_dwm::apply_for(&window);
     let _ = window.show();
     // 镂空窗口图标只在显示后设置：隐藏窗口设置图标同样不生效。
+    #[cfg(windows)]
     if let Ok(icon) = tauri::image::Image::from_bytes(include_bytes!("../icons/window-icon.png")) {
         let _ = window.set_icon(icon);
     }
@@ -320,22 +323,180 @@ async fn netease_logout(app: State<'_, App>) -> Result<Value> {
     s.generation+=1; s.qr=None; s.storage_error=false; s.cookie=None;s.account_id=None;
     Ok(json!({"localCleared":true,"remoteRevoked":false}))
 }
+#[tauri::command]
+fn host_capabilities() -> Value {
+    json!({
+        "qqMusic": cfg!(any(windows, target_os = "macos")),
+        "globalShortcuts": cfg!(windows),
+        "desktopLyric": cfg!(windows),
+        "closeBehavior": cfg!(windows),
+        "appUpdater": cfg!(windows),
+        "customTitlebar": cfg!(windows),
+    })
+}
+
 fn main() {
-    let cookie=entry().and_then(|e| match e.get_password() {Ok(v)=>Ok(Some(v)),Err(keyring::Error::NoEntry)=>Ok(None),Err(_)=>Err(err("storage","无法读取系统凭据"))});
-    let (cookie, storage_error) = match cookie {Ok(c)=>(c,false),Err(_)=>(None,true)};
-    let client=reqwest::Client::builder().timeout(Duration::from_secs(15)).redirect(reqwest::redirect::Policy::none()).build().expect("HTTP client");
-    tauri::Builder::default().setup(|app|{updater::install(app);window_state::install(app);#[cfg(windows)]local_library::install(app.handle());#[cfg(windows)]background::install(app);#[cfg(windows)]desktop_shortcuts::install(app);#[cfg(windows)]window_dwm::install(app);if let Some(window)=app.get_webview_window("main"){if let Ok(icon)=tauri::image::Image::from_bytes(include_bytes!("../icons/window-icon.png")){let _=window.set_icon(icon);}}if let Some(window)=app.get_webview_window("main"){let fallback=window.clone();std::thread::spawn(move||{std::thread::sleep(Duration::from_secs(4));#[cfg(windows)]if !background::may_reveal(fallback.app_handle()){return;}#[cfg(windows)]window_dwm::apply_for(&fallback);let _=fallback.show();#[cfg(windows)]window_dwm::apply_for(&fallback);});}Ok(())}).register_asynchronous_uri_scheme_protocol("prismmedia", |ctx, request, responder| {
-        if ctx.webview_label() != "main" || request.method() != tauri::http::Method::GET {
-            responder.respond(tauri::http::Response::builder().status(403).body(Vec::new()).unwrap()); return;
-        }
-        let app=ctx.app_handle().clone(); let handle=request.uri().path().trim_start_matches('/').to_owned();
-        let range=request.headers().get(tauri::http::header::RANGE).and_then(|v|v.to_str().ok()).map(str::to_owned);
-        tauri::async_runtime::spawn(async move {
-            let state=app.state::<qq_web_auth::QqWebAuth>();
-            let result=qq_web_auth::stream_chunk(&state,&handle,range.as_deref()).await;
-            responder.respond(result.unwrap_or_else(|_|tauri::http::Response::builder().status(403).body(Vec::new()).unwrap()));
-        });
-    }).register_asynchronous_uri_scheme_protocol("prismlocal", local_library::protocol).manage(qq_web_auth::QqWebAuth::new()).manage(App{client,session:Mutex::new(Session{cookie,storage_error,..Default::default()})}).invoke_handler(tauri::generate_handler![updater::app_update_config_get,updater::app_update_config_set,updater::app_update_check,updater::app_update_download,updater::app_update_install,reveal_main_window,window_theme_sync,local_library::local_library_folders_get,local_library::local_library_folder_pick,local_library::local_library_folder_remove,local_library::local_library_scan,local_library::local_library_tracks_get,local_library::local_track_resolve,local_library::local_track_lyric,local_library::local_queue_get,local_library::local_queue_set,desktop_shortcuts::global_shortcuts_get,desktop_shortcuts::global_shortcuts_set,desktop_lyric::desktop_lyric_get,desktop_lyric::desktop_lyric_set,desktop_lyric::desktop_lyric_update,background::close_behavior_get,background::close_behavior_set,background::close_behavior_finish_exit,qq_web_auth::qq_web_login_open,qq_web_auth::qq_web_login_complete,qq_web_auth::qq_web_login_cancel,qq_web_auth::qq_web_account,qq_web_auth::qq_web_logout,qq_web_auth::qq_web_playlists,qq_web_auth::qq_web_playlist_tracks,qq_web_auth::qq_web_resolve,qq_web_auth::qq_web_restore_previous,qq_web_auth::qq_playback_diagnostic,qq_web_auth::qq_web_lyric,qq_catalog::qq_recommended_playlists,qq_catalog::qq_recommended_new_songs,netease_recent::netease_recent_get,netease_recent::netease_recent_add,netease_recent::netease_recent_clear,playback_storage::playback_state_load,playback_storage::playback_state_save,qq_search,netease_search,netease_lyric,netease_url,netease_library::netease_like,netease_library::netease_likelist,netease_library::netease_fm_trash,netease_library::netease_playlist_tracks_op,netease_qr_start,netease_qr_check,netease_qr_cancel,netease_account,netease_playlists,netease_playlist,netease_logout,netease_recommendations::netease_daily_songs,netease_recommendations::netease_recommended_resources,netease_recommendations::netease_personalized_playlists,netease_recommendations::netease_recommended_new_songs,netease_recommendations::netease_private_fm]).run(tauri::generate_context!()).expect("运行失败");
+    let cookie = entry().and_then(|entry| match entry.get_password() {
+        Ok(value) => Ok(Some(value)),
+        Err(keyring::Error::NoEntry) => Ok(None),
+        Err(_) => Err(err("storage", "无法读取系统凭据")),
+    });
+    let (cookie, storage_error) = match cookie {
+        Ok(cookie) => (cookie, false),
+        Err(_) => (None, true),
+    };
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(15))
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+        .expect("HTTP client");
+
+    let builder = tauri::Builder::default();
+    #[cfg(target_os = "macos")]
+    let builder = builder.plugin(tauri_plugin_dialog::init());
+    #[cfg(any(windows, target_os = "macos"))]
+    let builder = builder
+        .register_asynchronous_uri_scheme_protocol("prismmedia", |ctx, request, responder| {
+            use tauri::http::{header, Method, Response};
+            let forbidden = || Response::builder().status(403).body(Vec::new()).unwrap();
+            if ctx.webview_label() != "main" || request.method() != Method::GET {
+                responder.respond(forbidden());
+                return;
+            }
+            let app = ctx.app_handle().clone();
+            let handle = request.uri().path().trim_start_matches('/').to_owned();
+            let range = request.headers().get(header::RANGE)
+                .and_then(|value| value.to_str().ok()).map(str::to_owned);
+            tauri::async_runtime::spawn(async move {
+                let state = app.state::<qq_web_auth::QqWebAuth>();
+                let result = qq_web_auth::stream_chunk(&state, &handle, range.as_deref()).await;
+                responder.respond(result.unwrap_or_else(|_| forbidden()));
+            });
+        })
+        .manage(qq_web_auth::QqWebAuth::new());
+    builder
+        .setup(|app| {
+            #[cfg(windows)]
+            updater::install(app);
+            window_state::install(app);
+            local_library::install(app.handle());
+            #[cfg(windows)]
+            {
+                background::install(app);
+                desktop_shortcuts::install(app);
+                window_dwm::install(app);
+                if let Some(window) = app.get_webview_window("main") {
+                    if let Ok(icon) = tauri::image::Image::from_bytes(include_bytes!("../icons/window-icon.png")) {
+                        let _ = window.set_icon(icon);
+                    }
+                }
+            }
+            if let Some(window) = app.get_webview_window("main") {
+                std::thread::spawn(move || {
+                    std::thread::sleep(Duration::from_secs(4));
+                    reveal_main_window(window.app_handle().clone());
+                });
+            }
+            Ok(())
+        })
+        .register_asynchronous_uri_scheme_protocol("prismlocal", local_library::protocol)
+        .manage(App {
+            client,
+            session: Mutex::new(Session { cookie, storage_error, ..Default::default() }),
+        })
+        .invoke_handler(tauri::generate_handler![
+            #[cfg(windows)]
+            updater::app_update_config_get,
+            #[cfg(windows)]
+            updater::app_update_config_set,
+            #[cfg(windows)]
+            updater::app_update_check,
+            #[cfg(windows)]
+            updater::app_update_download,
+            #[cfg(windows)]
+            updater::app_update_install,
+            reveal_main_window,
+            window_theme_sync,
+            host_capabilities,
+            local_library::local_library_folders_get,
+            local_library::local_library_folder_pick,
+            local_library::local_library_folder_remove,
+            local_library::local_library_scan,
+            local_library::local_library_tracks_get,
+            local_library::local_track_resolve,
+            local_library::local_track_lyric,
+            local_library::local_queue_get,
+            local_library::local_queue_set,
+            #[cfg(windows)]
+            desktop_shortcuts::global_shortcuts_get,
+            #[cfg(windows)]
+            desktop_shortcuts::global_shortcuts_set,
+            #[cfg(windows)]
+            desktop_lyric::desktop_lyric_get,
+            #[cfg(windows)]
+            desktop_lyric::desktop_lyric_set,
+            #[cfg(windows)]
+            desktop_lyric::desktop_lyric_update,
+            #[cfg(windows)]
+            background::close_behavior_get,
+            #[cfg(windows)]
+            background::close_behavior_set,
+            #[cfg(windows)]
+            background::close_behavior_finish_exit,
+            #[cfg(any(windows, target_os = "macos"))]
+            qq_web_auth::qq_web_login_open,
+            #[cfg(any(windows, target_os = "macos"))]
+            qq_web_auth::qq_web_login_complete,
+            #[cfg(any(windows, target_os = "macos"))]
+            qq_web_auth::qq_web_login_cancel,
+            #[cfg(any(windows, target_os = "macos"))]
+            qq_web_auth::qq_web_account,
+            #[cfg(any(windows, target_os = "macos"))]
+            qq_web_auth::qq_web_logout,
+            #[cfg(any(windows, target_os = "macos"))]
+            qq_web_auth::qq_web_playlists,
+            #[cfg(any(windows, target_os = "macos"))]
+            qq_web_auth::qq_web_playlist_tracks,
+            #[cfg(any(windows, target_os = "macos"))]
+            qq_web_auth::qq_web_resolve,
+            #[cfg(any(windows, target_os = "macos"))]
+            qq_web_auth::qq_web_restore_previous,
+            #[cfg(any(windows, target_os = "macos"))]
+            qq_web_auth::qq_playback_diagnostic,
+            #[cfg(any(windows, target_os = "macos"))]
+            qq_web_auth::qq_web_lyric,
+            #[cfg(any(windows, target_os = "macos"))]
+            qq_catalog::qq_recommended_playlists,
+            #[cfg(any(windows, target_os = "macos"))]
+            qq_catalog::qq_recommended_new_songs,
+            netease_recent::netease_recent_get,
+            netease_recent::netease_recent_add,
+            netease_recent::netease_recent_clear,
+            playback_storage::playback_state_load,
+            playback_storage::playback_state_save,
+            qq_search,
+            netease_search,
+            netease_lyric,
+            netease_url,
+            netease_library::netease_like,
+            netease_library::netease_likelist,
+            netease_library::netease_fm_trash,
+            netease_library::netease_playlist_tracks_op,
+            netease_qr_start,
+            netease_qr_check,
+            netease_qr_cancel,
+            netease_account,
+            netease_playlists,
+            netease_playlist,
+            netease_logout,
+            netease_recommendations::netease_daily_songs,
+            netease_recommendations::netease_recommended_resources,
+            netease_recommendations::netease_personalized_playlists,
+            netease_recommendations::netease_recommended_new_songs,
+            netease_recommendations::netease_private_fm,
+        ])
+        .run(tauri::generate_context!())
+        .expect("运行失败");
 }
 
 #[cfg(test)]

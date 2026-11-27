@@ -3,9 +3,13 @@ import { readFile } from 'node:fs/promises';
 import { pathToFileURL } from 'node:url';
 import assert from 'node:assert/strict';
 
+const macos = process.argv.includes('--macos');
+const localMediaOrigin = macos ? 'prismlocal://localhost' : 'http://prismlocal.localhost';
+const qqMediaOrigin = macos ? 'prismmedia://localhost' : 'http://prismmedia.localhost';
 const dom = new JSDOM('<div id="root"></div>', { url: 'http://localhost' });
 globalThis.window = dom.window;
 globalThis.document = dom.window.document;
+globalThis.isTauri = true;
 Object.defineProperty(globalThis, 'navigator', { value: dom.window.navigator, configurable: true });
 Object.defineProperty(globalThis, 'localStorage', { value: dom.window.localStorage, configurable: true });
 for (const n of ['MutationObserver', 'HTMLElement', 'Event', 'KeyboardEvent', 'MouseEvent', 'Blob']) {
@@ -36,10 +40,13 @@ dom.window.HTMLMediaElement.prototype.load = function () {};
 
 window.__TAURI_EVENT_PLUGIN_INTERNALS__ = { unregisterListener() {} };
 window.__TAURI_INTERNALS__ = {
+  metadata: { currentWindow: { label: 'main' } },
   transformCallback: () => 1,
   invoke: async (cmd, args) => {
     calls.push({ cmd, args });
     switch (cmd) {
+      case 'host_capabilities':
+        return { qqMusic: true, globalShortcuts: !macos, desktopLyric: !macos, closeBehavior: !macos, appUpdater: !macos, customTitlebar: !macos };
       case 'plugin:event|listen':
         return 1;
       case 'plugin:event|unlisten':
@@ -82,7 +89,7 @@ window.__TAURI_INTERNALS__ = {
       case 'netease_lyric':
         return { lrc: { lyric: '[00:05.00]网易云歌词' } };
       case 'qq_web_account':
-        return { profile: { userId: '888', nickname: 'QQ晴岚' } };
+        return { profile: { userId: macos ? '1234567890123456' : '888', nickname: 'QQ晴岚' } };
       case 'qq_web_playlists':
         return { playlist: [], more: null };
       case 'qq_search':
@@ -102,7 +109,7 @@ window.__TAURI_INTERNALS__ = {
           },
         };
       case 'qq_web_resolve':
-        return { data: [{ code: 200, url: `http://prismmedia.localhost/qq-${args.mid}.m4a` }] };
+        return { data: [{ code: 200, url: `${qqMediaOrigin}/qq-${args.mid}.m4a` }] };
       case 'qq_web_lyric':
         return { lrc: { lyric: '[00:05.00]QQ音乐歌词' } };
       case 'local_library_folders_get':
@@ -130,7 +137,7 @@ window.__TAURI_INTERNALS__ = {
       case 'local_queue_set':
         return null;
       case 'local_track_resolve':
-        return { url: `http://prismlocal.localhost/${args.id}.flac` };
+        return { url: `${localMediaOrigin}/${args.id}.flac` };
       case 'local_track_lyric':
         return '[00:05.00]本地歌词';
       case 'global_shortcuts_get':
@@ -233,18 +240,18 @@ try {
 
   const audio = document.querySelector('audio');
   document.querySelector('[aria-label="播放本机歌单第一首"]').click();
-  await wait(() => audio.src.includes('loc-1.flac'), '第1首本地曲目起播');
+  await wait(() => audio.src === `${localMediaOrigin}/loc-1.flac`, '第1首本地曲目起播');
   await wait(() => document.querySelector('.app').dataset.view === 'stage', '点播本机歌单自动进入歌词舞台');
 
   // 返回曲库后，验证后台连播和底部切歌不会强行拽回舞台
   buttonByText('返回曲库').click();
   await wait(() => document.querySelector('.app').dataset.view === 'library', '返回曲库');
   audio.dispatchEvent(new Event('ended'));
-  await wait(() => audio.src.includes('qq-QQ101.m4a'), '自动跨源连播第2首 QQ 曲目');
+  await wait(() => audio.src === `${qqMediaOrigin}/qq-QQ101.m4a`, '自动跨源连播第2首 QQ 曲目');
   assert.equal(document.querySelector('.app').dataset.view, 'library', '后台连播不应强行拉回舞台');
-  document.querySelector('[aria-label="下一首"]').click();
-  await wait(() => audio.src.includes('ne-501.mp3'), '底部下一首手动切歌到网易云曲目');
-  assert.equal(document.querySelector('.app').dataset.view, 'library', '底部切歌不应强行拉回舞台');
+  audio.dispatchEvent(new Event('ended'));
+  await wait(() => audio.src.includes('ne-501.mp3'), '自动跨源连播第3首网易云曲目');
+  assert.equal(document.querySelector('.app').dataset.view, 'library', '两次自动切歌后仍停留在曲库');
 
   assert.equal(
     calls.filter(c => c.cmd === 'playback_state_save').length,
@@ -264,9 +271,16 @@ try {
   assert.equal(document.querySelector('.app').dataset.view, 'settings');
   assert.equal(document.querySelectorAll('audio').length, 1);
   assert.equal(paused, false, '进入设置页不能中断播放');
+  assert.equal(Boolean(document.querySelector('.nr-win-controls')), !macos, '只在 Windows 显示自定义窗口按钮');
+  assert.equal(document.querySelector('.topbar').hasAttribute('data-tauri-drag-region'), !macos);
 
-  buttonByText('完全退出并停止播放').click();
-  await wait(() => closeMode === 'exit', '独立设置页修改关闭行为生效');
+  if (macos) {
+    assert.equal(buttonByText('完全退出并停止播放'), undefined);
+    assert.equal(calls.some(c => c.cmd === 'close_behavior_get' || c.cmd === 'app_update_config_get'), false);
+  } else {
+    buttonByText('完全退出并停止播放').click();
+    await wait(() => closeMode === 'exit', '独立设置页修改关闭行为生效');
+  }
 
   buttonByText('外观与主题').click();
   await wait(() => document.querySelectorAll('.nr-theme-card').length === 4, '展示 4 套主题预览卡片');
@@ -306,14 +320,18 @@ try {
   const storedAudioPrefs = JSON.parse(dom.window.localStorage.getItem('vesper.audioPrefs.v1'));
   assert.equal(storedAudioPrefs.autoOpenStageOnPlay, false, '设置页开关应持久化 autoOpenStageOnPlay');
 
-  buttonByText('桌面歌词').click();
-  await wait(() => document.body.textContent.includes('原生 Direct2D 桌面悬浮字幕'), '进入桌面歌词分组');
+  if (macos) {
+    assert.equal(document.querySelectorAll('.nr-settings-aside nav button').length, 3);
+  } else {
+    buttonByText('桌面歌词').click();
+    await wait(() => document.body.textContent.includes('原生 Direct2D 桌面悬浮字幕'), '进入桌面歌词分组');
 
-  buttonByText('全局快捷键').click();
-  await wait(() => document.body.textContent.includes('系统级热键响应'), '进入全局快捷键分组');
+    buttonByText('全局快捷键').click();
+    await wait(() => document.body.textContent.includes('系统级热键响应'), '进入全局快捷键分组');
 
-  buttonIncludes('更新与关于').click();
-  await wait(() => document.body.textContent.includes('Vesper v1.1.0'), '进入应用更新分组');
+    buttonIncludes('更新与关于').click();
+    await wait(() => document.body.textContent.includes('Vesper v1.1.0'), '进入应用更新分组');
+  }
 
   document.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
   await wait(() => document.querySelector('.app').dataset.view === 'library', '按 Escape 返回曲库');
@@ -324,7 +342,7 @@ try {
   await wait(() => audio.src.includes('loc-1.flac'), '关闭自动进舞台后再次点播');
   assert.equal(document.querySelector('.app').dataset.view, 'library', '关闭自动进舞台开关后点播停留在曲库');
 
-  console.log('通过：三源混搭本机歌单、跨平台自动连播不污染单平台持久化、独立设置页 6 分组与主题切换全流程通过');
+  console.log(`通过：${macos ? 'macOS' : 'Windows'} 顶栏、三源自动连播、独立设置页和主题切换`);
 } finally {
   dom.window.close();
 }

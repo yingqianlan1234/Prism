@@ -37,7 +37,7 @@ try{
  activateSong(document.querySelector('.song'));await wait(()=>document.querySelector('audio').src.includes('audio'));
  const audio=document.querySelector('audio'),src=audio.src,playing=play,paused=pause;
  button('QQ 音乐').click();await wait(()=>document.body.textContent.includes('登录后可查看 QQ 歌单'));
- assert(button('QQ 登录'));await search('合成查询');await wait(()=>document.body.textContent.includes('QQ合成'));
+ assert(button('QQ / 微信登录'));await search('合成查询');await wait(()=>document.body.textContent.includes('QQ合成'));
  assert(!document.querySelector('.song.selected'));assert.equal(audio.src,src);assert.equal(play,playing);assert.equal(pause,paused);
  activateSong(document.querySelector('.song'));await wait(()=>document.body.textContent.includes('请先登录 QQ 音乐'));assert.equal(audio.src,src);
  button('请求下一页').click();await wait(()=>document.body.textContent.includes('本页没有找到歌曲'));assert(document.body.textContent.includes('没有找到“合成查询”'));

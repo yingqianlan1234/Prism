@@ -158,6 +158,8 @@ export function App({
   const canDesktopLyric = Boolean(capabilities?.desktop?.desktopLyric && desktop?.desktopLyricGet);
   const canAppUpdater = Boolean(capabilities?.desktop?.appUpdater && desktop?.updaterConfigGet);
   const canLocalLibrary = Boolean(capabilities?.local?.getTracks && local?.getFolders);
+  const canUseQq = capabilities?.qqmusic?.available !== false;
+  const canChooseCloseBehavior = capabilities?.desktop?.closeBehavior !== false;
   const [closeMode, setCloseMode] = useState('ask');
   const [trayAvailable, setTrayAvailable] = useState(false);
   const [closeDialog, setCloseDialog] = useState(null);
@@ -1222,7 +1224,7 @@ export function App({
         const last = await invoke('playback_state_load', { provider: 'last' });
         if (!active) return;
         bootProvider.current =
-          last?.status === 'ok' && last.provider === 'qqmusic' ? 'qqmusic' : 'netease';
+          canUseQq && last?.status === 'ok' && last.provider === 'qqmusic' ? 'qqmusic' : 'netease';
       } catch {}
       if (!active) return;
       if (bootProvider.current === 'qqmusic') {
@@ -2523,6 +2525,9 @@ export function App({
       if (id === 'local') {
         streamUrl = url?.url || '';
         if (!streamUrl) throw Error('未获取到本地音频地址');
+        if (url?.contentType?.startsWith('audio/ogg;') && audio.current?.canPlayType(url.contentType) === '') {
+          throw Error('当前系统不支持这首 Ogg 音频的编码');
+        }
       } else {
         info = url.data?.[0];
         if (!info?.url || (info.code != null && info.code !== 200))
@@ -3357,6 +3362,7 @@ export function App({
   };
 
   useEffect(() => {
+    if (!canChooseCloseBehavior) return;
     let active = true;
     const offs = [];
     invoke('close_behavior_get')
@@ -3408,7 +3414,7 @@ export function App({
       active = false;
       offs.forEach(fn => fn());
     };
-  }, []);
+  }, [canChooseCloseBehavior]);
 
   // 客户端更新：启动配置读取、延迟静默检查与下载进度监听
   useEffect(() => {
@@ -4851,7 +4857,7 @@ export function App({
           closeBusy={closeBusy}
           trayAvailable={trayAvailable}
           closeError={closeError}
-          onChooseCloseMode={nextMode => {
+          onChooseCloseMode={canChooseCloseBehavior ? nextMode => {
             if (closeBusy) return;
             setCloseBusy(true);
             setCloseError('');
@@ -4859,7 +4865,7 @@ export function App({
               .then(() => setCloseMode(nextMode))
               .catch(e => setCloseError(e?.message || '无法保存关闭设置，请重试'))
               .finally(() => setCloseBusy(false));
-          }}
+          } : null}
           customPlaylistCount={customPlaylists.length}
           customTrackCount={customTotalTracks}
           onExportCustomPlaylists={handleExportCustomPlaylists}

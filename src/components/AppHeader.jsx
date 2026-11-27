@@ -47,7 +47,8 @@ export function AppHeader({
   const [tunerOpen, setTunerOpen] = useState(false);
   const [isMaximized, setIsMaximized] = useState(false);
   const tunerRef = useRef(null);
-  const tauriMode = isTauriRuntime();
+  const hasCustomTitlebar = isTauriRuntime() && capabilities?.desktop?.customTitlebar === true;
+  const canUseQq = capabilities?.qqmusic?.available !== false;
 
   const currentProviderLabel =
     activeProvider === 'qqmusic' && platformFlavor.qqmusic === 'mock'
@@ -56,7 +57,7 @@ export function AppHeader({
 
   const providerOptions = [
     { id: 'netease', label: '网易云' },
-    { id: 'qqmusic', label: platformFlavor.qqmusic === 'mock' ? 'QQ 模拟' : 'QQ 音乐' },
+    ...(canUseQq ? [{ id: 'qqmusic', label: platformFlavor.qqmusic === 'mock' ? 'QQ 模拟' : 'QQ 音乐' }] : []),
     ...(canLocalLibrary ? [{ id: 'local', label: '本地' }] : []),
   ];
 
@@ -81,7 +82,7 @@ export function AppHeader({
 
   // 同步窗口最大化状态（仅 Tauri 桌面运行时）
   useEffect(() => {
-    if (!tauriMode) return undefined;
+    if (!hasCustomTitlebar) return undefined;
     let disposed = false;
     let unlisten = null;
     try {
@@ -109,10 +110,10 @@ export function AppHeader({
       disposed = true;
       if (typeof unlisten === 'function') unlisten();
     };
-  }, [tauriMode]);
+  }, [hasCustomTitlebar]);
 
   const handleDragStart = e => {
-    if (!tauriMode || e.button !== 0) return;
+    if (!hasCustomTitlebar || e.button !== 0) return;
     if (e.target.closest('button,input,form,a,[role="button"],.nr-brand-tuner,.nr-top-search,.nr-account-cluster,.nr-win-controls')) {
       return;
     }
@@ -122,7 +123,7 @@ export function AppHeader({
   };
 
   const handleHeaderDoubleClick = e => {
-    if (!tauriMode) return;
+    if (!hasCustomTitlebar) return;
     if (e.target.closest('button,input,form,a,[role="button"],.nr-brand-tuner,.nr-top-search,.nr-account-cluster,.nr-win-controls')) {
       return;
     }
@@ -142,7 +143,7 @@ export function AppHeader({
   return (
     <header
       className="topbar"
-      data-tauri-drag-region={tauriMode ? '' : undefined}
+      data-tauri-drag-region={hasCustomTitlebar ? '' : undefined}
       onMouseDown={handleDragStart}
       onDoubleClick={handleHeaderDoubleClick}
     >
@@ -255,7 +256,7 @@ export function AppHeader({
                     : activeProvider === 'qqmusic'
                       ? platformFlavor.qqmusic === 'mock'
                         ? '进入模拟账号'
-                        : 'QQ 登录'
+                        : 'QQ / 微信登录'
                       : '扫码登录'}
                 </button>
               ))}
@@ -280,7 +281,7 @@ export function AppHeader({
           <span className="lw-dot" data-on={updateAttention ? 'true' : 'false'} aria-hidden="true" />
         </button>
 
-        {tauriMode && (
+        {hasCustomTitlebar && (
           <div className="nr-win-controls" role="group" aria-label="窗口控制">
             <button
               type="button"

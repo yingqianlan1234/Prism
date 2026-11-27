@@ -267,46 +267,48 @@ export function SettingsPage({
             <div className="nr-settings-panel" role="region" aria-label="常规与数据设置">
               <header className="nr-settings-head">
                 <h2>常规与数据</h2>
-                <p>管理主窗口关闭行为，以及应用内跨源本机歌单的 JSON 备份。</p>
+                <p>{onChooseCloseMode ? '管理主窗口关闭行为，以及应用内跨源本机歌单的 JSON 备份。' : '管理应用内跨源本机歌单的 JSON 备份。'}</p>
               </header>
 
               <div className="nr-settings-grid">
-                <div className="nr-settings-card">
-                  <div className="nr-settings-card-head">
-                    <div>
-                      <h3>关闭主窗口时</h3>
-                      <p>决定点击右上角关闭按钮后的默认行为，可随时修改。</p>
+                {onChooseCloseMode && (
+                  <div className="nr-settings-card">
+                    <div className="nr-settings-card-head">
+                      <div>
+                        <h3>关闭主窗口时</h3>
+                        <p>决定点击右上角关闭按钮后的默认行为，可随时修改。</p>
+                      </div>
                     </div>
+                    <div className="nr-seg-pills" role="group" aria-label="关闭主窗口行为">
+                      <button
+                        type="button"
+                        className={'nr-seg-btn' + (closeMode === 'background' ? ' is-on' : '')}
+                        aria-pressed={closeMode === 'background'}
+                        disabled={closeBusy || !trayAvailable}
+                        onClick={() => onChooseCloseMode('background')}
+                      >
+                        后台运行（最小化到托盘）
+                      </button>
+                      <button
+                        type="button"
+                        className={'nr-seg-btn' + (closeMode === 'exit' ? ' is-on' : '')}
+                        aria-pressed={closeMode === 'exit'}
+                        disabled={closeBusy}
+                        onClick={() => onChooseCloseMode('exit')}
+                      >
+                        完全退出并停止播放
+                      </button>
+                    </div>
+                    {!trayAvailable && (
+                      <p className="nr-settings-note">当前系统托盘不可用，暂不支持转入后台运行。</p>
+                    )}
+                    {closeError && (
+                      <p className="nr-dialog-error" role="alert">
+                        {closeError}
+                      </p>
+                    )}
                   </div>
-                  <div className="nr-seg-pills" role="group" aria-label="关闭主窗口行为">
-                    <button
-                      type="button"
-                      className={'nr-seg-btn' + (closeMode === 'background' ? ' is-on' : '')}
-                      aria-pressed={closeMode === 'background'}
-                      disabled={closeBusy || !trayAvailable}
-                      onClick={() => onChooseCloseMode('background')}
-                    >
-                      后台运行（最小化到托盘）
-                    </button>
-                    <button
-                      type="button"
-                      className={'nr-seg-btn' + (closeMode === 'exit' ? ' is-on' : '')}
-                      aria-pressed={closeMode === 'exit'}
-                      disabled={closeBusy}
-                      onClick={() => onChooseCloseMode('exit')}
-                    >
-                      完全退出并停止播放
-                    </button>
-                  </div>
-                  {!trayAvailable && (
-                    <p className="nr-settings-note">当前系统托盘不可用，暂不支持转入后台运行。</p>
-                  )}
-                  {closeError && (
-                    <p className="nr-dialog-error" role="alert">
-                      {closeError}
-                    </p>
-                  )}
-                </div>
+                )}
 
                 <div className="nr-settings-card">
                   <div className="nr-settings-card-head">

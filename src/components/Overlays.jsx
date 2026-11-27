@@ -404,9 +404,11 @@ export function MoreSettingsPanel({
         播放详情
       </button>
 
-      <button type="button" className="lw-more-item" onClick={onOpenCloseSettings}>
-        关闭窗口：{closeMode === 'background' ? '后台运行' : closeMode === 'exit' ? '完全退出' : '每次询问'}
-      </button>
+      {onOpenCloseSettings && (
+        <button type="button" className="lw-more-item" onClick={onOpenCloseSettings}>
+          关闭窗口：{closeMode === 'background' ? '后台运行' : closeMode === 'exit' ? '完全退出' : '每次询问'}
+        </button>
+      )}
 
       {canAppUpdater && (
         <button type="button" className="lw-more-item nr-update-entry" onClick={onOpenUpdater}>
@@ -638,7 +640,7 @@ export function QqAuthDialog({ open, busy, message, onComplete, onCancel }) {
         aria-labelledby="qq-auth-heading"
       >
         <h2 id="qq-auth-heading">QQ 音乐授权</h2>
-        <p>请在腾讯授权窗口由你本人完成登录，再回到这里确认。</p>
+        <p>请在授权窗口选择 QQ 登录或微信登录，扫码确认并等网页显示已登录后，再回到这里确认。</p>
         <div className="nr-dialog-actions">
           <button type="button" className="nr-primary-btn" disabled={busy} onClick={onComplete}>
             已完成 QQ 授权
