@@ -12,6 +12,16 @@ mod local_library;
 mod local_media;
 #[cfg(windows)]
 mod background;
+
+// The windows implementation macro expects its windows-core re-export at this crate path.
+#[cfg(windows)]
+extern crate self as windows_core;
+#[cfg(windows)]
+use windows::core::{
+    imp, AsImpl, ComObject, ComObjectInner, ComObjectInterface, Interface, InterfaceRef,
+    IInspectable, IInspectable_Vtbl, IUnknown, IUnknownImpl, StaticComObject, DYNAMIC_CAST_IID,
+    GUID, HRESULT,
+};
 #[cfg(windows)]
 mod window_dwm;
 mod qq_login_offline;
@@ -443,6 +453,8 @@ fn main() {
             background::close_behavior_set,
             #[cfg(windows)]
             background::close_behavior_finish_exit,
+            #[cfg(windows)]
+            background::tray_status_sync,
             #[cfg(any(windows, target_os = "macos"))]
             qq_web_auth::qq_web_login_open,
             #[cfg(any(windows, target_os = "macos"))]

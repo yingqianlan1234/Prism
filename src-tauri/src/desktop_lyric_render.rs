@@ -2,11 +2,15 @@ use super::{
     button_left, logical, Button, Content, LyricAlign, LyricLayout, LyricStyle, LyricTheme,
     BUTTONS, BUTTON_WIDTH, TOOLBAR_HEIGHT,
 };
-use std::ptr::NonNull;
+use std::{
+    cell::{Cell, RefCell},
+    ffi::c_void,
+    ptr::NonNull,
+};
 use windows::{
-    core::{w, Error, Result, BOOL, PCWSTR},
+    core::{w, ComObject, Error, IUnknown, Interface, Ref, Result, BOOL, PCWSTR},
     Win32::{
-        Foundation::{D2DERR_RECREATE_TARGET, E_FAIL, RECT, SIZE},
+        Foundation::{D2DERR_RECREATE_TARGET, DWRITE_E_NOCOLOR, E_FAIL, E_NOTIMPL, RECT, SIZE},
         Graphics::{
             Direct2D::{Common::*, *},
             DirectWrite::*,
@@ -15,7 +19,7 @@ use windows::{
         },
     },
 };
-use windows_numerics::Vector2;
+use windows_numerics::{Matrix3x2, Vector2};
 
 const ICE: u32 = 0xf0f4fa;
 const AMBER: u32 = 0xf2a65a;
@@ -31,7 +35,7 @@ struct Palette {
 fn palette(content: &Content, theme: LyricTheme) -> Palette {
     let (active, paused, accent, secondary, shadow, outline) = match theme {
         LyricTheme::Night => (ICE, 0xa4b4c9, AMBER, 0x8fa2bc, 0x030711, 0.50),
-        LyricTheme::Contrast => (0xffffff, 0xcbd5e1, 0xffb85c, 0xe2e8f0, 0x000000, 0.86),
+        LyricTheme::Contrast => (0xffffff, 0xcbd5e1, 0xffb85c, 0xe2e8f0, 0x000000, 1.0),
         LyricTheme::Warm => (0xfff4e0, 0xc7b299, 0xf5b762, 0xc7b299, 0x160d08, 0.50),
         LyricTheme::Accent => (
             ICE,
@@ -131,6 +135,8 @@ pub(super) struct Renderer {
     target: ID2D1DCRenderTarget,
     factory: ID2D1Factory,
     text: IDWriteFactory,
+    color_text: Option<IDWriteFactory4>,
+    lyric_stroke: ID2D1StrokeStyle,
     family: PCWSTR,
     hardware: bool,
     surface: Option<Dib>,
@@ -185,6 +191,18 @@ impl Renderer {
             let factory: ID2D1Factory = D2D1CreateFactory(D2D1_FACTORY_TYPE_SINGLE_THREADED, None)?;
             let text: IDWriteFactory = DWriteCreateFactory(DWRITE_FACTORY_TYPE_SHARED)?;
             let family = font_family(&text);
+            let color_text = text.cast().ok();
+            let lyric_stroke = factory.CreateStrokeStyle(
+                &D2D1_STROKE_STYLE_PROPERTIES {
+                    startCap: D2D1_CAP_STYLE_ROUND,
+                    endCap: D2D1_CAP_STYLE_ROUND,
+                    dashCap: D2D1_CAP_STYLE_ROUND,
+                    lineJoin: D2D1_LINE_JOIN_ROUND,
+                    miterLimit: 1.0,
+                    ..Default::default()
+                },
+                None,
+            )?;
             let preferred = target(&factory, D2D1_RENDER_TARGET_TYPE_HARDWARE);
             let hardware = preferred.is_ok();
             let target =
@@ -193,6 +211,8 @@ impl Renderer {
                 target,
                 factory,
                 text,
+                color_text,
+                lyric_stroke,
                 family,
                 hardware,
                 surface: None,
@@ -290,6 +310,7 @@ impl Renderer {
             let canvas = Canvas {
                 renderer: self,
                 brush,
+                pixel_width: 96.0 / dpi as f32,
             };
             target.BeginDraw();
             target.Clear(None);
@@ -326,9 +347,138 @@ fn rounded(rect: D2D_RECT_F, radius: f32) -> D2D1_ROUNDED_RECT {
     }
 }
 
+#[windows::core::implement(IDWriteTextRenderer, Agile = false)]
+struct GlyphOutlines {
+    factory: ID2D1Factory,
+    color_text: IDWriteFactory4,
+    runs: RefCell<Vec<Option<ID2D1Geometry>>>,
+    needs_native_text: Cell<bool>,
+}
+
+impl IDWritePixelSnapping_Impl for GlyphOutlines_Impl {
+    fn IsPixelSnappingDisabled(&self, _: *const c_void) -> Result<BOOL> {
+        Ok(true.into())
+    }
+
+    fn GetCurrentTransform(&self, _: *const c_void, _: *mut DWRITE_MATRIX) -> Result<()> {
+        Err(Error::from_hresult(E_NOTIMPL))
+    }
+
+    fn GetPixelsPerDip(&self, _: *const c_void) -> Result<f32> {
+        Err(Error::from_hresult(E_NOTIMPL))
+    }
+}
+
+impl IDWriteTextRenderer_Impl for GlyphOutlines_Impl {
+    fn DrawGlyphRun(
+        &self,
+        _: *const c_void,
+        x: f32,
+        y: f32,
+        measuring_mode: DWRITE_MEASURING_MODE,
+        run: *const DWRITE_GLYPH_RUN,
+        description: *const DWRITE_GLYPH_RUN_DESCRIPTION,
+        _: Ref<'_, IUnknown>,
+    ) -> Result<()> {
+        (|| -> Result<()> {
+            unsafe {
+                let run = run.as_ref().ok_or_else(|| Error::from_hresult(E_FAIL))?;
+                if run.glyphCount == 0 {
+                    return Ok(());
+                }
+                let face = run
+                    .fontFace
+                    .as_ref()
+                    .ok_or_else(|| Error::from_hresult(E_FAIL))?;
+                if run.glyphIndices.is_null() {
+                    return Err(Error::from_hresult(E_FAIL));
+                }
+                // A successful translation signals color layers or bitmap/SVG glyphs.
+                let color_formats = DWRITE_GLYPH_IMAGE_FORMATS_COLR
+                    | DWRITE_GLYPH_IMAGE_FORMATS_SVG
+                    | DWRITE_GLYPH_IMAGE_FORMATS_PNG
+                    | DWRITE_GLYPH_IMAGE_FORMATS_JPEG
+                    | DWRITE_GLYPH_IMAGE_FORMATS_TIFF
+                    | DWRITE_GLYPH_IMAGE_FORMATS_PREMULTIPLIED_B8G8R8A8;
+                match self.color_text.TranslateColorGlyphRun(
+                    Vector2::new(x, y),
+                    run,
+                    (!description.is_null()).then_some(description),
+                    color_formats,
+                    measuring_mode,
+                    None,
+                    0,
+                ) {
+                    Err(error) if error.code() == DWRITE_E_NOCOLOR => {}
+                    Err(error) => return Err(error),
+                    Ok(_) => return Err(Error::from_hresult(E_NOTIMPL)),
+                }
+                let path = self.factory.CreatePathGeometry()?;
+                let sink = path.Open()?;
+                face.GetGlyphRunOutline(
+                    run.fontEmSize,
+                    run.glyphIndices,
+                    (!run.glyphAdvances.is_null()).then_some(run.glyphAdvances),
+                    (!run.glyphOffsets.is_null()).then_some(run.glyphOffsets),
+                    run.glyphCount,
+                    run.isSideways.as_bool(),
+                    run.bidiLevel % 2 != 0,
+                    &sink,
+                )?;
+                sink.Close()?;
+                let positioned = self
+                    .factory
+                    .CreateTransformedGeometry(&path, &Matrix3x2::translation(x, y))?;
+                self.runs.borrow_mut().push(Some(positioned.into()));
+                Ok(())
+            }
+        })()
+        .inspect_err(|_| self.needs_native_text.set(true))
+    }
+
+    fn DrawUnderline(
+        &self,
+        _: *const c_void,
+        _: f32,
+        _: f32,
+        _: *const DWRITE_UNDERLINE,
+        _: Ref<'_, IUnknown>,
+    ) -> Result<()> {
+        self.needs_native_text.set(true);
+        Err(Error::from_hresult(E_NOTIMPL))
+    }
+
+    fn DrawStrikethrough(
+        &self,
+        _: *const c_void,
+        _: f32,
+        _: f32,
+        _: *const DWRITE_STRIKETHROUGH,
+        _: Ref<'_, IUnknown>,
+    ) -> Result<()> {
+        self.needs_native_text.set(true);
+        Err(Error::from_hresult(E_NOTIMPL))
+    }
+
+    fn DrawInlineObject(
+        &self,
+        _: *const c_void,
+        _: f32,
+        _: f32,
+        _: Ref<'_, IDWriteInlineObject>,
+        _: BOOL,
+        _: BOOL,
+        _: Ref<'_, IUnknown>,
+    ) -> Result<()> {
+        self.needs_native_text.set(true);
+        Err(Error::from_hresult(E_NOTIMPL))
+    }
+}
+
 struct Canvas<'a> {
     renderer: &'a Renderer,
     brush: ID2D1SolidColorBrush,
+    pixel_width: f32,
 }
 
 impl Canvas<'_> {
@@ -372,7 +522,12 @@ impl Canvas<'_> {
             target.DrawGeometry(&shackle, &self.brush, 1.5, None::<&ID2D1StrokeStyle>);
             target.DrawRoundedRectangle(
                 &rounded(
-                    rect(center_x - 4.5, center_y + 0.5, center_x + 4.5, center_y + 5.5),
+                    rect(
+                        center_x - 4.5,
+                        center_y + 0.5,
+                        center_x + 4.5,
+                        center_y + 5.5,
+                    ),
                     1.4,
                 ),
                 &self.brush,
@@ -438,6 +593,73 @@ impl Canvas<'_> {
         }
     }
 
+    fn lyric_path(
+        &self,
+        layout: &IDWriteTextLayout,
+        origin: Vector2,
+    ) -> Result<ID2D1GeometryGroup> {
+        let factory = &self.renderer.factory;
+        let renderer = ComObject::new(GlyphOutlines {
+            factory: factory.clone(),
+            color_text: self
+                .renderer
+                .color_text
+                .clone()
+                .ok_or_else(|| Error::from_hresult(E_NOTIMPL))?,
+            runs: RefCell::new(Vec::new()),
+            needs_native_text: Cell::new(false),
+        });
+        unsafe {
+            layout.Draw(
+                None,
+                &*renderer.as_interface::<IDWriteTextRenderer>(),
+                origin.X,
+                origin.Y,
+            )?;
+            // DirectWrite can continue layout drawing after a renderer callback fails.
+            if renderer.get().needs_native_text.get() {
+                return Err(Error::from_hresult(E_NOTIMPL));
+            }
+            let runs = renderer.get().runs.borrow();
+            factory.CreateGeometryGroup(D2D1_FILL_MODE_WINDING, &runs)
+        }
+    }
+
+    fn karaoke_brush(
+        &self,
+        split: f32,
+        accent: u32,
+        base: u32,
+        alpha: f32,
+    ) -> Result<ID2D1LinearGradientBrush> {
+        let target = &self.renderer.target;
+        let half_pixel = self.pixel_width / 2.0;
+        unsafe {
+            let stops = target.CreateGradientStopCollection(
+                &[
+                    D2D1_GRADIENT_STOP {
+                        position: 0.0,
+                        color: color(accent, alpha),
+                    },
+                    D2D1_GRADIENT_STOP {
+                        position: 1.0,
+                        color: color(base, alpha),
+                    },
+                ],
+                D2D1_GAMMA_2_2,
+                D2D1_EXTEND_MODE_CLAMP,
+            )?;
+            target.CreateLinearGradientBrush(
+                &D2D1_LINEAR_GRADIENT_BRUSH_PROPERTIES {
+                    startPoint: Vector2::new(split - half_pixel, 0.0),
+                    endPoint: Vector2::new(split + half_pixel, 0.0),
+                },
+                None,
+                &stops,
+            )
+        }
+    }
+
     fn lyric(
         &self,
         layout: &IDWriteTextLayout,
@@ -446,63 +668,94 @@ impl Canvas<'_> {
         rgb: u32,
         alpha: f32,
         progress: f32,
+        stroke_width: f32,
     ) -> Result<()> {
         if alpha <= 0.0 {
             return Ok(());
         }
-        let x = area.left;
-        let y = area.top;
-        self.ink(
-            layout,
-            Vector2::new(x, y + 2.0),
-            palette.shadow,
-            alpha * 0.45,
-        );
-        for (offset_x, offset_y) in [(-2.0, 2.5), (2.0, 2.5), (0.0, 4.0)] {
-            self.ink(
-                layout,
-                Vector2::new(x + offset_x, y + offset_y),
-                palette.shadow,
-                alpha * 0.22,
-            );
-        }
-        for (offset_x, offset_y) in [(-1.0, 0.0), (1.0, 0.0), (0.0, -1.0), (0.0, 1.0)] {
-            self.ink(
-                layout,
-                Vector2::new(x + offset_x, y + offset_y),
-                palette.shadow,
-                alpha * palette.outline,
-            );
-        }
-        let origin = Vector2::new(x, y);
-        if progress <= 0.0 {
-            self.ink(layout, origin, rgb, alpha);
+        let origin = Vector2::new(area.left, area.top);
+        let shadow_offset = 1.6;
+        let (fill, split) = if progress <= 0.0 {
+            (rgb, None)
         } else if progress >= 1.0 {
-            self.ink(layout, origin, palette.accent, alpha);
+            (palette.accent, None)
         } else {
             let mut metrics = DWRITE_TEXT_METRICS::default();
+            unsafe { layout.GetMetrics(&mut metrics)? };
+            let split =
+                (area.left + metrics.left + metrics.width * progress).clamp(area.left, area.right);
+            (rgb, Some(split))
+        };
+        let target = &self.renderer.target;
+        let paths = self.lyric_path(layout, origin).and_then(|path| {
+            let shadow = unsafe {
+                self.renderer
+                    .factory
+                    .CreateTransformedGeometry(&path, &Matrix3x2::translation(0.0, shadow_offset))?
+            };
+            let gradient = split
+                .map(|x| self.karaoke_brush(x, palette.accent, fill, alpha))
+                .transpose()?;
+            Ok((path, shadow, gradient))
+        });
+        if let Ok((path, shadow, gradient)) = paths {
             unsafe {
-                layout.GetMetrics(&mut metrics)?;
+                target.PushAxisAlignedClip(&area, D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
+                self.brush.SetColor(&color(palette.shadow, alpha * 0.30));
+                target.FillGeometry(&shadow, &self.brush, None::<&ID2D1Brush>);
+                self.brush
+                    .SetColor(&color(palette.shadow, alpha * palette.outline));
+                target.DrawGeometry(
+                    &path,
+                    &self.brush,
+                    stroke_width,
+                    &self.renderer.lyric_stroke,
+                );
+                self.brush.SetColor(&color(fill, alpha));
+                let brush: &ID2D1Brush = match &gradient {
+                    Some(gradient) => gradient,
+                    None => &self.brush,
+                };
+                target.FillGeometry(&path, brush, None::<&ID2D1Brush>);
+                target.PopAxisAlignedClip();
             }
-            let split = (x + metrics.left + metrics.width * progress).clamp(area.left, area.right);
-            let target = &self.renderer.target;
-            for (left, right, fill) in
-                [(area.left, split, palette.accent), (split, area.right, rgb)]
-            {
-                if left >= right {
-                    continue;
-                }
-                unsafe {
-                    target.PushAxisAlignedClip(
-                        &rect(left, area.top, right, area.bottom),
-                        D2D1_ANTIALIAS_MODE_ALIASED,
-                    );
-                }
-                self.ink(layout, origin, fill, alpha);
-                unsafe {
-                    target.PopAxisAlignedClip();
+            return Ok(());
+        }
+
+        // Fall back for the whole layout so partial outlines never obscure native glyphs.
+        self.ink(
+            layout,
+            Vector2::new(origin.X, origin.Y + shadow_offset),
+            palette.shadow,
+            alpha * 0.30,
+        );
+        let draw_native = |rgb| unsafe {
+            self.brush.SetColor(&color(rgb, alpha));
+            target.DrawTextLayout(
+                origin,
+                layout,
+                &self.brush,
+                D2D1_DRAW_TEXT_OPTIONS_CLIP | D2D1_DRAW_TEXT_OPTIONS_ENABLE_COLOR_FONT,
+            );
+        };
+        if let Some(split) = split {
+            for (left, right, rgb) in [
+                (area.left, split, palette.accent),
+                (split, area.right, fill),
+            ] {
+                if left < right {
+                    unsafe {
+                        target.PushAxisAlignedClip(
+                            &rect(left, area.top, right, area.bottom),
+                            D2D1_ANTIALIAS_MODE_PER_PRIMITIVE,
+                        );
+                        draw_native(rgb);
+                        target.PopAxisAlignedClip();
+                    }
                 }
             }
+        } else {
+            draw_native(fill);
         }
         Ok(())
     }
@@ -560,6 +813,7 @@ impl Canvas<'_> {
                 palette.primary,
                 ease,
                 effects.progress,
+                (style.font_size as f32 * 0.10).clamp(2.4, 3.2),
             )?;
         }
         top += style.primary_height() as f32;
@@ -588,6 +842,7 @@ impl Canvas<'_> {
                 },
                 1.0,
                 0.0,
+                ((style.secondary_height() - 6) as f32 * 0.10).clamp(1.8, 2.2),
             )?;
             top = area.bottom;
         }
@@ -600,7 +855,7 @@ impl Canvas<'_> {
                 style.align,
                 DWRITE_FONT_WEIGHT_MEDIUM,
             )?;
-            self.lyric(&layout, area, &palette, palette.secondary, 1.0, 0.0)?;
+            self.lyric(&layout, area, &palette, palette.secondary, 1.0, 0.0, 1.8)?;
         }
         Ok(())
     }
@@ -754,5 +1009,47 @@ impl Canvas<'_> {
             _ => {}
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn normal_lyrics_have_vector_outlines_and_trimmed_lyrics_still_render() {
+        let mut renderer = Renderer::new().unwrap();
+        let surface = renderer
+            .frame(SIZE { cx: 210, cy: 50 }, 96, false, |canvas, _, _| {
+                let area = rect(10.0, 0.0, 200.0, 50.0);
+                let origin = Vector2::new(area.left, area.top);
+                let layout = canvas.layout(
+                    "夜行 Night",
+                    area,
+                    28.0,
+                    LyricAlign::Left,
+                    DWRITE_FONT_WEIGHT_SEMI_BOLD,
+                )?;
+                let path = canvas.lyric_path(&layout, origin)?;
+                let bounds = unsafe { path.GetBounds(None)? };
+                assert!(bounds.left >= area.left - 2.0 && bounds.right > bounds.left);
+                assert!(bounds.top >= area.top && bounds.bottom > bounds.top);
+
+                let area = rect(10.0, 0.0, 110.0, 50.0);
+                let layout = canvas.layout(
+                    &"Night ride ".repeat(20),
+                    area,
+                    28.0,
+                    LyricAlign::Left,
+                    DWRITE_FONT_WEIGHT_SEMI_BOLD,
+                )?;
+                assert!(canvas.lyric_path(&layout, origin).is_err());
+                let palette = palette(&Content::default(), LyricTheme::Contrast);
+                canvas.lyric(&layout, area, &palette, ICE, 1.0, 0.5, 2.8)
+            })
+            .unwrap();
+        let pixels = surface.pixels();
+        assert!(pixels.contains(&0xfff0f4fa));
+        assert!(pixels.contains(&0xffffb85c));
     }
 }

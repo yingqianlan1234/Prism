@@ -4201,6 +4201,22 @@ export function App({
     return undefined;
   }, [song]);
 
+  // Windows 系统托盘 Tooltip 与播控菜单文案同步
+  useEffect(() => {
+    if (!trayAvailable || typeof window === 'undefined' || !('__TAURI_INTERNALS__' in window)) {
+      return undefined;
+    }
+    try {
+      const pending = invoke('tray_status_sync', {
+        title: song?.name || null,
+        artist: song ? artist(song) || null : null,
+        playing: Boolean(playing),
+      });
+      if (pending && typeof pending.catch === 'function') pending.catch(() => {});
+    } catch {}
+    return undefined;
+  }, [trayAvailable, song, playing]);
+
   const line = lyrics[lyricIndex];
   const diagnostic = showDiagnostics ? listening.current.diagnosticSnapshot() : null;
   const diagnosticText = d =>
