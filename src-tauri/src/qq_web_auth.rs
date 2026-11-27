@@ -29,7 +29,51 @@ const API_URL: &str = "https://u.y.qq.com/cgi-bin/musicu.fcg";
 const MAX_BODY: usize = 1024 * 1024;
 
 #[derive(Default)]
-struct Inner { generation: u64, auth_window: Option<u64>, completing: bool, stream: Option<Stream>, candidate:Option<Stream>, previous:Option<Stream>, diagnostic: Option<PlaybackDiagnostic>, diagnostic_revision:u64, resolve_revision:u64, resolve_status:ResolveStatus }
+struct Inner {
+    generation: u64,
+    auth_window: Option<u64>,
+    completing: bool,
+    stream: Option<Stream>,
+    candidate: Option<Stream>,
+    previous: Option<Stream>,
+    diagnostic: Option<PlaybackDiagnostic>,
+    diagnostic_revision: u64,
+    resolve_revision: u64,
+    resolve_status: ResolveStatus,
+    #[cfg(target_os = "macos")]
+    verified_session: Option<Arc<WebSession>>,
+}
+
+impl Inner {
+    fn remember_verified_session(&mut self, session: Arc<WebSession>) {
+        // Reuse the authorized session for subsequent requests without prompting
+        // for access to the same Keychain item repeatedly on macOS.
+        #[cfg(target_os = "macos")]
+        { self.verified_session = Some(session); }
+        #[cfg(not(target_os = "macos"))]
+        let _ = session;
+    }
+
+    fn clear_account(&mut self) {
+        self.generation += 1;
+        self.diagnostic_revision = self.diagnostic_revision.wrapping_add(1);
+        if let Some(diagnostic) = self.diagnostic.as_mut() {
+            *diagnostic = PlaybackDiagnostic {
+                stage: "账号已退出",
+                session_expiry: "未知",
+                session_validity: "未检查",
+                upstream_identity_match: "未知",
+                ..Default::default()
+            };
+        }
+        self.completing = false;
+        self.stream = None;
+        self.candidate = None;
+        self.previous = None;
+        #[cfg(target_os = "macos")]
+        { self.verified_session = None; }
+    }
+}
 #[derive(Clone,Copy,PartialEq,Eq,Default)]
 enum ResolveStatus {#[default] Idle,Pending,Failed,Succeeded}
 struct ResolveGuard {inner:Arc<Mutex<Inner>>,revision:u64}
@@ -515,6 +559,7 @@ pub async fn qq_web_login_complete(app: AppHandle, caller: WebviewWindow, state:
         let mut s = state.inner.lock().map_err(|_| err("storage", "QQ 会话不可用"))?;
         if s.generation != generation || s.auth_window.is_none() { return Err(err("cancelled", "QQ 授权已取消")); }
         SystemCredentialStore.save(&secret).map_err(|_| err("storage", "无法安全保存 QQ 登录状态"))?;
+        s.remember_verified_session(Arc::new(session));
         s.generation += 1;
     }
     let clear_window = auth.clone();
@@ -536,14 +581,15 @@ pub fn qq_web_login_cancel(app: AppHandle, caller: WebviewWindow, state: State<'
 #[tauri::command]
 pub async fn qq_web_account(caller: WebviewWindow, state: State<'_, QqWebAuth>) -> Result<Value> {
     main_only(&caller)?;
-    let generation = state.inner.lock().map_err(|_| err("storage", "QQ 会话不可用"))?.generation;
-    let credential = SystemCredentialStore.load().map_err(|_| err("storage", "无法读取 QQ 登录状态"))?;
-    let Some(credential) = credential else { return Ok(json!({"profile":null})); };
-    let session = WebSession::from_credential(&credential)?;
+    let (generation, session) = stored_session(&state)?;
+    let Some(session) = session else { return Ok(json!({"profile":null})); };
+    require_generation(&state, generation)?;
     let info = profile(&state.client, &session).await?;
-    if state.inner.lock().map_err(|_| err("storage", "QQ 会话不可用"))?.generation != generation {
+    let mut inner = state.inner.lock().map_err(|_| err("storage", "QQ 会话不可用"))?;
+    if inner.generation != generation {
         return Err(err("cancelled", "QQ 账号已变化"));
     }
+    inner.remember_verified_session(session);
     Ok(json!({"profile":info}))
 }
 
@@ -552,24 +598,36 @@ pub fn qq_web_logout(app: AppHandle, caller: WebviewWindow, state: State<'_, QqW
     main_only(&caller)?;
     let mut s = state.inner.lock().map_err(|_| err("storage", "QQ 会话不可用"))?;
     SystemCredentialStore.clear().map_err(|_| err("storage", "无法清理 QQ 本地登录状态"))?;
-    s.generation += 1;
-    s.diagnostic_revision=s.diagnostic_revision.wrapping_add(1);
-    if let Some(d)=s.diagnostic.as_mut(){*d=PlaybackDiagnostic{stage:"账号已退出",session_expiry:"未知",session_validity:"未检查",upstream_identity_match:"未知",..Default::default()};}
-    s.completing = false;
-    s.stream = None;
-    s.candidate = None;
-    s.previous = None;
+    s.clear_account();
     drop(s);
     if let Some(auth) = app.get_webview_window(LABEL) { let _ = auth.close(); }
     Ok(json!({"localCleared":true,"remoteRevoked":false}))
 }
 
 
-fn account_snapshot(state: &QqWebAuth) -> Result<(u64, WebSession)> {
-    let generation = state.inner.lock().map_err(|_| err("storage", "QQ 会话不可用"))?.generation;
-    let credential = SystemCredentialStore.load().map_err(|_| err("storage", "无法读取 QQ 登录状态"))?
-        .ok_or(err("auth", "请先登录 QQ 音乐"))?;
-    Ok((generation, WebSession::from_credential(&credential)?))
+fn read_session(
+    state: &QqWebAuth,
+    load: impl FnOnce() -> Result<Option<Credential>>,
+) -> Result<(u64, Option<Arc<WebSession>>)> {
+    let inner = state.inner.lock().map_err(|_| err("storage", "QQ 会话不可用"))?;
+    let generation = inner.generation;
+    #[cfg(target_os = "macos")]
+    if let Some(session) = &inner.verified_session {
+        return Ok((generation, Some(Arc::clone(session))));
+    }
+    drop(inner);
+    let session = load()?.as_ref().map(WebSession::from_credential).transpose()?;
+    require_generation(state, generation)?;
+    Ok((generation, session.map(Arc::new)))
+}
+
+fn stored_session(state: &QqWebAuth) -> Result<(u64, Option<Arc<WebSession>>)> {
+    read_session(state, || SystemCredentialStore.load().map_err(|_| err("storage", "无法读取 QQ 登录状态")))
+}
+
+fn account_snapshot(state: &QqWebAuth) -> Result<(u64, Arc<WebSession>)> {
+    let (generation, session) = stored_session(state)?;
+    Ok((generation, session.ok_or(err("auth", "请先登录 QQ 音乐"))?))
 }
 fn require_generation(state:&QqWebAuth,generation:u64)->Result<()> {
  if state.inner.lock().map_err(|_|err("storage","QQ 会话不可用"))?.generation!=generation {Err(err("cancelled","QQ 账号已变化"))}else{Ok(())}
@@ -869,6 +927,27 @@ mod tests {
         assert!(session.wechat.is_some());
         assert_eq!(session.account, "1234567890123456");
         assert_eq!(session.key, "fixture-wechat-key");
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn macos_reuses_a_verified_wechat_session_until_logout() {
+        let state = QqWebAuth::new();
+        let (generation, loaded) = read_session(&state, || {
+            Ok(Some(Credential::new(r#"{"musicid":"1234567890123456","musickey":"fixture-key","wechat":{"uin":"1234567890123456","openid":null}}"#.into()).unwrap()))
+        }).unwrap();
+        state.inner.lock().unwrap().remember_verified_session(loaded.unwrap());
+
+        let (reused_generation, reused) = read_session(&state, || panic!("verified session should not reread Keychain")).unwrap();
+        assert_eq!(reused_generation, generation);
+        let reused = reused.unwrap();
+        assert_eq!(reused.account, "1234567890123456");
+        assert!(reused.wechat.is_some());
+
+        state.inner.lock().unwrap().clear_account();
+        let (after_logout, missing) = read_session(&state, || Ok(None)).unwrap();
+        assert!(after_logout > generation);
+        assert!(missing.is_none());
     }
 
     #[test] fn wechat_requires_its_music_session_and_legacy_credentials_still_load() {

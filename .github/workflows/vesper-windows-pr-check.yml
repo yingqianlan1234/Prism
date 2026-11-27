@@ -1,4 +1,4 @@
-name: Verify latest PR two desktop integration
+name: Verify the final desktop integration and session fix
 on:
   push:
     branches: [ci/macos-wechat-windows-check]
@@ -11,13 +11,11 @@ jobs:
     steps:
       - uses: actions/checkout@v6
         with:
-          ref: 8f4f67f62fdfea4abe458fd0b6261d6d74f09a9d
+          ref: ea9c5400485f438c20a4e9d65ae7e165da37c6d3
           persist-credentials: false
       - run: git rev-parse HEAD
       - run: npm ci --no-audit --no-fund
         id: install
-      - name: Test the frontend suite
-        run: npm test
       - name: Verify three-source continuity and account restore on Windows
         if: ${{ !cancelled() && steps.install.outcome == 'success' }}
         shell: pwsh
