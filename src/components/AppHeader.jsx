@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { memo, useEffect, useRef, useState } from 'react';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { Icon } from './Icons.jsx';
 
@@ -15,7 +15,7 @@ const PROVIDER_LABELS = {
   local: '本地',
 };
 
-export function AppHeader({
+export const AppHeader = memo(function AppHeader({
   capabilities,
   platformFlavor,
   canLocalLibrary,
@@ -327,4 +327,4 @@ export function AppHeader({
       </div>
     </header>
   );
-}
+});

@@ -1,7 +1,24 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { memo, useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { Icon } from './Icons.jsx';
 
-export function LyricPanel({ lyrics, index, status, onClose, onSeek, stage, embedded = false }) {
+const noopSubscribe = () => () => {};
+const fallbackSnapshot = () => -1;
+
+export const LyricPanel = memo(function LyricPanel({
+  lyrics,
+  index,
+  indexStore,
+  status,
+  onClose,
+  onSeek,
+  stage,
+  embedded = false,
+}) {
+  const storeIndex = useSyncExternalStore(
+    indexStore ? indexStore.subscribe : noopSubscribe,
+    indexStore ? indexStore.getSnapshot : fallbackSnapshot
+  );
+  const activeIndex = indexStore ? storeIndex : index;
   const box = useRef(null);
   const timer = useRef(null);
   const [following, setFollowing] = useState(true);
@@ -38,7 +55,7 @@ export function LyricPanel({ lyrics, index, status, onClose, onSeek, stage, embe
     prevLyricsRef.current = lyrics;
     if (changed && !following) setFollowing(true);
     const container = box.current;
-    if ((!following && !changed) || index < 0 || !container) return;
+    if ((!following && !changed) || activeIndex < 0 || !container) return;
     const current = container.querySelector('[aria-current="true"]');
     if (!current) return;
     const boxRect = container.getBoundingClientRect();
@@ -58,7 +75,7 @@ export function LyricPanel({ lyrics, index, status, onClose, onSeek, stage, embe
     } else {
       container.scrollTop = target;
     }
-  }, [index, following, lyrics]);
+  }, [activeIndex, following, lyrics]);
 
   return (
     <div
@@ -135,16 +152,16 @@ export function LyricPanel({ lyrics, index, status, onClose, onSeek, stage, embe
             <button
               key={i}
               type="button"
-              className={'lyric-line' + (i === index ? ' current-line' : '')}
-              aria-current={i === index ? 'true' : undefined}
-              data-depth={index < 0 ? 3 : Math.min(3, Math.abs(i - index))}
+              className={'lyric-line' + (i === activeIndex ? ' current-line' : '')}
+              aria-current={i === activeIndex ? 'true' : undefined}
+              data-depth={activeIndex < 0 ? 3 : Math.min(3, Math.abs(i - activeIndex))}
               onClick={() => onSeek(l.at)}
             >
               <span className="nr-lyric-main">{l.text}</span>
-              {showRomaji && l.romaji && Math.abs(i - index) <= 2 && (
+              {showRomaji && l.romaji && Math.abs(i - activeIndex) <= 2 && (
                 <small className="nr-lyric-romaji">{l.romaji}</small>
               )}
-              {showTrans && l.translation && Math.abs(i - index) <= 1 && (
+              {showTrans && l.translation && Math.abs(i - activeIndex) <= 1 && (
                 <small className="lw-lyric-translation">{l.translation}</small>
               )}
             </button>
@@ -179,4 +196,4 @@ export function LyricPanel({ lyrics, index, status, onClose, onSeek, stage, embe
       </div>
     </div>
   );
-}
+});

@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { memo, useEffect, useRef, useState } from 'react';
 import {
   artist,
   providerLabel,
@@ -433,7 +433,7 @@ export function MoreSettingsPanel({
   );
 }
 
-export function QueueDrawer({
+export const QueueDrawer = memo(function QueueDrawer({
   showQueue,
   setShowQueue,
   confirmClear,
@@ -962,9 +962,9 @@ export function QueueDrawer({
       )}
     </div>
   );
-}
+});
 
-export function QqAuthDialog({ open, busy, message, onComplete, onCancel }) {
+export const QqAuthDialog = memo(function QqAuthDialog({ open, busy, message, onComplete, onCancel }) {
   if (!open) return null;
   return (
     <div className="overlay">
@@ -992,9 +992,9 @@ export function QqAuthDialog({ open, busy, message, onComplete, onCancel }) {
       </div>
     </div>
   );
-}
+});
 
-export function CloseBehaviorDialog({
+export const CloseBehaviorDialog = memo(function CloseBehaviorDialog({
   closeDialog,
   closeBusy,
   trayAvailable,
@@ -1058,9 +1058,9 @@ export function CloseBehaviorDialog({
       </div>
     </div>
   );
-}
+});
 
-export function QrDialog({ qr, onClose }) {
+export const QrDialog = memo(function QrDialog({ qr, onClose }) {
   if (!qr) return null;
   return (
     <div className="overlay" onClick={onClose}>
@@ -1085,9 +1085,9 @@ export function QrDialog({ qr, onClose }) {
       </div>
     </div>
   );
-}
+});
 
-export function PlaylistPickerDialog({
+export const PlaylistPickerDialog = memo(function PlaylistPickerDialog({
   track,
   playlists,
   customPlaylists = [],
@@ -1242,9 +1242,9 @@ export function PlaylistPickerDialog({
       </div>
     </div>
   );
-}
+});
 
-export function GlobalShortcutsDialog({
+export const GlobalShortcutsDialog = memo(function GlobalShortcutsDialog({
   open,
   status,
   busy,
@@ -1412,9 +1412,9 @@ export function GlobalShortcutsDialog({
       </div>
     </div>
   );
-}
+});
 
-export function AppUpdateDialog({
+export const AppUpdateDialog = memo(function AppUpdateDialog({
   open,
   mode,
   config,
@@ -1772,4 +1772,4 @@ export function AppUpdateDialog({
       </div>
     </div>
   );
-}
+});

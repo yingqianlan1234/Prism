@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { memo } from 'react';
 
 // 统一 24x24 光学网格 SVG 图标库：支持多元素组合、填充强调与独立模式图标
 const ICONS = {
@@ -358,10 +358,10 @@ const ICONS = {
   ),
 };
 
-export function Icon({ name, className = 'nr-icon' }) {
+export const Icon = memo(function Icon({ name, className = 'nr-icon' }) {
   return (
     <svg className={className} viewBox="0 0 24 24" aria-hidden="true" focusable="false">
       {ICONS[name] || null}
     </svg>
   );
-}
+});

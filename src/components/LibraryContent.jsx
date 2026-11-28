@@ -1,7 +1,10 @@
-import React from 'react';
-import { artist, album, time } from '../utils/format.js';
+import React, { memo, useSyncExternalStore } from 'react';
+import { artist, album, time, lyricalLines } from '../utils/format.js';
 import { PlaylistCover, SongArtwork, SourceTag, InlineNotice } from './Artwork.jsx';
 import { Icon } from './Icons.jsx';
+
+const noopSubscribe = () => () => {};
+const fallbackLyricSnapshot = () => -1;
 
 const SEARCH_TYPES = [
   { id: 1, label: '单曲' },
@@ -10,7 +13,7 @@ const SEARCH_TYPES = [
   { id: 1000, label: '歌单' },
 ];
 
-export function SearchCategoryBar({ searchType, disabled, onSelectType }) {
+export const SearchCategoryBar = memo(function SearchCategoryBar({ searchType, disabled, onSelectType }) {
   return (
     <div className="nr-search-tabs" role="group" aria-label="搜索分类">
       {SEARCH_TYPES.map(cat => (
@@ -27,9 +30,9 @@ export function SearchCategoryBar({ searchType, disabled, onSelectType }) {
       ))}
     </div>
   );
-}
+});
 
-export function SearchCategoryResults({ searchType, items, onOpenPlaylist, onSearchKeyword }) {
+export const SearchCategoryResults = memo(function SearchCategoryResults({ searchType, items, onOpenPlaylist, onSearchKeyword }) {
   if (searchType === 1000) {
     return (
       <div className="lw-card-grid nr-search-grid">
@@ -110,9 +113,9 @@ export function SearchCategoryResults({ searchType, items, onOpenPlaylist, onSea
       ))}
     </div>
   );
-}
+});
 
-export function SongList({
+export const SongList = memo(function SongList({
   songs,
   ws,
   activeProvider,
@@ -289,7 +292,7 @@ export function SongList({
       })}
     </div>
   );
-}
+});
 
 const SKELETON_ROWS = [
   { titleW: '44%', artistW: '26%' },
@@ -325,7 +328,7 @@ export function TrackListSkeleton({ message }) {
   );
 }
 
-export function LocalEmptyState({
+export const LocalEmptyState = memo(function LocalEmptyState({
   foldersCount,
   hasQuery,
   query,
@@ -394,9 +397,9 @@ export function LocalEmptyState({
       </div>
     </div>
   );
-}
+});
 
-export function EmptyState({
+export const EmptyState = memo(function EmptyState({
   platformFlavor,
   noSearchResults,
   ws,
@@ -534,9 +537,9 @@ export function EmptyState({
       </div>
     </div>
   );
-}
+});
 
-export function NowPanel({
+export const NowPanel = memo(function NowPanel({
   platformFlavor,
   song,
   playing,
@@ -545,6 +548,8 @@ export function NowPanel({
   ws,
   mixedQueue = null,
   lwPreview,
+  lyrics = null,
+  lyricIndexStore = null,
   lyricStatus,
   showLyrics,
   setShowLyrics,
@@ -556,6 +561,19 @@ export function NowPanel({
   qqDiagnostic,
   toggleQqDiagnostic,
 }) {
+  const storeIndex = useSyncExternalStore(
+    lyricIndexStore ? lyricIndexStore.subscribe : noopSubscribe,
+    lyricIndexStore ? lyricIndexStore.getSnapshot : fallbackLyricSnapshot
+  );
+  const previewLines = (() => {
+    if (!lyricIndexStore || !Array.isArray(lyrics)) {
+      return Array.isArray(lwPreview) ? lwPreview : [];
+    }
+    const line = lyrics[storeIndex];
+    const lwLyrics = lyricalLines(lyrics);
+    const lwCur = lwLyrics.findIndex(l => line && l.at >= line.at);
+    return lwCur >= 0 ? lwLyrics.slice(lwCur, lwCur + 2) : lwLyrics.slice(0, 2);
+  })();
   return (
     <section id="now-details" className="now-panel" aria-label="正在播放">
       <button
@@ -680,8 +698,8 @@ export function NowPanel({
       </div>
 
       <div className="lyric-preview">
-        {lwPreview.length ? (
-          lwPreview.map((l, i) => (
+        {previewLines.length ? (
+          previewLines.map((l, i) => (
             <p key={i} className={i === 0 ? 'highlight' : ''}>
               {l.text}
             </p>
@@ -702,4 +720,4 @@ export function NowPanel({
       </div>
     </section>
   );
-}
+});

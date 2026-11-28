@@ -1,15 +1,4 @@
 use crate::{err, Result};
-use std::{
-    ffi::OsString,
-    fs::{self, File, OpenOptions},
-    os::windows::{
-        ffi::{OsStrExt, OsStringExt},
-        fs::{MetadataExt, OpenOptionsExt},
-        io::AsRawHandle,
-    },
-    path::{Component, Path, PathBuf, Prefix},
-};
-use tauri::WebviewWindow;
 use ::windows::{
     core::{HRESULT, PCWSTR},
     Win32::{
@@ -30,6 +19,17 @@ use ::windows::{
         },
     },
 };
+use std::{
+    ffi::OsString,
+    fs::{self, File, OpenOptions},
+    os::windows::{
+        ffi::{OsStrExt, OsStringExt},
+        fs::{MetadataExt, OpenOptionsExt},
+        io::AsRawHandle,
+    },
+    path::{Component, Path, PathBuf, Prefix},
+};
+use tauri::WebviewWindow;
 
 const SKIP_ATTRIBUTES: u32 = FILE_ATTRIBUTE_REPARSE_POINT.0 | FILE_ATTRIBUTE_OFFLINE.0;
 

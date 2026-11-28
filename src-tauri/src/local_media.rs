@@ -1,5 +1,8 @@
 use crate::{err, Result};
-use std::{fs::File, io::{Read, Seek, SeekFrom}};
+use std::{
+    fs::File,
+    io::{Read, Seek, SeekFrom},
+};
 use tauri::http::{header, Response, StatusCode};
 
 #[cfg(target_os = "macos")]

@@ -1,10 +1,10 @@
-import React, { useState } from 'react';
+import React, { memo, useState } from 'react';
 import { PlaylistCover } from './Artwork.jsx';
 import { Icon } from './Icons.jsx';
 
 const DISCOVER_TITLES = new Set(['每日推荐', '推荐新歌', '为你推荐的歌单', '推荐歌单', '发现音乐']);
 
-export function RecommendationNav({ openFm, openRecent, recommend, ws, isFmPlaying }) {
+export const RecommendationNav = memo(function RecommendationNav({ openFm, openRecent, recommend, ws, isFmPlaying }) {
   const isDiscoverActive =
     ws?.trackOrigin === 'recommendation' ||
     (ws?.trackOrigin !== 'recent' && ws?.trackOrigin !== 'playlist' && DISCOVER_TITLES.has(ws?.title));
@@ -43,9 +43,9 @@ export function RecommendationNav({ openFm, openRecent, recommend, ws, isFmPlayi
       </button>
     </nav>
   );
-}
+});
 
-export function LibraryBar({
+export const LibraryBar = memo(function LibraryBar({
   platformFlavor,
   sideExpanded,
   setSideExpanded,
@@ -376,4 +376,4 @@ export function LibraryBar({
       </div>
     </aside>
   );
-}
+});

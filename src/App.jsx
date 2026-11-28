@@ -1,39 +1,11 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { invoke } from '@tauri-apps/api/core';
-import { getCurrentWindow } from '@tauri-apps/api/window';
-import { coverUrl } from './cover.js';
 import * as defaultProviders from './providers.js';
 import { ListeningTracker as DefaultListeningTracker } from './listening.js';
-import { parseLrc, mergeTranslation, mergeRomaji } from './lyrics.js';
-import { installMediaSession, updateMediaSession } from './media-session.js';
-import {
-  makePlaybackState,
-  restorePlaybackState,
-  makeQqPlaybackState,
-  restoreQqPlaybackState,
-  nextIndex,
-  manualIndex,
-  queueMode,
-  cleanTrack,
-  coverForStorage,
-  reorderQueueTracks,
-} from './playback-state.js';
-import { extractAccent } from './accent.js';
+import { nextIndex, queueMode } from './playback-state.js';
 import {
   artist,
-  lyricalLines,
-  qqLocalHandle,
   accentFor,
-  loadSearchHistory,
-  saveSearchHistory,
-  clearSearchHistory,
-  QUALITY_LABELS,
-  loadNeteaseQuality,
-  saveNeteaseQuality,
   isOwnedPlaylist,
-  DEFAULT_SHORTCUT_BINDINGS,
-  clipLyricField,
-  normalizeLocalTrack,
 } from './utils/format.js';
 import { PlaylistCover, InlineNotice } from './components/Artwork.jsx';
 import { AppHeader } from './components/AppHeader.jsx';
@@ -61,73 +33,18 @@ import {
   AppUpdateDialog,
 } from './components/Overlays.jsx';
 import {
-  DEFAULT_UPDATER_CONFIG,
-  buildUpdateSummary,
-  hasUpdateBadge,
-  shouldAutoPromptUpdate,
-} from './updater.js';
-import {
-  loadCustomPlaylists,
-  saveCustomPlaylists,
-  sanitizeCustomPlaylistsList,
-  createCustomPlaylist,
-  renameCustomPlaylist,
-  deleteCustomPlaylist,
-  addTrackToCustomPlaylist,
-  removeTrackFromCustomPlaylist,
   filterCustomPlaylistTracks,
   summarizeCustomPlaylistSources,
-  exportCustomPlaylistsJson,
-  importCustomPlaylistsJson,
   hydrateCustomTrack,
-  customTrackKey,
 } from './custom-playlists.js';
-import {
-  clearLocalCoverCache,
-  loadLocalCover,
-  setLocalCoverFetcher,
-} from './local-cover-cache.js';
-import {
-  loadAudioPrefs,
-  saveAudioPrefs,
-  supportsAudioOutputSelection,
-  listAudioOutputDevices,
-  applyAudioOutputDevice,
-  runSmoothFadeIn,
-} from './audio-prefs.js';
-import {
-  loadThemePrefs,
-  saveThemePrefs,
-  applyThemePrefsToDocument,
-} from './theme-prefs.js';
-
-const DEFAULT_DESKTOP_LYRIC_STYLE = Object.freeze({
-  fontSize: 28,
-  theme: 'night',
-  layout: 'dual',
-  align: 'center',
-  panelOpacity: 82,
-  karaoke: true,
-  showTranslation: true,
-  showRomaji: false,
-  width: 720,
-});
-
-const normalizeDesktopLyricState = (res, prev) => ({
-  enabled: Boolean(res?.enabled),
-  locked: Boolean(res?.locked),
-  position: res?.position ?? prev?.position ?? null,
-  style: {
-    ...DEFAULT_DESKTOP_LYRIC_STYLE,
-    ...(prev?.style || {}),
-    ...(res?.style && typeof res.style === 'object' ? res.style : {}),
-  },
-});
-
-const validHexColor = color =>
-  typeof color === 'string' && /^#[0-9a-fA-F]{6}$/.test(color) ? color : '#F2A65A';
-
-if (typeof window !== 'undefined') window.__extractAccent = extractAccent;
+import { useUpdater } from './hooks/useUpdater.js';
+import { useCustomPlaylists } from './hooks/useCustomPlaylists.js';
+import { useDesktopControls } from './hooks/useDesktopControls.js';
+import { useLocalLibrary } from './hooks/useLocalLibrary.js';
+import { useThemeAndAudioPrefs } from './hooks/useThemeAndAudioPrefs.js';
+import { useLibraryBrowse } from './hooks/useLibraryBrowse.js';
+import { usePlayback } from './hooks/usePlayback.js';
+import { useAccounts } from './hooks/useAccounts.js';
 
 const makeWorkspace = () => ({
   query: '',
@@ -176,14 +93,6 @@ export function App({
   );
   const canUseQq = capabilities?.qqmusic?.available !== false;
   const canChooseCloseBehavior = capabilities?.desktop?.closeBehavior !== false;
-  const [closeMode, setCloseMode] = useState('ask');
-  const [trayAvailable, setTrayAvailable] = useState(false);
-  const [closeDialog, setCloseDialog] = useState(null);
-  const [closeError, setCloseError] = useState('');
-  const [closeBusy, setCloseBusy] = useState(false);
-  const [autostartEnabled, setAutostartEnabled] = useState(false);
-  const [autostartBusy, setAutostartBusy] = useState(false);
-  const [autostartError, setAutostartError] = useState('');
 
   const [view, setView] = useState('library');
   const [settingsSection, setSettingsSection] = useState('general');
@@ -228,66 +137,8 @@ export function App({
     accountBusy,
     identityUnknown,
   } = ws;
-  const setQuery = value => {
-    if (activeRef.current === 'local') {
-      applyLocalView(localTracksRef.current, localActiveFolderRef.current, value);
-    } else {
-      update(activeRef.current, { query: value });
-    }
-  };
-
-  // 本地搜索历史（按平台隔离）
-  const [searchHistory, setSearchHistory] = useState(() => ({
-    netease: loadSearchHistory('netease'),
-    qqmusic: loadSearchHistory('qqmusic'),
-    local: [],
-  }));
-
-  // 播放倍速与睡眠定时（纯前端实用辅助，事件/单次定时器驱动）
-  const [playbackRate, setPlaybackRate] = useState(1);
-  const [sleepMode, setSleepMode] = useState('off');
-  const sleepRef = useRef({ mode: 'off', timer: null });
-
-  // 网易云 P1 增强能力状态：音质档位、红心喜欢集合、FM 跳过、歌单收藏与移出
-  const [neteaseQuality, setNeteaseQuality] = useState(() => loadNeteaseQuality());
-  const qualityRef = useRef(neteaseQuality);
-  const [trackQuality, setTrackQuality] = useState(null);
-  const [likedIds, setLikedIds] = useState(() => new Set());
-  const [likedBusyIds, setLikedBusyIds] = useState(() => new Set());
-  const [fmTrashBusy, setFmTrashBusy] = useState(false);
-  const [fmError, setFmError] = useState('');
-  const [fmStageFocus, setFmStageFocus] = useState(false);
-  const [pickerTrack, setPickerTrack] = useState(null);
-  const [pickerBusyId, setPickerBusyId] = useState(null);
-  const [pickerError, setPickerError] = useState('');
-  const [removingTrackKey, setRemovingTrackKey] = useState(null);
-
-  // Vesper 本机跨源歌单 + 独立音频偏好（柔和淡入 / 输出设备）
-  const [customPlaylists, setCustomPlaylists] = useState(() => loadCustomPlaylists());
-  const customPlaylistsRef = useRef(customPlaylists);
-  const customPlaylistsSaveSeqRef = useRef(0);
-  const customPlaylistsSaveChainRef = useRef(Promise.resolve());
-  const [activeCustomPlaylistId, setActiveCustomPlaylistId] = useState(null);
-  const [customPlaylistFilter, setCustomPlaylistFilter] = useState('');
-  const [customPlaylistNotice, setCustomPlaylistNotice] = useState('');
-  const [renamingCustomPlaylist, setRenamingCustomPlaylist] = useState(false);
-  const [renameCustomDraft, setRenameCustomDraft] = useState('');
-  const [confirmDeleteCustom, setConfirmDeleteCustom] = useState(false);
-  const [customImportStatus, setCustomImportStatus] = useState('');
   const [mixedQueue, setMixedQueue] = useState(null);
   const mixedQueueRef = useRef(null);
-
-  const [audioPrefs, setAudioPrefs] = useState(() => loadAudioPrefs());
-  const audioPrefsRef = useRef(audioPrefs);
-  const [audioOutputSupported, setAudioOutputSupported] = useState(false);
-  const [audioOutputDevices, setAudioOutputDevices] = useState([]);
-  const [audioOutputError, setAudioOutputError] = useState('');
-  const fadeActiveRef = useRef(false);
-  const cancelFadeRef = useRef(null);
-
-  const [themePrefs, setThemePrefs] = useState(() => loadThemePrefs());
-  const ambientLayerRef = useRef(null);
-  const ambientRateRef = useRef({ rate: 0.38, initialized: false, rafId: null });
 
   const [reportAllowed, setReportAllowed] = useState(false);
   const [showDiagnostics, setShowDiagnostics] = useState(false);
@@ -297,161 +148,488 @@ export function App({
   const diagnosticsOn = useRef(false);
   if (!listening.current) listening.current = new ListeningTracker();
 
-  const [mode, setMode] = useState('sequential');
-  const [volume, setVolume] = useState(1);
-  const [muted, setMuted] = useState(false);
-  const settings = useRef({ mode: 'sequential', volume: 1, muted: false });
-  const saved = useRef({
-    normal: null,
-    fm: null,
-    current: null,
-    timer: null,
-    chain: Promise.resolve(),
-    resume: null,
-  });
-  const qqSaved = useRef({ queue: null, position: 0, resume: null, cleared: false });
-  const localSaved = useRef({ resume: null, position: 0, cleared: false, lastKey: '' });
-  const providerSettings = useRef({ netease: null, qqmusic: null, local: null });
-  const bootProvider = useRef('netease');
-
-  // P2-B 本地音乐曲库状态
-  const [localFolders, setLocalFolders] = useState([]);
-  const localFoldersRef = useRef([]);
-  const [localActiveFolderId, setLocalActiveFolderId] = useState(null);
-  const localActiveFolderRef = useRef(null);
-  const [localTotal, setLocalTotal] = useState(0);
-  const [localHasMore, setLocalHasMore] = useState(false);
-  const [localTruncated, setLocalTruncated] = useState(false);
-  const [localUnavailableIds, setLocalUnavailableIds] = useState([]);
-  const [localBusy, setLocalBusy] = useState(false);
-  const localTracksRef = useRef([]);
-  const localInitRef = useRef({ started: false, ready: false });
-
-  const [qqWebOpen, setQqWebOpen] = useState(false);
-  const [qr, setQr] = useState(null);
-  const [song, setSong] = useState(null);
-  const [playing, setPlaying] = useState(false);
-  const [buffering, setBuffering] = useState(false);
-  const [restoredProgress, setRestoredProgress] = useState(null);
-  const [lyrics, setLyrics] = useState([]);
-  const lyricsRef = useRef([]);
-  const [lyricIndex, setLyricIndex] = useState(-1);
-  const lyricIndexRef = useRef(-1);
-  const [lyricStatus, setLyricStatus] = useState('idle');
-  const [showQueue, setShowQueue] = useState(false);
-  const [confirmClear, setConfirmClear] = useState(false);
-
-  // P2-A 全局系统快捷键与桌面悬浮歌词状态
-  const [globalShortcuts, setGlobalShortcuts] = useState(() => ({
-    enabled: false,
-    bindings: { ...DEFAULT_SHORTCUT_BINDINGS },
-    error: null,
-  }));
-  const [showShortcuts, setShowShortcuts] = useState(false);
-  const [shortcutsBusy, setShortcutsBusy] = useState(false);
-  const [shortcutsError, setShortcutsError] = useState('');
-  const [desktopLyric, setDesktopLyric] = useState({
-    enabled: false,
-    locked: false,
-    position: null,
-    style: { ...DEFAULT_DESKTOP_LYRIC_STYLE },
-  });
-  const desktopLyricRef = useRef({
-    enabled: false,
-    locked: false,
-    position: null,
-    style: { ...DEFAULT_DESKTOP_LYRIC_STYLE },
-  });
-  const [desktopLyricBusy, setDesktopLyricBusy] = useState(false);
-  const [desktopLyricError, setDesktopLyricError] = useState('');
-  const [desktopLyricSyncTick, setDesktopLyricSyncTick] = useState(0);
-  const lastDesktopLyricKeyRef = useRef(null);
-  const desktopLyricStyleChainRef = useRef(Promise.resolve());
-  const currentAccentRef = useRef('#F2A65A');
-  const desktopHandlersRef = useRef({});
-
-  // 客户端应用更新状态
-  const [updateConfig, setUpdateConfig] = useState(() => ({ ...DEFAULT_UPDATER_CONFIG }));
-  const updateConfigRef = useRef(updateConfig);
-  const [updateState, setUpdateState] = useState({
-    phase: 'idle',
-    info: null,
-    progress: null,
+  const fm = useRef({
+    accountId: null,
+    tracks: [],
+    seen: new Set(),
+    pending: null,
     error: '',
-    errorCode: '',
+    generation: 0,
   });
-  const updateStateRef = useRef(updateState);
-  const [showUpdaterDialog, setShowUpdaterDialog] = useState(false);
-  const [updaterBusy, setUpdaterBusy] = useState(false);
-  const dismissedUpdateVersionsRef = useRef(new Set());
-  const updateMountedRef = useRef(true);
+  const fmAutoStartRef = useRef(null);
+  const searchInput = useRef(null);
 
-  const commitUpdateConfig = next => {
-    const normalized = {
-      ...DEFAULT_UPDATER_CONFIG,
-      ...updateConfigRef.current,
-      ...(next && typeof next === 'object' ? next : {}),
-      source: next?.source === 'mirror' ? 'mirror' : next?.source === 'github' ? 'github' : updateConfigRef.current.source,
-      customMirror:
-        typeof next?.customMirror === 'string'
-          ? next.customMirror
-          : updateConfigRef.current.customMirror || '',
-      skippedVersion:
-        next && Object.hasOwn(next, 'skippedVersion')
-          ? next.skippedVersion || null
-          : updateConfigRef.current.skippedVersion || null,
-      autoCheck:
-        next && Object.hasOwn(next, 'autoCheck')
-          ? Boolean(next.autoCheck)
-          : updateConfigRef.current.autoCheck,
-      pubkeyConfigured:
-        next && Object.hasOwn(next, 'pubkeyConfigured')
-          ? Boolean(next.pubkeyConfigured)
-          : updateConfigRef.current.pubkeyConfigured,
-    };
-    updateConfigRef.current = normalized;
-    setUpdateConfig(normalized);
-    return normalized;
+  const recommendation = useRef(latestRequest());
+  const recommendationPending = useRef(false);
+  const browse = useRef({
+    netease: latestRequest(),
+    qqmusic: latestRequest(),
+    local: latestRequest(),
+  });
+  const account = useRef({
+    netease: latestRequest(),
+    qqmusic: latestRequest(),
+    local: latestRequest(),
+  });
+  const identity = useRef({
+    netease: latestRequest(),
+    qqmusic: latestRequest(),
+    local: latestRequest(),
+  });
+  const qrRequest = useRef(latestRequest());
+
+  const errorText = e => e?.message || '操作失败，请稍后重试';
+  const tagged = (items, id, accountId) => items.map(item => ({ ...item, provider: id, accountId }));
+  const sampleListening = a => {
+    if (a && !a.seeking) listening.current.progress(a.currentTime, performance.now(), a.playbackRate);
+  };
+  const diagnosticsChanged = () => {
+    if (diagnosticsOn.current) setDiagnosticVersion(v => v + 1);
   };
 
-  const commitUpdateState = updater => {
-    const next = typeof updater === 'function' ? updater(updateStateRef.current) : updater;
-    updateStateRef.current = next;
-    setUpdateState(next);
-    return next;
-  };
+  const playbackDepsRef = useRef({});
+  const {
+    song,
+    setSong,
+    songRef,
+    playing,
+    setPlaying,
+    buffering,
+    setBuffering,
+    restoredProgress,
+    setRestoredProgress,
+    trackQuality,
+    setTrackQuality,
+    lyrics,
+    lyricsRef,
+    lyricIndexStore,
+    lyricStatus,
+    setLyricStatus,
+    mode,
+    volume,
+    setVolume,
+    muted,
+    setMuted,
+    settings,
+    playbackRate,
+    changePlaybackRate,
+    saved,
+    qqSaved,
+    localSaved,
+    audio,
+    pendingPlay,
+    playback,
+    diagnosticTick,
+    showQueue,
+    setShowQueue,
+    confirmClear,
+    setConfirmClear,
+    syncLyric,
+    replaceLyrics,
+    loadLyricsFor,
+    saveNow,
+    scheduleSave,
+    restoreSaved,
+    restoreQq,
+    play,
+    skipTrack,
+    togglePlayback,
+    adjustVolume,
+    cycleMode,
+    editQueue,
+    editMixedQueue,
+    reorderQueue,
+    reorderMixedQueue,
+    clearProviderSavedState,
+    stopProviderPlayback,
+  } = usePlayback({
+    getProvider,
+    capabilities,
+    platformFlavor,
+    canLocalLibrary,
+    local,
+    latestRequest,
+    activeProvider,
+    activeRef,
+    workRef,
+    update,
+    mixedQueueRef,
+    setMixedQueue,
+    setView,
+    listening,
+    diagnosticsOn,
+    setLastDiagnostic,
+    sampleListening,
+    fm,
+    fmAutoStartRef,
+    identity,
+    errorText,
+    playbackDepsRef,
+  });
 
-  // 睡眠定时控制：仅使用单次 setTimeout 或 onEnded 触发，无高频轮询
-  const selectSleepMode = nextMode => {
-    if (sleepRef.current.timer) {
-      clearTimeout(sleepRef.current.timer);
-      sleepRef.current.timer = null;
-    }
-    sleepRef.current.mode = nextMode;
-    setSleepMode(nextMode);
-    if (nextMode === '15' || nextMode === '30' || nextMode === '60') {
-      const minutes = Number(nextMode);
-      sleepRef.current.timer = setTimeout(() => {
-        sleepRef.current.timer = null;
-        sleepRef.current.mode = 'off';
-        setSleepMode('off');
-        if (audio.current && !audio.current.paused) audio.current.pause();
-        const curProvider = songRef.current?.provider || activeRef.current;
-        update(curProvider, { message: `睡眠定时（${minutes} 分钟）已到，已暂停播放` });
-      }, minutes * 60 * 1000);
-    }
-  };
-
-  useEffect(
-    () => () => {
-      if (sleepRef.current.timer) clearTimeout(sleepRef.current.timer);
+  const {
+    sleepMode,
+    setSleepMode,
+    sleepRef,
+    selectSleepMode,
+    audioPrefs,
+    audioPrefsRef,
+    audioOutputSupported,
+    audioOutputDevices,
+    audioOutputError,
+    fadeActiveRef,
+    refreshAudioOutputDevices,
+    handleToggleSmoothFadeIn,
+    handleToggleAutoOpenStage,
+    handleSelectOutputDevice,
+    stopSmoothFade,
+    triggerSmoothFade,
+    themePrefs,
+    ambientLayerRef,
+    handleChangeTheme,
+    handleChangeAmbient,
+    currentAccentRef,
+  } = useThemeAndAudioPrefs({
+    audio,
+    settings,
+    song,
+    songRef,
+    activeRef,
+    playing,
+    canLocalCover,
+    local,
+    update,
+    onAccentChange: () => {
+      if (desktopLyricRef.current.enabled && desktopLyricRef.current.style?.theme === 'accent') {
+        triggerDesktopLyricSync();
+      }
     },
-    []
-  );
+  });
 
-  const changePlaybackRate = rate => {
-    setPlaybackRate(rate);
-    if (audio.current) audio.current.playbackRate = rate;
+  const {
+    closeMode,
+    trayAvailable,
+    closeDialog,
+    setCloseDialog,
+    closeError,
+    closeBusy,
+    chooseClose,
+    handleChooseCloseMode,
+    autostartEnabled,
+    autostartBusy,
+    autostartError,
+    handleToggleAutostart,
+    globalShortcuts,
+    showShortcuts,
+    setShowShortcuts,
+    shortcutsBusy,
+    shortcutsError,
+    setShortcutsError,
+    updateGlobalShortcuts,
+    desktopLyric,
+    desktopLyricRef,
+    desktopLyricBusy,
+    desktopLyricError,
+    triggerDesktopLyricSync,
+    toggleDesktopLyric,
+    toggleDesktopLyricLock,
+    updateDesktopLyricStyle,
+  } = useDesktopControls({
+    canChooseCloseBehavior,
+    canAutostart,
+    canGlobalShortcuts,
+    canDesktopLyric,
+    desktop,
+    song,
+    lyrics,
+    playing,
+    playbackRate,
+    lyricStatus,
+    audio,
+    lyricIndexStore,
+    currentAccentRef,
+    errorText,
+    beforeExit: async () => {
+      scheduleSave(true);
+      await saved.current.chain.catch(() => {});
+    },
+    shortcutActions: {
+      togglePlayback,
+      prevTrack: () => skipTrack(-1),
+      nextTrack: () => skipTrack(1),
+      volumeUp: () => adjustVolume(0.05),
+      volumeDown: () => adjustVolume(-0.05),
+    },
+  });
+
+  const {
+    localFolders,
+    localFoldersRef,
+    localActiveFolderId,
+    localActiveFolderRef,
+    localTotal,
+    localHasMore,
+    localTruncated,
+    localUnavailableIds,
+    localBusy,
+    localTracksRef,
+    localInitRef,
+    applyLocalView,
+    initLocalLibrary,
+    pickLocalFolder,
+    removeLocalFolder,
+    scanLocalLibrary,
+    selectLocalFolder,
+    loadMoreLocalTracks,
+  } = useLocalLibrary({
+    canLocalLibrary,
+    canLocalCover,
+    capabilities,
+    local,
+    workRef,
+    update,
+    songRef,
+    pendingPlay,
+    setSong,
+    setRestoredProgress,
+    setLyricStatus,
+    loadLyricsFor,
+    localSaved,
+    errorText,
+  });
+
+  const {
+    pickerTrack,
+    setPickerTrack,
+    pickerBusyId,
+    setPickerBusyId,
+    pickerError,
+    setPickerError,
+    customPlaylists,
+    activeCustomPlaylistId,
+    setActiveCustomPlaylistId,
+    customPlaylistFilter,
+    setCustomPlaylistFilter,
+    customPlaylistNotice,
+    setCustomPlaylistNotice,
+    renamingCustomPlaylist,
+    setRenamingCustomPlaylist,
+    renameCustomDraft,
+    setRenameCustomDraft,
+    confirmDeleteCustom,
+    setConfirmDeleteCustom,
+    customImportStatus,
+    activeCustomPlaylist,
+    customTotalTracks,
+    openPlaylistPicker,
+    handleCreateCustomPlaylist,
+    handleOpenCustomPlaylist,
+    handleRenameCustomPlaylist,
+    handleDeleteCustomPlaylist,
+    handleAddTrackToCustom,
+    handleCreateAndAddCustom,
+    handleRemoveTrackFromCustom,
+    handleExportCustomPlaylists,
+    handleImportCustomPlaylists,
+  } = useCustomPlaylists({
+    canCustomPlaylistsStorage,
+    desktop,
+    activeRef,
+    view,
+    setView,
+    update,
+    mixedQueueRef,
+    setMixedQueue,
+  });
+
+  const {
+    updateConfig,
+    updateState,
+    showUpdaterDialog,
+    setShowUpdaterDialog,
+    updaterBusy,
+    updateSummary,
+    updateAttention,
+    runUpdateCheck,
+    handleChangeUpdateSource,
+    handleSaveCustomMirror,
+    handleToggleAutoCheck,
+    handleSkipUpdateVersion,
+    handleRemindLater,
+    handleSwitchSourceAndRetry,
+    startUpdateDownload,
+    installDownloadedUpdate,
+  } = useUpdater({
+    canAppUpdater,
+    desktop,
+    errorText,
+    beforeInstall: async () => {
+      scheduleSave(true);
+      await saved.current.chain.catch(() => {});
+    },
+  });
+
+  const {
+    searchHistory,
+    clearProviderSearchHistory,
+    neteaseQuality,
+    qualityRef,
+    likedIds,
+    likedBusyIds,
+    fmTrashBusy,
+    fmError,
+    setFmError,
+    fmStageFocus,
+    setFmStageFocus,
+    removingTrackKey,
+    confirmRecent,
+    setConfirmRecent,
+    resetNeteaseBrowseState,
+    loadLikedIds,
+    search,
+    openRecent,
+    recordRecent,
+    clearRecent,
+    openList,
+    recommend,
+    loadFm,
+    retryFm,
+    openFm,
+    changeNeteaseQuality,
+    toggleLike,
+    trashCurrentFmTrack,
+    addTrackToPlaylist,
+    removeTrackFromCurrentPlaylist,
+  } = useLibraryBrowse({
+    netease,
+    getProvider,
+    capabilities,
+    activeRef,
+    workRef,
+    update,
+    songRef,
+    pendingPlay,
+    audio,
+    listening,
+    playback,
+    browse,
+    identity,
+    account,
+    recommendation,
+    recommendationPending,
+    fm,
+    fmAutoStartRef,
+    saved,
+    scheduleSave,
+    tagged,
+    errorText,
+    setView,
+    setSong,
+    setTrackQuality,
+    setPlaying,
+    replaceLyrics,
+    setLyricStatus,
+    setRestoredProgress,
+    applyLocalView,
+    localTracksRef,
+    localActiveFolderRef,
+    pickerTrack,
+    setPickerTrack,
+    pickerBusyId,
+    setPickerBusyId,
+    setPickerError,
+    setActiveCustomPlaylistId,
+    play,
+  });
+
+  const {
+    qr,
+    qqWebOpen,
+    qqDiagnostic,
+    qqDiagnosticEnabled,
+    refreshQqDiagnostic,
+    toggleQqDiagnostic,
+    loadLists,
+    restore,
+    closeQr,
+    login,
+    cancelQqWeb,
+    completeQqWeb,
+    logout,
+  } = useAccounts({
+    getProvider,
+    capabilities,
+    platformFlavor,
+    canUseQq,
+    activeRef,
+    workRef,
+    update,
+    account,
+    identity,
+    browse,
+    qrRequest,
+    fm,
+    fmAutoStartRef,
+    recommendationPending,
+    listening,
+    saved,
+    playback,
+    errorText,
+    clearProviderSavedState,
+    stopProviderPlayback,
+    restoreSaved,
+    restoreQq,
+    loadLikedIds,
+    resetNeteaseBrowseState,
+    clearPicker: () => {
+      setPickerTrack(null);
+      setPickerBusyId(null);
+      setPickerError('');
+    },
+  });
+
+  playbackDepsRef.current = {
+    stopSmoothFade,
+    triggerSmoothFade,
+    audioPrefsRef,
+    localInitRef,
+    setCustomPlaylistNotice,
+    qualityRef,
+    setFmError,
+    setFmStageFocus,
+    loadFm,
+    refreshQqDiagnostic,
+  };
+
+  const setQuery = value => {
+    if (activeRef.current === 'local') {
+      applyLocalView(localTracksRef.current, localActiveFolderRef.current, value);
+    } else {
+      update(activeRef.current, { query: value });
+    }
+  };
+
+  const switchProvider = id => {
+    setActiveCustomPlaylistId(null);
+    setRenamingCustomPlaylist(false);
+    setConfirmDeleteCustom(false);
+    if (view === 'settings') setView('library');
+    if (activeRef.current !== id) {
+      const prevId = activeRef.current;
+      fmAutoStartRef.current = null;
+      recommendation.current.next();
+      if (recommendationPending.current) {
+        recommendationPending.current = false;
+        update(prevId, { message: '推荐加载已取消' });
+      }
+    }
+    activeRef.current = id;
+    setActiveProvider(id);
+    if (id === 'local') {
+      void initLocalLibrary();
+      return;
+    }
+    if (workRef.current[id].identityUnknown && !workRef.current[id].accountBusy) restore(id);
   };
 
   // 模态弹窗焦点陷阱与关闭返还焦点
@@ -501,3563 +679,14 @@ export function App({
       box?.removeEventListener('keydown', trap);
       if (previous?.isConnected) previous.focus();
     };
-  }, [showQueue, showShortcuts, Boolean(showUpdaterDialog), !!pickerTrack, !!qr, qqWebOpen]);
-
-  const clearFocus = useRef(false);
-  useEffect(() => {
-    if (!showQueue) {
-      clearFocus.current = false;
-      return;
-    }
-    if (!confirmClear) {
-      if (clearFocus.current) {
-        clearFocus.current = false;
-        (
-          document.querySelector('.lw-clear-queue') || document.querySelector('.queue-header button')
-        )?.focus();
-      }
-      return;
-    }
-    clearFocus.current = true;
-    const box = document.querySelector('.lw-confirm');
-    const items = () => Array.from(box?.querySelectorAll('button:not([disabled])') || []);
-    box?.querySelector('[data-cancel]')?.focus();
-    const trap = e => {
-      if (e.key !== 'Tab') return;
-      const list = items();
-      if (!list.length) {
-        e.preventDefault();
-        e.stopPropagation();
-        return;
-      }
-      const first = list[0];
-      const last = list[list.length - 1];
-      if (e.shiftKey && document.activeElement === first) {
-        e.preventDefault();
-        last.focus();
-      } else if (!e.shiftKey && document.activeElement === last) {
-        e.preventDefault();
-        first.focus();
-      }
-      e.stopPropagation();
-    };
-    box?.addEventListener('keydown', trap);
-    return () => box?.removeEventListener('keydown', trap);
-  }, [confirmClear, showQueue]);
-
-  const [qqDiagnostic, setQqDiagnostic] = useState(null);
-  const [qqDiagnosticEnabled, setQqDiagnosticEnabled] = useState(false);
-  const qqDiagnosticOn = useRef(false);
-
-  const refreshQqDiagnostic = async () => {
-    if (!qqDiagnosticOn.current) return;
-    try {
-      const result = await invoke('qq_playback_diagnostic');
-      if (qqDiagnosticOn.current) setQqDiagnostic(result.diagnostic);
-    } catch {
-      if (qqDiagnosticOn.current) setQqDiagnostic(null);
-    }
-  };
-
-  const toggleQqDiagnostic = async () => {
-    const enabled = !qqDiagnosticOn.current;
-    try {
-      const result = await invoke('qq_playback_diagnostic', { enabled });
-      qqDiagnosticOn.current = enabled;
-      setQqDiagnosticEnabled(enabled);
-      setQqDiagnostic(result.diagnostic);
-    } catch {
-      update('qqmusic', { message: 'QQ 诊断开关不可用' });
-    }
-  };
-
-  const fm = useRef({
-    accountId: null,
-    tracks: [],
-    seen: new Set(),
-    pending: null,
-    error: '',
-    generation: 0,
-  });
-  const fmAutoStartRef = useRef(null);
-  const audio = useRef(null);
-  const searchInput = useRef(null);
-  const songRef = useRef(null);
-  const resumedLyric = useRef(null);
-  const pendingPlay = useRef(null);
-  const rollbackRef = useRef(null);
-
-  const recommendation = useRef(latestRequest());
-  const recommendationPending = useRef(false);
-  const browse = useRef({
-    netease: latestRequest(),
-    qqmusic: latestRequest(),
-    local: latestRequest(),
-  });
-  const playback = useRef(latestRequest());
-  const account = useRef({
-    netease: latestRequest(),
-    qqmusic: latestRequest(),
-    local: latestRequest(),
-  });
-  const identity = useRef({
-    netease: latestRequest(),
-    qqmusic: latestRequest(),
-    local: latestRequest(),
-  });
-  const qrRequest = useRef(latestRequest());
-
-  const errorText = e => e?.message || '操作失败，请稍后重试';
-  const isPlayInterruptedError = e =>
-    e?.name === 'AbortError' ||
-    /interrupted by a call to pause|interrupted by a new load request/i.test(String(e?.message || ''));
-
-  const syncLyric = position => {
-    let index = -1;
-    const list = lyricsRef.current;
-    for (let i = 0; i < list.length; i++) {
-      if (list[i].at <= position + 0.02) index = i;
-    }
-    if (index !== lyricIndexRef.current) {
-      lyricIndexRef.current = index;
-      setLyricIndex(index);
-    }
-  };
-
-  const replaceLyrics = (items, explicitPosition = null) => {
-    lyricsRef.current = items;
-    setLyrics(items);
-    if (!items.length) {
-      lyricIndexRef.current = -1;
-      setLyricIndex(-1);
-      return;
-    }
-    const targetPos =
-      explicitPosition != null
-        ? explicitPosition
-        : audio.current && audio.current.readyState >= 1
-          ? audio.current.currentTime || 0
-          : 0;
-    syncLyric(targetPos);
-  };
-
-  const diagnosticTick = useRef(null);
-  const recent = useRef({ last: null, chain: Promise.resolve() });
-  const [confirmRecent, setConfirmRecent] = useState(false);
-  const recentFocus = useRef(null);
-
-  useEffect(() => {
-    if (!confirmRecent) return;
-    recentFocus.current = document.activeElement;
-    const box = document.querySelector('.lw-recent-confirm');
-    const buttons = () => Array.from(box?.querySelectorAll('button:not([disabled])') || []);
-    box?.querySelector('[data-cancel]')?.focus();
-    const trap = e => {
-      if (e.key !== 'Tab') return;
-      const list = buttons();
-      if (!list.length) {
-        e.preventDefault();
-        return;
-      }
-      if (e.shiftKey && document.activeElement === list[0]) {
-        e.preventDefault();
-        list[list.length - 1].focus();
-      } else if (!e.shiftKey && document.activeElement === list[list.length - 1]) {
-        e.preventDefault();
-        list[0].focus();
-      }
-    };
-    box?.addEventListener('keydown', trap);
-    return () => {
-      box?.removeEventListener('keydown', trap);
-      if (recentFocus.current?.isConnected) recentFocus.current.focus();
-    };
-  }, [confirmRecent]);
-
-  const saveQq = () => {
-    const user = workRef.current.qqmusic.profile?.userId;
-    if (!user || workRef.current.qqmusic.identityUnknown) return;
-    const current = songRef.current;
-    const q = workRef.current.qqmusic.queue;
-    if (current?.provider === 'qqmusic' && q) {
-      providerSettings.current.qqmusic = { ...settings.current };
-      qqSaved.current.cleared = false;
-      qqSaved.current.queue = q;
-      qqSaved.current.position = qqSaved.current.resume?.position ?? audio.current?.currentTime ?? 0;
-    }
-    if (!qqSaved.current.queue && !qqSaved.current.cleared) return;
-    let state;
-    try {
-      state = makeQqPlaybackState({
-        accountId: user,
-        queue: qqSaved.current.queue,
-        position: qqSaved.current.position,
-        ...(providerSettings.current.qqmusic || settings.current),
-      });
-    } catch {
-      update('qqmusic', { storageStatus: '播放状态无法保存' });
-      return;
-    }
-    const generation = identity.current.qqmusic.current();
-    const markCurrent = songRef.current?.provider === 'qqmusic';
-    saved.current.chain = saved.current.chain
-      .catch(() => {})
-      .then(() => {
-        if (
-          !identity.current.qqmusic.isCurrent(generation) ||
-          String(workRef.current.qqmusic.profile?.userId) !== String(user)
-        )
-          return;
-        return invoke('playback_state_save', { state, markCurrent });
-      })
-      .catch(() => {
-        if (identity.current.qqmusic.isCurrent(generation)) {
-          update('qqmusic', { storageStatus: '播放状态保存失败' });
-        }
-      });
-  };
-
-  const saveLocalQueue = () => {
-    if (!canLocalLibrary || !capabilities?.local?.persistQueue || !localInitRef.current.ready) return;
-    const q = workRef.current.local.queue;
-    let payload = null;
-    if (q && Array.isArray(q.tracks) && q.tracks.length > 0) {
-      const ids = q.tracks.slice(0, 1000).map(t => String(t.id));
-      const index = Math.max(0, Math.min(q.index ?? 0, ids.length - 1));
-      const a = audio.current;
-      const rawPos =
-        songRef.current?.provider === 'local'
-          ? (localSaved.current.resume?.position ?? a?.currentTime ?? 0)
-          : localSaved.current.position;
-      const position = Number.isFinite(rawPos)
-        ? Math.min(86400, Math.max(0, Math.round(rawPos * 100) / 100))
-        : 0;
-      localSaved.current.position = position;
-      localSaved.current.cleared = false;
-      payload = { ids, index, position };
-    } else if (localSaved.current.cleared) {
-      payload = { ids: [], index: null, position: 0 };
-    }
-    if (!payload) return;
-    const key = JSON.stringify(payload);
-    if (localSaved.current.lastKey === key) return;
-    localSaved.current.lastKey = key;
-    local.setQueue(payload).catch(() => {});
-  };
-
-  const saveNow = () => {
-    if (mixedQueueRef.current) return;
-    saveQq();
-    saveLocalQueue();
-    const user = workRef.current.netease.profile?.userId;
-    if (!user || workRef.current.netease.identityUnknown) return;
-    const a = audio.current;
-    const current = songRef.current;
-    const q = workRef.current.netease.queue;
-    if (current?.provider === 'netease' && q) {
-      providerSettings.current.netease = { ...settings.current };
-      saved.current.current = {
-        provider: 'netease',
-        kind: q.type === 'fm' ? 'fm' : 'normal',
-        index: q.index,
-        position: saved.current.resume?.position ?? a?.currentTime ?? 0,
-      };
-      if (q.type === 'fm') saved.current.fm = { ...q, tracks: [...fm.current.tracks] };
-      else saved.current.normal = q;
-    }
-    let state;
-    try {
-      state = makePlaybackState({
-        accountId: user,
-        normalQueue: saved.current.normal,
-        fmQueue: saved.current.fm,
-        current: saved.current.current,
-        ...(providerSettings.current.netease || settings.current),
-      });
-    } catch {
-      update('netease', { storageStatus: '播放状态无法保存' });
-      return;
-    }
-    if (!state) return;
-    const generation = identity.current.netease.current();
-    const markCurrent = songRef.current?.provider === 'netease';
-    saved.current.chain = saved.current.chain
-      .catch(() => {})
-      .then(() => {
-        if (
-          !identity.current.netease.isCurrent(generation) ||
-          String(workRef.current.netease.profile?.userId) !== String(user)
-        )
-          return;
-        return invoke('playback_state_save', { state, markCurrent });
-      })
-      .catch(() => {
-        if (
-          identity.current.netease.isCurrent(generation) &&
-          String(workRef.current.netease.profile?.userId) === String(user)
-        ) {
-          update('netease', { storageStatus: '播放状态保存失败' });
-        }
-      });
-  };
-
-  const scheduleSave = (immediate = false) => {
-    if (immediate) {
-      if (saved.current.timer) clearTimeout(saved.current.timer);
-      saved.current.timer = null;
-      saveNow();
-      return;
-    }
-    if (saved.current.timer) return;
-    saved.current.timer = setTimeout(() => {
-      saved.current.timer = null;
-      saveNow();
-    }, 3000);
-  };
-
-  // 歌词加载：play() 与恢复流程共用；同时合并译文与罗马音
-  const loadLyricsFor = (s, isCurrent, onFail, provider, position, prefetched) => {
-    if (!s || !capabilities[s.provider]?.getLyrics) return;
-    const sameSong = () =>
-      songRef.current === s ||
-      (!!songRef.current &&
-        songRef.current.id === s.id &&
-        songRef.current.provider === s.provider &&
-        String(songRef.current.accountId ?? '') === String(s.accountId ?? ''));
-    const settle = fn => {
-      if (!isCurrent() || !sameSong()) return;
-      fn();
-    };
-    const request =
-      prefetched ||
-      Promise.resolve(provider || getProvider(s.provider))
-        .then(p => p.getLyrics(s.id))
-        .then(
-          data => ({ data }),
-          () => ({ failed: true })
-        );
-    request.then(result =>
-      settle(() => {
-        if (result.failed) {
-          if (onFail) onFail();
-          else setLyricStatus('error');
-          return;
-        }
-        const data = result.data;
-        const rawLrc = typeof data === 'string' ? data : data?.lrc?.lyric || '';
-        const base = parseLrc(rawLrc);
-        const withTrans = mergeTranslation(
-          base,
-          parseLrc(typeof data === 'string' ? '' : data?.tlyric?.lyric || '')
-        );
-        const parsed = mergeRomaji(
-          withTrans,
-          parseLrc(typeof data === 'string' ? '' : data?.romalrc?.lyric || '')
-        );
-        replaceLyrics(parsed, position);
-        setLyricStatus(parsed.length ? 'ready' : data?.nolyric ? 'instrumental' : 'empty');
-      })
-    );
-  };
-
-  const restoreSaved = async (user, generation, playToken) => {
-    try {
-      const result = await invoke('playback_state_load');
-      if (
-        !identity.current.netease.isCurrent(generation) ||
-        String(workRef.current.netease.profile?.userId) !== String(user) ||
-        !playback.current.isCurrent(playToken)
-      )
-        return;
-      if (result.status === 'empty') return;
-      if (result.status !== 'ok') {
-        update('netease', { storageStatus: '播放状态无法恢复' });
-        return;
-      }
-      const state = restorePlaybackState(result.state, user);
-      if (!state) return;
-      providerSettings.current.netease = {
-        mode: state.mode,
-        volume: state.volume,
-        muted: state.muted,
-      };
-      if (songRef.current || pendingPlay.current) {
-        saved.current.normal = state.normalQueue
-          ? { ...state.normalQueue, provider: 'netease', accountId: user }
-          : null;
-        saved.current.fm = state.fmQueue
-          ? { ...state.fmQueue, type: 'fm', provider: 'netease', accountId: user }
-          : null;
-        if (saved.current.fm) {
-          fm.current = {
-            accountId: user,
-            tracks: [...saved.current.fm.tracks],
-            seen: new Set(saved.current.fm.tracks.map(t => t.id)),
-            pending: null,
-            error: '',
-            generation: fm.current.generation + 1,
-          };
-          setFmError('');
-        }
-        saved.current.current = state.current ? { provider: 'netease', ...state.current } : null;
-        const queue = state.current?.kind === 'fm' ? saved.current.fm : saved.current.normal;
-        if (queue) update('netease', { queue });
-        return;
-      }
-      settings.current = { mode: state.mode, volume: state.volume, muted: state.muted };
-      setMode(state.mode);
-      setVolume(state.volume);
-      setMuted(state.muted);
-      audio.current.volume = state.volume;
-      audio.current.muted = state.muted;
-      saved.current.normal = state.normalQueue
-        ? { ...state.normalQueue, provider: 'netease', accountId: user }
-        : null;
-      saved.current.fm = state.fmQueue
-        ? { ...state.fmQueue, type: 'fm', provider: 'netease', accountId: user }
-        : null;
-      if (saved.current.fm) {
-        fm.current = {
-          accountId: user,
-          tracks: [...saved.current.fm.tracks],
-          seen: new Set(saved.current.fm.tracks.map(t => t.id)),
-          pending: null,
-          error: '',
-          generation: fm.current.generation + 1,
-        };
-        setFmError('');
-      }
-      const c = state.current;
-      const q = c?.kind === 'fm' ? saved.current.fm : saved.current.normal;
-      if (!c || !q) return;
-      const track = q.tracks[c.index];
-      if (!track) return;
-      const snapshot = { ...q, index: c.index };
-      saved.current.current = {
-        provider: 'netease',
-        kind: c.kind,
-        index: c.index,
-        position: c.position,
-      };
-      saved.current.resume = { provider: 'netease', id: track.id, position: c.position };
-      songRef.current = track;
-      setSong(track);
-      if (track.provider === 'netease') {
-        resumedLyric.current = track;
-        loadLyricsFor(
-          track,
-          () =>
-            identity.current.netease.isCurrent(generation) &&
-            playback.current.isCurrent(playToken) &&
-            String(workRef.current.netease.profile?.userId) === String(user),
-          () => setLyricStatus('idle'),
-          undefined,
-          state.current?.position
-        );
-      }
-      setRestoredProgress({ position: c.position, duration: (track.duration || 0) / 1000 });
-      update('netease', { queue: snapshot, message: '已恢复播放状态，点击播放继续' });
-    } catch {
-      if (identity.current.netease.isCurrent(generation)) {
-        update('netease', { storageStatus: '播放状态读取失败' });
-      }
-    }
-  };
-
-  const restoreQq = async (user, generation) => {
-    const playToken = playback.current.current();
-    try {
-      const result = await invoke('playback_state_load', { provider: 'qqmusic' });
-      if (
-        !identity.current.qqmusic.isCurrent(generation) ||
-        !playback.current.isCurrent(playToken) ||
-        String(workRef.current.qqmusic.profile?.userId) !== String(user)
-      )
-        return;
-      if (result.status === 'empty') return;
-      if (result.status !== 'ok') {
-        update('qqmusic', { storageStatus: '播放状态无法恢复' });
-        return;
-      }
-      const state = restoreQqPlaybackState(result.state, user);
-      if (
-        !state?.queue ||
-        songRef.current?.provider === 'qqmusic' ||
-        pendingPlay.current?.provider === 'qqmusic'
-      )
-        return;
-      providerSettings.current.qqmusic = {
-        mode: state.mode,
-        volume: state.volume,
-        muted: state.muted,
-      };
-      qqSaved.current.queue = state.queue;
-      qqSaved.current.position = state.position;
-      update('qqmusic', { queue: state.queue });
-      if (songRef.current || pendingPlay.current) return;
-      const track = state.queue.tracks[state.queue.index];
-      if (!track) return;
-      settings.current = { mode: state.mode, volume: state.volume, muted: state.muted };
-      setMode(state.mode);
-      setVolume(state.volume);
-      setMuted(state.muted);
-      audio.current.volume = state.volume;
-      audio.current.muted = state.muted;
-      qqSaved.current.resume = { id: track.id, position: state.position };
-      songRef.current = track;
-      setSong(track);
-      setRestoredProgress({ position: state.position, duration: (track.duration || 0) / 1000 });
-      update('qqmusic', { queue: state.queue, message: '已恢复播放状态，点击播放继续' });
-    } catch {
-      if (identity.current.qqmusic.isCurrent(generation)) {
-        update('qqmusic', { storageStatus: '播放状态读取失败' });
-      }
-    }
-  };
-
-  const sampleListening = a => {
-    if (a && !a.seeking) listening.current.progress(a.currentTime, performance.now(), a.playbackRate);
-  };
-  const diagnosticsChanged = () => {
-    if (diagnosticsOn.current) setDiagnosticVersion(v => v + 1);
-  };
-
-  const clearAccountContent = id => {
-    if (
-      pendingPlay.current?.provider === id ||
-      (rollbackRef.current &&
-        (rollbackRef.current.song.provider === id || rollbackRef.current.targetProvider === id))
-    ) {
-      rollbackRef.current = null;
-    }
-    if (id === 'qqmusic') {
-      providerSettings.current.qqmusic = null;
-      qqSaved.current.queue = null;
-      qqSaved.current.position = 0;
-      qqSaved.current.resume = null;
-      qqSaved.current.cleared = false;
-    }
-    if (id === 'netease') {
-      resumedLyric.current = null;
-      providerSettings.current.netease = null;
-      if (saved.current.timer) clearTimeout(saved.current.timer);
-      saved.current.timer = null;
-      saved.current.normal = null;
-      saved.current.fm = null;
-      saved.current.current = null;
-      saved.current.resume = null;
-    }
-    if (songRef.current?.provider === id) {
-      if (diagnosticsOn.current) setLastDiagnostic(listening.current.diagnosticSnapshot());
-      listening.current.clear();
-    }
-    if (id === 'netease') {
-      recommendationPending.current = false;
-      fmAutoStartRef.current = null;
-      fm.current = {
-        accountId: null,
-        tracks: [],
-        seen: new Set(),
-        pending: null,
-        error: '',
-        generation: fm.current.generation + 1,
-      };
-      setFmError('');
-      setFmStageFocus(false);
-      setLikedIds(new Set());
-      setLikedBusyIds(new Set());
-      setFmTrashBusy(false);
-      setPickerTrack(null);
-      setPickerBusyId(null);
-      setPickerError('');
-      setRemovingTrackKey(null);
-    }
-    identity.current[id].next();
-    browse.current[id].next();
-    if (pendingPlay.current?.provider === id) {
-      playback.current.next();
-      pendingPlay.current = null;
-    }
-    if (songRef.current?.provider === id) {
-      playback.current.next();
-      audio.current.pause();
-      audio.current.removeAttribute('src');
-      audio.current.load();
-      songRef.current = null;
-      setSong(null);
-      setTrackQuality(null);
-      replaceLyrics([]);
-      setRestoredProgress(null);
-    }
-    update(id, {
-      songs: [],
-      lists: [],
-      recommendLists: null,
-      queue: null,
-      listPage: 0,
-      listsBusy: false,
-      qqPlaylist: null,
-      qqTrackPage: 0,
-      qqHasMore: null,
-      searchType: 1,
-      searchTotal: null,
-      searchItems: [],
-      storageStatus: '',
-      title: '发现音乐',
-    });
-  };
-
-  const tagged = (items, id, accountId) => items.map(item => ({ ...item, provider: id, accountId }));
-
-  const loadLikedIds = async (token, userId) => {
-    if (!capabilities.netease.getLikedSongIds || userId == null) return;
-    try {
-      const p = await getProvider('netease');
-      if (typeof p.getLikedSongIds !== 'function') return;
-      const d = await p.getLikedSongIds();
-      if (
-        !account.current.netease.isCurrent(token) ||
-        String(workRef.current.netease.profile?.userId ?? '') !== String(userId)
-      )
-        return;
-      if (Array.isArray(d?.ids)) {
-        setLikedIds(new Set(d.ids.map(Number).filter(Number.isFinite)));
-      }
-    } catch {
-      // 红心同步属于附加信息，失败不阻断账号恢复或主列表加载
-    }
-  };
-
-  const loadLists = async (id, token, page = 1, append = false) => {
-    update(id, { ...(append ? {} : { lists: [] }), listsBusy: true, listStatus: '正在加载歌单…' });
-    try {
-      const p = await getProvider(id);
-      const d = await p.getPlaylists({ page });
-      if (!account.current[id].isCurrent(token)) return;
-      if (!Array.isArray(d.playlist)) throw Error('歌单列表数据不完整');
-      const items = append
-        ? [
-            ...workRef.current[id].lists,
-            ...d.playlist.filter(
-              x => !workRef.current[id].lists.some(old => String(old.id) === String(x.id))
-            ),
-          ]
-        : d.playlist;
-      update(id, {
-        lists: items,
-        listPage: page,
-        listsBusy: false,
-        listStatus:
-          id === 'qqmusic'
-            ? d.playlist.length
-              ? ''
-              : '本页没有更多歌单'
-            : d.more
-              ? '仅显示部分歌单（最多 100 个）'
-              : d.more === false
-                ? items.length
-                  ? ''
-                  : '暂无歌单'
-                : '歌单列表分页状态未知（最多 100 个）',
-      });
-    } catch (e) {
-      if (account.current[id].isCurrent(token)) {
-        update(id, { listsBusy: false, listStatus: '歌单加载失败：' + errorText(e) });
-      }
-    }
-  };
-
-  const restore = async (id = activeRef.current) => {
-    const token = account.current[id].next();
-    update(id, { accountBusy: true });
-    try {
-      const p = await getProvider(id);
-      if (!p.capabilities.restoreSession) {
-        clearAccountContent(id);
-        update(id, { profile: null, identityUnknown: false, lists: [], listStatus: '' });
-        return;
-      }
-      const d = await p.restoreSession();
-      if (!account.current[id].isCurrent(token)) return;
-      const next = d?.profile;
-      if (!d || !Object.hasOwn(d, 'profile') || (next != null && !next.userId)) {
-        clearAccountContent(id);
-        update(id, {
-          profile: null,
-          identityUnknown: true,
-          listStatus: '账号资料不完整，请刷新账号',
-        });
-        return;
-      }
-      const old = workRef.current[id];
-      if ((old.profile?.userId || null) !== (next?.userId || null) || old.identityUnknown) {
-        clearAccountContent(id);
-      }
-      update(id, { profile: next || null, identityUnknown: false });
-      if (id === 'netease' && next?.userId) {
-        void restoreSaved(
-          next.userId,
-          identity.current.netease.current(),
-          playback.current.current()
-        );
-        void loadLikedIds(token, next.userId);
-      }
-      if (id === 'qqmusic' && next?.userId) {
-        await restoreQq(next.userId, identity.current.qqmusic.current());
-      }
-      if (next?.userId && capabilities[id].getPlaylists) await loadLists(id, token);
-      else update(id, { lists: [], listStatus: '' });
-    } catch (e) {
-      if (account.current[id].isCurrent(token)) {
-        update(id, { listStatus: '账号刷新失败：' + errorText(e) });
-      }
-    } finally {
-      if (account.current[id].isCurrent(token)) update(id, { accountBusy: false });
-    }
-  };
-
-  useEffect(() => {
-    const syncHidden = () => {
-      document.documentElement.dataset.hidden = document.hidden ? 'true' : 'false';
-    };
-    syncHidden();
-    document.addEventListener('visibilitychange', syncHidden);
-    return () => {
-      document.removeEventListener('visibilitychange', syncHidden);
-      delete document.documentElement.dataset.hidden;
-    };
-  }, []);
-
-  useEffect(() => {
-    const flush = () => {
-      if (saved.current.timer) {
-        clearTimeout(saved.current.timer);
-        saved.current.timer = null;
-      }
-      saveNow();
-    };
-    window.addEventListener('pagehide', flush);
-    return () => window.removeEventListener('pagehide', flush);
-  }, []);
-
-  useEffect(() => {
-    let active = true;
-    (async () => {
-      try {
-        const last = await invoke('playback_state_load', { provider: 'last' });
-        if (!active) return;
-        bootProvider.current =
-          canUseQq && last?.status === 'ok' && last.provider === 'qqmusic' ? 'qqmusic' : 'netease';
-      } catch {}
-      if (!active) return;
-      if (bootProvider.current === 'qqmusic') {
-        await restore('qqmusic');
-        if (!active) return;
-      }
-      await restore('netease');
-    })();
-    return () => {
-      active = false;
-      for (const id of ['netease', 'qqmusic']) {
-        account.current[id].next();
-        identity.current[id].next();
-        browse.current[id].next();
-      }
-      qrRequest.current.next();
-      playback.current.next();
-      listening.current.clear();
-      if (saved.current.timer) clearTimeout(saved.current.timer);
-    };
-  }, []);
-
-  const applyLocalView = (allTracks, folderId = localActiveFolderRef.current, term = workRef.current.local.query, extraPatch = {}) => {
-    const clean = String(term || '').trim().toLowerCase();
-    const visible = allTracks.filter(t => {
-      if (folderId && t.folderId !== folderId) return false;
-      if (!clean) return true;
-      const hay = [t.name, artist(t), t.album?.name].filter(Boolean).join(' ').toLowerCase();
-      return hay.includes(clean);
-    });
-    const folderObj = folderId ? localFoldersRef.current.find(f => f.id === folderId) : null;
-    update('local', {
-      songs: visible,
-      query: term ?? '',
-      searchQuery: String(term || '').trim(),
-      title: folderObj ? folderObj.name : '全部本地歌曲',
-      ...extraPatch,
-    });
-  };
-
-  const loadLocalTracksPage = async ({ offset = 0, limit = 100, append = false } = {}) => {
-    const page = await local.getTracks({ offset, limit });
-    const items = Array.isArray(page?.tracks) ? page.tracks.map(normalizeLocalTrack).filter(Boolean) : [];
-    let merged;
-    if (append) {
-      const seen = new Set(localTracksRef.current.map(t => t.id));
-      merged = [...localTracksRef.current, ...items.filter(t => !seen.has(t.id))];
-    } else {
-      merged = items;
-    }
-    localTracksRef.current = merged;
-    setLocalTotal(Number(page?.total) || merged.length);
-    setLocalHasMore(Boolean(page?.hasMore));
-    applyLocalView(merged, localActiveFolderRef.current, workRef.current.local.query);
-    return { page, merged };
-  };
-
-  const restoreLocalQueue = async () => {
-    if (!capabilities?.local?.persistQueue || !local?.getQueue) return;
-    try {
-      const savedQueue = await local.getQueue();
-      const ids = Array.isArray(savedQueue?.ids) ? savedQueue.ids.map(String) : [];
-      if (!ids.length) return;
-      const missing = () => ids.some(id => !localTracksRef.current.some(t => t.id === id));
-      let hasMore = true;
-      while (missing() && hasMore) {
-        const res = await loadLocalTracksPage({
-          offset: localTracksRef.current.length,
-          limit: 200,
-          append: true,
-        });
-        hasMore = Boolean(res.page?.hasMore);
-        if (!res.page?.tracks?.length) break;
-      }
-      const byId = new Map(localTracksRef.current.map(t => [t.id, t]));
-      const tracks = ids.map(id => byId.get(id)).filter(Boolean);
-      if (!tracks.length) return;
-      const savedIdx = Number.isInteger(savedQueue?.index) ? savedQueue.index : 0;
-      const index = Math.max(0, Math.min(savedIdx, tracks.length - 1));
-      const restoredQueue = {
-        source: 'local',
-        tracks,
-        index,
-        provider: 'local',
-        accountId: 'local',
-      };
-      update('local', { queue: restoredQueue });
-      if (!songRef.current && !pendingPlay.current) {
-        const track = tracks[index];
-        const position = Number.isFinite(Number(savedQueue?.position))
-          ? Math.max(0, Number(savedQueue.position))
-          : 0;
-        const duration = (track.duration || 0) / 1000;
-        localSaved.current.resume = { id: track.id, position };
-        localSaved.current.position = position;
-        songRef.current = track;
-        setSong(track);
-        setRestoredProgress({ position, duration });
-        if (capabilities.local?.getLyrics) {
-          setLyricStatus('loading');
-          loadLyricsFor(
-            track,
-            () => true,
-            () => setLyricStatus('error'),
-            local,
-            position
-          );
-        }
-        update('local', { message: '已恢复本地播放进度，点击播放继续' });
-      }
-    } catch {}
-  };
-
-  const scanAndReloadLocal = async ({ messageOverride = '' } = {}) => {
-    const scanRes = await local.scan();
-    clearLocalCoverCache();
-    setLocalTruncated(Boolean(scanRes?.truncated));
-    const unavailable = Array.isArray(scanRes?.unavailableFolderIds) ? scanRes.unavailableFolderIds : [];
-    setLocalUnavailableIds(unavailable);
-    await loadLocalTracksPage({ offset: 0, limit: 100, append: false });
-    let statusMsg = messageOverride;
-    if (!statusMsg) {
-      if (unavailable.length && scanRes?.truncated) {
-        statusMsg = '部分文件夹暂不可用，且本地曲库已达到 5,000 首上限';
-      } else if (unavailable.length) {
-        statusMsg = `有 ${unavailable.length} 个本地文件夹暂不可用，请检查磁盘或路径`;
-      } else if (scanRes?.truncated) {
-        statusMsg = '本地曲库已达到 5,000 首扫描上限，其余文件未计入';
-      }
-    }
-    update('local', { message: statusMsg });
-    return scanRes;
-  };
-
-  const initLocalLibrary = async () => {
-    if (!canLocalLibrary || localInitRef.current.started) return;
-    localInitRef.current.started = true;
-    setLocalBusy(true);
-    try {
-      const folders = (await local.getFolders()) || [];
-      localFoldersRef.current = folders;
-      setLocalFolders(folders);
-      if (folders.length > 0) {
-        await scanAndReloadLocal();
-        await restoreLocalQueue();
-      } else {
-        localTracksRef.current = [];
-        setLocalTotal(0);
-        setLocalHasMore(false);
-        applyLocalView([], null, '');
-      }
-      localInitRef.current.ready = true;
-    } catch (e) {
-      localInitRef.current.ready = true;
-      update('local', { message: errorText(e) });
-    } finally {
-      setLocalBusy(false);
-    }
-  };
-
-  const pickLocalFolder = async () => {
-    if (!canLocalLibrary || localBusy) return;
-    setLocalBusy(true);
-    update('local', { message: '' });
-    try {
-      const picked = await local.pickFolder();
-      if (!picked) return;
-      const folders = (await local.getFolders()) || [];
-      localFoldersRef.current = folders;
-      setLocalFolders(folders);
-      await scanAndReloadLocal();
-      localInitRef.current.ready = true;
-    } catch (e) {
-      update('local', { message: errorText(e) });
-    } finally {
-      setLocalBusy(false);
-    }
-  };
-
-  const removeLocalFolder = async folderId => {
-    if (!canLocalLibrary || localBusy) return;
-    setLocalBusy(true);
-    try {
-      await local.removeFolder(folderId);
-      clearLocalCoverCache();
-      const folders = (await local.getFolders()) || [];
-      localFoldersRef.current = folders;
-      setLocalFolders(folders);
-      if (localActiveFolderRef.current === folderId) {
-        localActiveFolderRef.current = null;
-        setLocalActiveFolderId(null);
-      }
-      if (folders.length > 0) {
-        await scanAndReloadLocal();
-      } else {
-        localTracksRef.current = [];
-        setLocalTotal(0);
-        setLocalHasMore(false);
-        setLocalTruncated(false);
-        setLocalUnavailableIds([]);
-        applyLocalView([], null, workRef.current.local.query, { message: '' });
-      }
-    } catch (e) {
-      update('local', { message: errorText(e) });
-    } finally {
-      setLocalBusy(false);
-    }
-  };
-
-  const scanLocalLibrary = async () => {
-    if (!canLocalLibrary || localBusy) return;
-    setLocalBusy(true);
-    try {
-      await scanAndReloadLocal();
-    } catch (e) {
-      update('local', { message: errorText(e) });
-    } finally {
-      setLocalBusy(false);
-    }
-  };
-
-  const selectLocalFolder = folderId => {
-    localActiveFolderRef.current = folderId;
-    setLocalActiveFolderId(folderId);
-    applyLocalView(localTracksRef.current, folderId, workRef.current.local.query);
-  };
-
-  const loadMoreLocalTracks = async () => {
-    if (!canLocalLibrary || localBusy || !localHasMore) return;
-    setLocalBusy(true);
-    try {
-      await loadLocalTracksPage({
-        offset: localTracksRef.current.length,
-        limit: 100,
-        append: true,
-      });
-    } catch (e) {
-      update('local', { message: errorText(e) });
-    } finally {
-      setLocalBusy(false);
-    }
-  };
-
-  const switchProvider = id => {
-    setActiveCustomPlaylistId(null);
-    setRenamingCustomPlaylist(false);
-    setConfirmDeleteCustom(false);
-    if (view === 'settings') setView('library');
-    if (activeRef.current !== id) {
-      const prevId = activeRef.current;
-      fmAutoStartRef.current = null;
-      recommendation.current.next();
-      if (recommendationPending.current) {
-        recommendationPending.current = false;
-        update(prevId, { message: '推荐加载已取消' });
-      }
-    }
-    activeRef.current = id;
-    setActiveProvider(id);
-    if (id === 'local') {
-      void initLocalLibrary();
-      return;
-    }
-    if (workRef.current[id].identityUnknown && !workRef.current[id].accountBusy) restore(id);
-  };
-
-  const search = async (e, page = 1, explicitTerm = null, explicitType = null) => {
-    e?.preventDefault();
-    setActiveCustomPlaylistId(null);
-    const id = activeRef.current;
-    if (id === 'local') {
-      const term = explicitTerm != null ? explicitTerm : workRef.current.local.query;
-      applyLocalView(localTracksRef.current, localActiveFolderRef.current, term);
-      return;
-    }
-    const w = workRef.current[id];
-    if (w.identityUnknown) {
-      update(id, { message: '请先刷新账号，确认当前身份' });
-      return;
-    }
-    const q = (explicitTerm != null ? explicitTerm : e ? w.query : w.searchQuery).trim();
-    if (!q) return;
-    if (explicitTerm != null) update(id, { query: q });
-    setSearchHistory(prev => ({ ...prev, [id]: saveSearchHistory(id, q) }));
-    recommendationPending.current = false;
-    const nextType =
-      id === 'netease' && capabilities[id].searchCategories
-        ? (explicitType ?? w.searchType ?? 1)
-        : 1;
-    const safePage = Math.max(1, Number(page) || 1);
-    const offset =
-      id === 'netease' && capabilities[id].searchPagination
-        ? Math.max(0, Math.min(1000, (safePage - 1) * 40))
-        : 0;
-    const token = browse.current[id].next();
-    const generation = identity.current[id].current();
-    update(id, {
-      message: '正在搜索…',
-      searching: true,
-      trackOrigin: 'search',
-      searchType: nextType,
-      qqPlaylist: null,
-      qqTrackPage: 0,
-    });
-    try {
-      const p = await getProvider(id);
-      let d;
-      if (id === 'netease') {
-        const opts = {};
-        if (offset > 0) opts.offset = offset;
-        if (nextType !== 1) opts.searchType = nextType;
-        d = await p.search(q, Object.keys(opts).length ? opts : undefined);
-      } else {
-        d = await p.search(q, { page: safePage, pageSize: 5 });
-      }
-      if (!browse.current[id].isCurrent(token) || !identity.current[id].isCurrent(generation))
-        return;
-
-      if (id === 'netease' && nextType !== 1) {
-        const res = d.result || {};
-        if (nextType === 10) {
-          const items = Array.isArray(res.albums) ? res.albums : [];
-          const total = res.albumCount ?? null;
-          update(id, {
-            songs: [],
-            searchItems: items,
-            searchTotal: total,
-            recommendLists: null,
-            title: '搜索专辑：' + q,
-            page: safePage,
-            searchQuery: q,
-            searching: false,
-            message: items.length ? '' : '没有找到专辑',
-          });
-        } else if (nextType === 100) {
-          const items = Array.isArray(res.artists) ? res.artists : [];
-          const total = res.artistCount ?? null;
-          update(id, {
-            songs: [],
-            searchItems: items,
-            searchTotal: total,
-            recommendLists: null,
-            title: '搜索歌手：' + q,
-            page: safePage,
-            searchQuery: q,
-            searching: false,
-            message: items.length ? '' : '没有找到歌手',
-          });
-        } else if (nextType === 1000) {
-          const items = Array.isArray(res.playlists) ? res.playlists : [];
-          const total = res.playlistCount ?? null;
-          update(id, {
-            songs: [],
-            searchItems: items,
-            searchTotal: total,
-            recommendLists: null,
-            title: '搜索歌单：' + q,
-            page: safePage,
-            searchQuery: q,
-            searching: false,
-            message: items.length ? '' : '没有找到歌单',
-          });
-        }
-        return;
-      }
-
-      if (!Array.isArray(d.result?.songs) && d.result?.songCount !== 0)
-        throw Error('搜索结果数据不完整');
-      const found = tagged(d.result?.songs || [], id, w.profile?.userId || null);
-      const total = d.result?.songCount;
-      const maxPage = total != null ? Math.min(26, Math.max(1, Math.ceil(total / 40))) : null;
-      update(id, {
-        songs: found,
-        searchItems: [],
-        searchTotal: total ?? null,
-        recommendLists: null,
-        title: '搜索：' + q,
-        page: safePage,
-        searchQuery: q,
-        searching: false,
-        message:
-          id === 'qqmusic'
-            ? found.length
-              ? '总数未知，可继续请求下一页'
-              : '本页没有找到歌曲'
-            : total == null
-              ? found.length
-                ? `第 ${safePage} 页 · 共 ${found.length} 首`
-                : '没有找到歌曲'
-              : total > found.length
-                ? `共 ${total} 首 · 第 ${safePage}/${maxPage} 页`
-                : found.length
-                  ? ''
-                  : '没有找到歌曲',
-      });
-    } catch (err) {
-      if (browse.current[id].isCurrent(token) && identity.current[id].isCurrent(generation)) {
-        update(id, { message: errorText(err), searching: false });
-      }
-    }
-  };
-
-  const openRecent = async () => {
-    setActiveCustomPlaylistId(null);
-    const id = 'netease';
-    const user = workRef.current.netease.profile?.userId;
-    if (!user || workRef.current.netease.identityUnknown) return;
-    const token = browse.current.netease.next();
-    const generation = identity.current.netease.current();
-    update(id, {
-      title: '本地最近播放',
-      songs: [],
-      searchItems: [],
-      searchTotal: null,
-      recommendLists: null,
-      trackOrigin: 'recent',
-      qqPlaylist: null,
-      message: '正在读取本地记录…',
-    });
-    try {
-      const data = await invoke('netease_recent_get', { accountId: String(user) });
-      if (!browse.current.netease.isCurrent(token) || !identity.current.netease.isCurrent(generation))
-        return;
-      const tracks = (data.tracks || []).map(t => ({
-        id: t.id,
-        name: t.name,
-        artists: t.artists.map(name => ({ name })),
-        album: { name: t.album, ...(t.coverUrl ? { picUrl: t.coverUrl } : {}) },
-        duration: t.duration,
-        provider: id,
-        accountId: user,
-      }));
-      update(id, {
-        songs: tracks,
-        message: tracks.length ? '本地记录，非网易云云端记录' : '暂无本地播放记录',
-      });
-    } catch {
-      if (browse.current.netease.isCurrent(token)) {
-        update(id, { message: '本地最近播放读取失败' });
-      }
-    }
-  };
-
-  const recordRecent = () => {
-    const current = songRef.current;
-    const user = workRef.current.netease.profile?.userId;
-    if (
-      !current ||
-      current.provider !== 'netease' ||
-      !user ||
-      String(current.accountId) !== String(user)
-    )
-      return;
-    const token = playback.current.current();
-    if (recent.current.last?.token === token && recent.current.last?.song === current) return;
-    let track;
-    try {
-      const base = cleanTrack(current);
-      const cover = coverForStorage(current);
-      track = cover ? { ...base, coverUrl: cover } : base;
-    } catch {
-      return;
-    }
-    recent.current.last = { token, song: current };
-    const generation = identity.current.netease.current();
-    recent.current.chain = recent.current.chain
-      .catch(() => {})
-      .then(() => {
-        if (
-          identity.current.netease.isCurrent(generation) &&
-          String(workRef.current.netease.profile?.userId) === String(user)
-        ) {
-          return invoke('netease_recent_add', { accountId: String(user), track });
-        }
-      })
-      .catch(() => {
-        if (identity.current.netease.isCurrent(generation)) {
-          update('netease', { storageStatus: '本地最近播放保存失败' });
-        }
-      });
-  };
-
-  const clearRecent = () => {
-    const user = workRef.current.netease.profile?.userId;
-    const generation = identity.current.netease.current();
-    setConfirmRecent(false);
-    if (!user) return;
-    recent.current.chain = recent.current.chain
-      .catch(() => {})
-      .then(() => {
-        if (
-          identity.current.netease.isCurrent(generation) &&
-          String(workRef.current.netease.profile?.userId) === String(user)
-        ) {
-          return invoke('netease_recent_clear', { accountId: String(user) });
-        }
-      })
-      .then(() => {
-        if (
-          identity.current.netease.isCurrent(generation) &&
-          workRef.current.netease.trackOrigin === 'recent'
-        ) {
-          update('netease', { songs: [], message: '暂无本地播放记录' });
-        }
-      })
-      .catch(() => update('netease', { storageStatus: '本地最近播放清空失败' }));
-  };
-
-  const openList = async (list, page = 1) => {
-    setActiveCustomPlaylistId(null);
-    recommendationPending.current = false;
-    const id = activeRef.current;
-    const w = workRef.current[id];
-    if (w.identityUnknown) {
-      update(id, { message: '请先刷新账号，确认当前身份' });
-      return;
-    }
-    const token = browse.current[id].next();
-    const generation = identity.current[id].current();
-    update(id, {
-      title: list.name,
-      songs: [],
-      searchItems: [],
-      searchTotal: null,
-      recommendLists: null,
-      trackOrigin: 'playlist',
-      qqPlaylist: list,
-      qqTrackPage: page,
-      playlistMeta: null,
-      message: '正在加载歌单…',
-    });
-    try {
-      const p = await getProvider(id);
-      const d = await p.getPlaylistTracks(list.id, { page });
-      if (!browse.current[id].isCurrent(token) || !identity.current[id].isCurrent(generation))
-        return;
-      if (
-        !Array.isArray(d.songs) ||
-        (id === 'netease' && typeof d.hasMore !== 'boolean') ||
-        (id === 'qqmusic' && d.hasMore !== null && typeof d.hasMore !== 'boolean')
-      ) {
-        throw Error('歌单数据不完整');
-      }
-      const found = tagged(
-        id === 'netease' ? d.songs.slice(0, 100) : d.songs,
-        id,
-        w.profile?.userId || null
-      );
-      update(id, {
-        songs: found,
-        qqPlaylist: list,
-        qqTrackPage: page,
-        qqHasMore: d.hasMore,
-        playlistMeta:
-          id === 'netease'
-            ? { ...(d.playlist || {}), total: d.total }
-            : { coverImgUrl: list.coverImgUrl, total: d.total },
-        message:
-          id === 'qqmusic'
-            ? found.length
-              ? ''
-              : '本页没有歌曲'
-            : d.hasMore
-              ? `仅显示本页 ${found.length} 首${d.total != null ? '，共 ' + d.total + ' 首' : ''}`
-              : found.length
-                ? ''
-                : '歌单为空',
-      });
-    } catch (e) {
-      if (browse.current[id].isCurrent(token) && identity.current[id].isCurrent(generation)) {
-        update(id, { message: errorText(e) });
-      }
-    }
-  };
-
-  const recommend = async kind => {
-    setActiveCustomPlaylistId(null);
-    const id = activeRef.current;
-    const w = workRef.current[id];
-    if (!w || activeRef.current !== id || w.identityUnknown || !w.profile?.userId) return;
-    const token = browse.current[id].next();
-    const generation = identity.current[id].current();
-    const recToken = recommendation.current.next();
-    recommendationPending.current = true;
-    const names = {
-      daily: '每日推荐',
-      resources: '为你推荐的歌单',
-      playlists: '推荐歌单',
-      newsong: '推荐新歌',
-    };
-    update(id, {
-      title: names[kind],
-      songs: [],
-      searchItems: [],
-      searchTotal: null,
-      recommendLists: null,
-      qqPlaylist: null,
-      qqTrackPage: 0,
-      trackOrigin: 'recommendation',
-      message: '正在加载…',
-    });
-    try {
-      const p = await getProvider(id);
-      if (!p.capabilities.getRecommendations || !p.recommendationCapabilities[kind])
-        throw Error('该推荐类型暂不支持');
-      const d = await p.getRecommendations(kind);
-      if (
-        !browse.current[id].isCurrent(token) ||
-        !identity.current[id].isCurrent(generation) ||
-        !recommendation.current.isCurrent(recToken) ||
-        activeRef.current !== id
-      )
-        return;
-      recommendationPending.current = false;
-      if (!Array.isArray(d.items)) throw Error('推荐数据不完整');
-      if (kind === 'daily' || kind === 'newsong') {
-        update(id, {
-          songs: tagged(d.items, id, w.profile.userId),
-          message: d.items.length ? '' : '暂无推荐歌曲',
-        });
-      } else {
-        update(id, {
-          recommendLists: d.items,
-          message: d.items.length ? '' : '暂无推荐歌单',
-        });
-      }
-    } catch (e) {
-      if (
-        browse.current[id].isCurrent(token) &&
-        identity.current[id].isCurrent(generation) &&
-        recommendation.current.isCurrent(recToken) &&
-        activeRef.current === id
-      ) {
-        recommendationPending.current = false;
-        update(id, { message: '推荐加载失败：' + errorText(e) });
-      }
-    }
-  };
-
-  const loadFm = async () => {
-    const state = fm.current;
-    const w = workRef.current.netease;
-    if (!w.profile?.userId || w.identityUnknown || state.accountId !== w.profile.userId) return;
-    if (state.pending) return state.pending;
-    const generation = state.generation;
-    state.error = '';
-    setFmError('');
-    const promise = (async () => {
-      try {
-        const d = await netease.getPrivateFm();
-        if (fm.current !== state || generation !== state.generation) return;
-        if (!Array.isArray(d.items)) throw Error('私人 FM 数据不完整');
-        const next = tagged(d.items, 'netease', state.accountId).filter(x => {
-          if (state.seen.has(x.id)) return false;
-          state.seen.add(x.id);
-          return true;
-        });
-        state.tracks.push(...next);
-        if (state.tracks.length) {
-          saved.current.fm = {
-            tracks: [...state.tracks],
-            index: Math.min(saved.current.fm?.index ?? 0, state.tracks.length - 1),
-            source: 'fm',
-            type: 'fm',
-            provider: 'netease',
-            accountId: state.accountId,
-          };
-          scheduleSave();
-        }
-        if (!next.length) state.error = '暂无新歌曲，请稍后重试';
-        setFmError(state.error);
-        const current = workRef.current.netease;
-        const q = current.queue;
-        if (q?.type === 'fm' && q.accountId === state.accountId) {
-          update('netease', { queue: { ...q, tracks: [...state.tracks] } });
-        }
-        const autoTarget = fmAutoStartRef.current;
-        if (
-          autoTarget &&
-          autoTarget.accountId === state.accountId &&
-          autoTarget.generation === generation &&
-          state.tracks.length
-        ) {
-          fmAutoStartRef.current = null;
-          const curSong = songRef.current;
-          const curQueue = workRef.current.netease.queue;
-          const alreadyPlayingFm =
-            curSong?.provider === 'netease' &&
-            curQueue?.type === 'fm' &&
-            String(curSong.accountId) === String(state.accountId);
-          if (!alreadyPlayingFm && !pendingPlay.current) {
-            const idx = Math.min(saved.current.fm?.index ?? 0, state.tracks.length - 1);
-            const fmQueue = {
-              type: 'fm',
-              source: 'fm',
-              tracks: [...state.tracks],
-              index: idx,
-              provider: 'netease',
-              accountId: state.accountId,
-            };
-            void play(state.tracks[idx], fmQueue);
-          }
-        }
-      } catch (e) {
-        if (fm.current === state) {
-          fmAutoStartRef.current = null;
-          state.error = '私人 FM 加载失败：' + errorText(e);
-          setFmError(state.error);
-        }
-      } finally {
-        if (fm.current === state) state.pending = null;
-      }
-    })();
-    state.pending = promise;
-    return promise;
-  };
-
-  const retryFm = () => {
-    const w = workRef.current.netease;
-    if (!w.profile?.userId || w.identityUnknown) return;
-    if (!fm.current.tracks.length) {
-      fmAutoStartRef.current = {
-        accountId: w.profile.userId,
-        generation: fm.current.generation,
-      };
-    }
-    if (!fm.current.pending) void loadFm();
-  };
-
-  const openFm = () => {
-    const w = workRef.current.netease;
-    if (!w.profile?.userId || w.identityUnknown) return;
-    if (fm.current.accountId !== w.profile.userId) {
-      fm.current = {
-        accountId: w.profile.userId,
-        tracks: [],
-        seen: new Set(),
-        pending: null,
-        error: '',
-        generation: fm.current.generation + 1,
-      };
-      setFmError('');
-    }
-    setFmStageFocus(true);
-    setView('stage');
-    const curSong = songRef.current;
-    const alreadyPlayingFm =
-      curSong?.provider === 'netease' &&
-      workRef.current.netease.queue?.type === 'fm' &&
-      String(curSong.accountId) === String(w.profile.userId);
-    if (alreadyPlayingFm) return;
-    if (fm.current.tracks.length) {
-      fmAutoStartRef.current = null;
-      const idx = Math.min(saved.current.fm?.index ?? 0, fm.current.tracks.length - 1);
-      const fmQueue = {
-        type: 'fm',
-        source: 'fm',
-        tracks: [...fm.current.tracks],
-        index: idx,
-        provider: 'netease',
-        accountId: w.profile.userId,
-      };
-      void play(fm.current.tracks[idx], fmQueue);
-    } else {
-      fmAutoStartRef.current = {
-        accountId: w.profile.userId,
-        generation: fm.current.generation,
-      };
-      if (!fm.current.pending) void loadFm();
-    }
-  };
-
-  const changeNeteaseQuality = level => {
-    const savedLevel = saveNeteaseQuality(level);
-    qualityRef.current = savedLevel;
-    setNeteaseQuality(savedLevel);
-    if (songRef.current?.provider === 'netease') {
-      update('netease', {
-        message: `已设为${QUALITY_LABELS[savedLevel] || savedLevel}音质，下首歌或重载后生效`,
-      });
-    }
-  };
-
-  const toggleLike = async targetSong => {
-    if (!targetSong || targetSong.provider !== 'netease' || !capabilities.netease.likeTrack) return;
-    const w = workRef.current.netease;
-    if (w.identityUnknown || !w.profile?.userId) {
-      update('netease', { message: '请先登录网易云音乐后再操作喜欢' });
-      return;
-    }
-    const numericId = Number(targetSong.id);
-    if (!Number.isFinite(numericId) || numericId <= 0 || likedBusyIds.has(numericId)) return;
-    const generation = identity.current.netease.current();
-    const nextLike = !likedIds.has(numericId);
-    setLikedBusyIds(prev => new Set([...prev, numericId]));
-    try {
-      const p = await getProvider('netease');
-      await p.likeTrack(numericId, nextLike);
-      if (!identity.current.netease.isCurrent(generation)) return;
-      setLikedIds(prev => {
-        const next = new Set(prev);
-        if (nextLike) next.add(numericId);
-        else next.delete(numericId);
-        return next;
-      });
-      update('netease', {
-        message: nextLike ? '已加入「我喜欢的音乐」' : '已取消喜欢',
-      });
-    } catch (err) {
-      if (identity.current.netease.isCurrent(generation)) {
-        update('netease', { message: errorText(err) });
-      }
-    } finally {
-      setLikedBusyIds(prev => {
-        if (!prev.has(numericId)) return prev;
-        const next = new Set(prev);
-        next.delete(numericId);
-        return next;
-      });
-    }
-  };
-
-  const trashCurrentFmTrack = async () => {
-    const current = songRef.current;
-    if (!current || current.provider !== 'netease' || !capabilities.netease.trashFmTrack) return;
-    const w = workRef.current.netease;
-    if (w.identityUnknown || !w.profile?.userId || fmTrashBusy) return;
-    const queue = w.queue;
-    if (!queue || queue.type !== 'fm') return;
-    const generation = identity.current.netease.current();
-    const fmGen = fm.current.generation;
-    const numericId = Number(current.id);
-    setFmTrashBusy(true);
-    try {
-      const p = await getProvider('netease');
-      await p.trashFmTrack(numericId);
-      if (!identity.current.netease.isCurrent(generation) || fm.current.generation !== fmGen) return;
-      const nextTracks = fm.current.tracks.filter(t => Number(t.id) !== numericId);
-      fm.current.tracks = nextTracks;
-      const curIndex = queue.index ?? 0;
-      const nextIdx = Math.min(curIndex, Math.max(0, nextTracks.length - 1));
-      const nextQueue = nextTracks.length ? { ...queue, tracks: [...nextTracks], index: nextIdx } : null;
-      saved.current.fm = nextQueue;
-      update('netease', {
-        queue: nextQueue,
-      });
-      if (nextTracks.length - nextIdx <= 2 && !fm.current.error) void loadFm();
-      if (nextQueue && nextTracks[nextIdx]) {
-        await play(nextTracks[nextIdx], nextQueue);
-      } else {
-        listening.current.settle();
-        listening.current.clear();
-        audio.current.pause();
-        audio.current.removeAttribute('src');
-        audio.current.load();
-        songRef.current = null;
-        setSong(null);
-        setTrackQuality(null);
-        setPlaying(false);
-        replaceLyrics([]);
-        setLyricStatus('idle');
-        setRestoredProgress(null);
-        update('netease', { message: '已从私人 FM 移除，正在获取新推荐' });
-      }
-      scheduleSave(true);
-    } catch (err) {
-      if (identity.current.netease.isCurrent(generation)) {
-        update('netease', { message: errorText(err) });
-      }
-    } finally {
-      setFmTrashBusy(false);
-    }
-  };
-
-  const openPlaylistPicker = track => {
-    if (!track || !['netease', 'qqmusic', 'local'].includes(track.provider)) return;
-    setPickerError('');
-    setPickerTrack(track);
-  };
-
-  const persistCustomPlaylistsToDisk = (list, seq) => {
-    if (!canCustomPlaylistsStorage) return;
-    customPlaylistsSaveChainRef.current = customPlaylistsSaveChainRef.current
-      .catch(() => {})
-      .then(async () => {
-        if (seq !== customPlaylistsSaveSeqRef.current) return;
-        await desktop.customPlaylistsSave({
-          version: 1,
-          playlists: Array.isArray(list) ? list : [],
-        });
-      })
-      .catch(() => {});
-  };
-
-  const commitCustomPlaylists = next => {
-    customPlaylistsRef.current = next;
-    setCustomPlaylists(next);
-    saveCustomPlaylists(next);
-    const seq = ++customPlaylistsSaveSeqRef.current;
-    persistCustomPlaylistsToDisk(next, seq);
-    return next;
-  };
-
-  const handleCreateCustomPlaylist = rawName => {
-    const res = createCustomPlaylist(customPlaylistsRef.current, rawName);
-    if (res.error) return res;
-    commitCustomPlaylists(res.playlists);
-    setActiveCustomPlaylistId(res.created.id);
-    setCustomPlaylistFilter('');
-    setCustomPlaylistNotice(`已创建本机歌单「${res.created.name}」`);
-    setRenamingCustomPlaylist(false);
-    setConfirmDeleteCustom(false);
-    if (view !== 'library') setView('library');
-    return res;
-  };
-
-  const handleOpenCustomPlaylist = playlistId => {
-    setActiveCustomPlaylistId(playlistId);
-    setCustomPlaylistFilter('');
-    setCustomPlaylistNotice('');
-    setRenamingCustomPlaylist(false);
-    setConfirmDeleteCustom(false);
-    if (view !== 'library') setView('library');
-  };
-
-  const handleRenameCustomPlaylist = rawName => {
-    if (!activeCustomPlaylistId) return { error: '未选中本机歌单' };
-    const res = renameCustomPlaylist(customPlaylistsRef.current, activeCustomPlaylistId, rawName);
-    if (res.error) {
-      setCustomPlaylistNotice(res.error);
-      return res;
-    }
-    commitCustomPlaylists(res.playlists);
-    if (mixedQueueRef.current?.playlistId === activeCustomPlaylistId) {
-      const nextMq = { ...mixedQueueRef.current, playlistName: res.renamed.name };
-      mixedQueueRef.current = nextMq;
-      setMixedQueue(nextMq);
-    }
-    setRenamingCustomPlaylist(false);
-    setCustomPlaylistNotice(`已重命名为「${res.renamed.name}」`);
-    return res;
-  };
-
-  const handleDeleteCustomPlaylist = playlistId => {
-    const target = customPlaylistsRef.current.find(p => p.id === playlistId);
-    const res = deleteCustomPlaylist(customPlaylistsRef.current, playlistId);
-    if (!res.deleted) return;
-    commitCustomPlaylists(res.playlists);
-    if (activeCustomPlaylistId === playlistId) {
-      setActiveCustomPlaylistId(null);
-      setConfirmDeleteCustom(false);
-      setCustomPlaylistNotice('');
-    } else if (target) {
-      setCustomPlaylistNotice(`已删除本机歌单「${target.name}」`);
-    }
-  };
-
-  const handleAddTrackToCustom = (playlistId, track) => {
-    const res = addTrackToCustomPlaylist(customPlaylistsRef.current, playlistId, track);
-    if (res.error) {
-      setPickerError(res.error);
-      return;
-    }
-    if (res.duplicate) {
-      setPickerError('该歌曲已在这个本机歌单中');
-      return;
-    }
-    commitCustomPlaylists(res.playlists);
-    const target = res.playlists.find(p => p.id === playlistId);
-    const note = target ? `已加入本机歌单「${target.name}」` : '已加入本机歌单';
-    if (activeCustomPlaylistId === playlistId) setCustomPlaylistNotice(note);
-    else update(activeRef.current, { message: note });
-    setPickerTrack(null);
-    setPickerError('');
-  };
-
-  const handleCreateAndAddCustom = (rawName, track) => {
-    const created = createCustomPlaylist(customPlaylistsRef.current, rawName);
-    if (created.error) return created;
-    const added = addTrackToCustomPlaylist(created.playlists, created.created.id, track);
-    if (added.error) return added;
-    commitCustomPlaylists(added.playlists);
-    const note = `已新建「${created.created.name}」并收入 1 首歌曲`;
-    update(activeRef.current, { message: note });
-    setPickerTrack(null);
-    setPickerError('');
-    return added;
-  };
-
-  const handleRemoveTrackFromCustom = (playlistId, track) => {
-    const key = track.customKey || customTrackKey(track);
-    if (!key) return;
-    const res = removeTrackFromCustomPlaylist(customPlaylistsRef.current, playlistId, key);
-    if (!res.removed) return;
-    commitCustomPlaylists(res.playlists);
-    setCustomPlaylistNotice(`已从本机歌单移出「${track.name}」`);
-  };
-
-  const handleExportCustomPlaylists = () => {
-    const json = exportCustomPlaylistsJson(customPlaylistsRef.current);
-    try {
-      const blob = new Blob([json], { type: 'application/json;charset=utf-8' });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = `vesper-playlists-${new Date().toISOString().slice(0, 10)}.json`;
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-      setTimeout(() => URL.revokeObjectURL(url), 1000);
-      setCustomImportStatus('已导出本机跨源歌单 JSON 备份');
-      if (activeCustomPlaylistId) setCustomPlaylistNotice('已导出本机跨源歌单 JSON 备份');
-    } catch {
-      setCustomImportStatus('导出备份失败，请重试');
-    }
-  };
-
-  const handleImportCustomPlaylists = async file => {
-    if (!file) return;
-    try {
-      const text = await file.text();
-      const res = importCustomPlaylistsJson(text, customPlaylistsRef.current);
-      if (res.error) {
-        setCustomImportStatus(res.error);
-        if (activeCustomPlaylistId) setCustomPlaylistNotice(res.error);
-        return;
-      }
-      commitCustomPlaylists(res.playlists);
-      const summary =
-        res.addedPlaylists || res.addedTracks
-          ? `已导入 ${res.addedPlaylists} 个歌单、新增 ${res.addedTracks} 首曲目`
-          : '备份内曲目已全部存在，未产生重复新增';
-      setCustomImportStatus(summary);
-      if (activeCustomPlaylistId) setCustomPlaylistNotice(summary);
-    } catch {
-      setCustomImportStatus('无法读取所选备份文件');
-    }
-  };
-
-  const refreshAudioOutputDevices = async () => {
-    const res = await listAudioOutputDevices();
-    setAudioOutputDevices(res.devices);
-    return res;
-  };
-
-  const handleToggleSmoothFadeIn = nextEnabled => {
-    const savedPrefs = saveAudioPrefs({
-      ...audioPrefsRef.current,
-      smoothFadeIn: Boolean(nextEnabled),
-    });
-    audioPrefsRef.current = savedPrefs;
-    setAudioPrefs(savedPrefs);
-  };
-
-  const handleToggleAutoOpenStage = nextEnabled => {
-    const savedPrefs = saveAudioPrefs({
-      ...audioPrefsRef.current,
-      autoOpenStageOnPlay: Boolean(nextEnabled),
-    });
-    audioPrefsRef.current = savedPrefs;
-    setAudioPrefs(savedPrefs);
-  };
-
-  const handleSelectOutputDevice = async deviceId => {
-    setAudioOutputError('');
-    const result = await applyAudioOutputDevice(audio.current, deviceId);
-    if (!result.ok && !result.unsupported) {
-      setAudioOutputError(result.error);
-      return;
-    }
-    const savedPrefs = saveAudioPrefs({
-      ...audioPrefsRef.current,
-      outputDeviceId: deviceId || '',
-    });
-    audioPrefsRef.current = savedPrefs;
-    setAudioPrefs(savedPrefs);
-  };
-
-  useEffect(() => {
-    applyThemePrefsToDocument(themePrefs);
-    if (typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window) {
-      Promise.resolve(invoke('window_theme_sync', { theme: themePrefs.theme })).catch(() => {});
-    }
-  }, [themePrefs]);
-
-  const handleChangeTheme = themeId => {
-    setThemePrefs(prev => saveThemePrefs({ ...prev, theme: themeId }));
-  };
-
-  const handleChangeAmbient = ambientId => {
-    setThemePrefs(prev => saveThemePrefs({ ...prev, ambient: ambientId }));
-  };
-
-  const stopSmoothFade = ({ restoreVolume = true } = {}) => {
-    if (cancelFadeRef.current) {
-      const cancel = cancelFadeRef.current;
-      cancelFadeRef.current = null;
-      cancel();
-    }
-    if (fadeActiveRef.current) {
-      fadeActiveRef.current = false;
-      if (restoreVolume && audio.current) {
-        audio.current.volume = settings.current.volume;
-      }
-    }
-  };
-
-  const triggerSmoothFade = targetVol => {
-    stopSmoothFade({ restoreVolume: false });
-    if (!audioPrefsRef.current.smoothFadeIn || !audio.current || audio.current.muted) return;
-    fadeActiveRef.current = true;
-    const cancel = runSmoothFadeIn(audio.current, targetVol, true, 140);
-    cancelFadeRef.current = () => {
-      cancel();
-      fadeActiveRef.current = false;
-    };
-    setTimeout(() => {
-      if (cancelFadeRef.current) {
-        cancelFadeRef.current = null;
-        fadeActiveRef.current = false;
-      }
-    }, 180);
-  };
-
-  const addTrackToPlaylist = async playlist => {
-    if (!pickerTrack || !playlist || pickerBusyId != null) return;
-    const w = workRef.current.netease;
-    if (w.identityUnknown || !w.profile?.userId) {
-      setPickerError('请先登录网易云音乐');
-      return;
-    }
-    const generation = identity.current.netease.current();
-    setPickerBusyId(playlist.id);
-    setPickerError('');
-    try {
-      const p = await getProvider('netease');
-      await p.editPlaylistTracks('add', Number(playlist.id), Number(pickerTrack.id));
-      if (!identity.current.netease.isCurrent(generation)) return;
-      const curList = workRef.current.netease;
-      const isViewingTarget =
-        curList.trackOrigin === 'playlist' &&
-        String(curList.qqPlaylist?.id ?? '') === String(playlist.id);
-      update('netease', {
-        lists: curList.lists.map(item =>
-          String(item.id) === String(playlist.id) && Number.isFinite(Number(item.trackCount))
-            ? { ...item, trackCount: Number(item.trackCount) + 1 }
-            : item
-        ),
-        ...(isViewingTarget && curList.playlistMeta?.total != null
-          ? {
-              playlistMeta: {
-                ...curList.playlistMeta,
-                total: Number(curList.playlistMeta.total) + 1,
-              },
-            }
-          : {}),
-        message: `已收藏到「${playlist.name}」`,
-      });
-      setPickerTrack(null);
-    } catch (err) {
-      if (identity.current.netease.isCurrent(generation)) {
-        setPickerError(errorText(err));
-      }
-    } finally {
-      setPickerBusyId(null);
-    }
-  };
-
-  const removeTrackFromCurrentPlaylist = async track => {
-    const w = workRef.current.netease;
-    if (
-      !track ||
-      w.identityUnknown ||
-      !w.profile?.userId ||
-      w.trackOrigin !== 'playlist' ||
-      !isOwnedPlaylist(w.qqPlaylist, w.profile.userId)
-    )
-      return;
-    const pid = w.qqPlaylist.id;
-    const key = `${pid}:${track.id}`;
-    if (removingTrackKey === key) return;
-    const generation = identity.current.netease.current();
-    setRemovingTrackKey(key);
-    try {
-      const p = await getProvider('netease');
-      await p.editPlaylistTracks('del', Number(pid), Number(track.id));
-      if (!identity.current.netease.isCurrent(generation)) return;
-      const cur = workRef.current.netease;
-      const stillSame =
-        cur.trackOrigin === 'playlist' && String(cur.qqPlaylist?.id ?? '') === String(pid);
-      update('netease', {
-        lists: cur.lists.map(item =>
-          String(item.id) === String(pid) && Number(item.trackCount) > 0
-            ? { ...item, trackCount: Number(item.trackCount) - 1 }
-            : item
-        ),
-        ...(stillSame
-          ? {
-              songs: cur.songs.filter(item => Number(item.id) !== Number(track.id)),
-              ...(cur.playlistMeta?.total != null
-                ? {
-                    playlistMeta: {
-                      ...cur.playlistMeta,
-                      total: Math.max(0, Number(cur.playlistMeta.total) - 1),
-                    },
-                  }
-                : {}),
-            }
-          : {}),
-        message: `已从「${w.qqPlaylist.name}」移出`,
-      });
-    } catch (err) {
-      if (identity.current.netease.isCurrent(generation)) {
-        update('netease', { message: errorText(err) });
-      }
-    } finally {
-      setRemovingTrackKey(null);
-    }
-  };
-
-  const play = async (s, queueSnapshot, { autoOpenStage = false } = {}) => {
-    stopSmoothFade({ restoreVolume: false });
-    const id = s.provider;
-    const w = workRef.current[id];
-    const isMixed = queueSnapshot?.type === 'custom';
-    let targetSong = s;
-    if (isMixed) {
-      if (id === 'local') {
-        if (!canLocalLibrary) {
-          setCustomPlaylistNotice('当前环境不支持本地曲库播放');
-          return;
-        }
-        targetSong = { ...s, accountId: 'local' };
-      } else if (id === 'netease') {
-        if (w.identityUnknown) {
-          setCustomPlaylistNotice('网易云账号正在验证中，请稍后再试');
-          return;
-        }
-        targetSong = { ...s, accountId: w.profile?.userId || null };
-      } else if (id === 'qqmusic') {
-        if (w.identityUnknown || (platformFlavor.qqmusic !== 'mock' && !w.profile?.userId)) {
-          setCustomPlaylistNotice('此歌曲来自 QQ 音乐，请先登录 QQ 音乐后播放');
-          return;
-        }
-        targetSong = { ...s, accountId: w.profile?.userId || null };
-      }
-    } else if (w.identityUnknown || s.accountId !== (w.profile?.userId || null)) {
-      update(id, { message: '账号已变化，请重新浏览歌曲' });
-      return;
-    }
-    if (!capabilities[id].resolvePlayback) {
-      const msg =
-        id === 'qqmusic' && platformFlavor.qqmusic === 'mock'
-          ? 'QQ 音乐模拟模式不支持播放'
-          : 'QQ 音乐播放暂不可用';
-      if (isMixed) setCustomPlaylistNotice(msg);
-      else update(id, { message: msg });
-      return;
-    }
-    const snapshot =
-      queueSnapshot || {
-        source: w.trackOrigin || 'unknown',
-        tracks: [...w.songs],
-        index: w.songs.findIndex(
-          item =>
-            item.id === targetSong.id &&
-            item.provider === targetSong.provider &&
-            item.accountId === targetSong.accountId
-        ),
-        provider: id,
-        accountId: targetSong.accountId,
-      };
-    if (snapshot.type !== 'fm') {
-      fmAutoStartRef.current = null;
-      setFmStageFocus(false);
-    }
-    const token = playback.current.next();
-    const generation = identity.current[id].current();
-    pendingPlay.current = { provider: id, generation };
-    const valid = () => playback.current.isCurrent(token) && identity.current[id].isCurrent(generation);
-    let prior = rollbackRef.current;
-    let trialBanner = '';
-    if (isMixed) setCustomPlaylistNotice(`正在准备播放「${targetSong.name}」…`);
-    else update(id, { message: '正在获取歌曲…' });
-    try {
-      const p = await getProvider(id);
-      const skipResumedLyric =
-        !!resumedLyric.current &&
-        resumedLyric.current.id === targetSong.id &&
-        resumedLyric.current.provider === targetSong.provider &&
-        String(resumedLyric.current.accountId ?? '') === String(targetSong.accountId ?? '') &&
-        lyricStatus === 'ready';
-      resumedLyric.current = null;
-      const lyricRequest = skipResumedLyric
-        ? null
-        : Promise.resolve()
-            .then(() => p.getLyrics(targetSong.id))
-            .then(
-              data => ({ data }),
-              () => ({ failed: true })
-            );
-      const url =
-        id === 'netease'
-          ? await p.resolvePlayback(
-              targetSong.id,
-              capabilities[id].playbackQuality && qualityRef.current !== 'standard'
-                ? { level: qualityRef.current }
-                : undefined
-            )
-          : id === 'local'
-            ? await p.resolvePlayback(targetSong.id)
-            : await p.resolvePlayback(targetSong.id, targetSong.mediaMid);
-      if (!valid()) return;
-      let streamUrl = '';
-      let info = null;
-      if (id === 'local') {
-        streamUrl = url?.url || '';
-        if (!streamUrl) throw Error('未获取到本地音频地址');
-        if (url?.contentType?.startsWith('audio/ogg;') && audio.current?.canPlayType(url.contentType) === '') {
-          throw Error('当前系统不支持这首 Ogg 音频的编码');
-        }
-      } else {
-        info = url.data?.[0];
-        if (!info?.url || (info.code != null && info.code !== 200))
-          throw Error('未获取到播放资源，请稍后重试');
-        streamUrl = info.url;
-      }
-      trialBanner = info?.freeTrialInfo ? '当前为试听片段' : '';
-      const trial = info?.freeTrialInfo;
-      const isTrial = !!(trial && Number(trial.end) > Number(trial.start));
-      const nextTrackQuality =
-        id === 'netease' && (info?.level || info?.br || isTrial)
-          ? {
-              level: typeof info.level === 'string' ? info.level : null,
-              br: Number.isFinite(Number(info.br)) && Number(info.br) > 0 ? Number(info.br) : null,
-              isTrial,
-            }
-          : null;
-      const previousSong = songRef.current;
-      if (previousSong && !prior) {
-        prior = {
-          song: previousSong,
-          identity: identity.current[previousSong.provider].current(),
-          source: audio.current.getAttribute('src'),
-          position: audio.current.currentTime,
-          wasPlaying: !audio.current.paused,
-          previousQueue: workRef.current[previousSong.provider].queue,
-          previousMixedQueue: mixedQueueRef.current,
-          targetProvider: id,
-          targetQueue: workRef.current[id].queue,
-          queuesBefore: {
-            netease: workRef.current.netease.queue,
-            qqmusic: workRef.current.qqmusic.queue,
-            local: workRef.current.local.queue,
-          },
-          stagedQueues: {},
-          settings: { ...settings.current },
-          normal: saved.current.normal,
-          fm: saved.current.fm,
-          current: saved.current.current,
-          resume: saved.current.resume,
-          qqQueue: qqSaved.current.queue,
-          qqPosition: qqSaved.current.position,
-          qqResume: qqSaved.current.resume,
-          qqCleared: qqSaved.current.cleared,
-          localResume: localSaved.current.resume,
-          localPosition: localSaved.current.position,
-          localCleared: localSaved.current.cleared,
-          lyrics: [...lyricsRef.current],
-          lyricStatus,
-          restoredProgress,
-          trackQuality,
-        };
-      }
-      if (prior) rollbackRef.current = prior;
-      if (audio.current && !audio.current.paused && audio.current.readyState >= 3) {
-        sampleListening(audio.current);
-      }
-      if (!isMixed || (songRef.current && !mixedQueueRef.current)) saveNow();
-      listening.current.settle();
-      if (diagnosticsOn.current) setLastDiagnostic(listening.current.diagnosticSnapshot());
-      listening.current.start({
-        provider: targetSong.provider,
-        accountId: targetSong.accountId,
-        trackId: targetSong.id,
-        source: snapshot.source || 'unknown',
-      });
-      const resume = isMixed
-        ? 0
-        : id === 'qqmusic' && qqSaved.current.resume?.id === targetSong.id
-          ? qqSaved.current.resume.position
-          : id === 'local' && localSaved.current.resume?.id === targetSong.id
-            ? localSaved.current.resume.position
-            : saved.current.resume?.provider === id && saved.current.resume?.id === targetSong.id
-              ? saved.current.resume.position
-              : 0;
-      if (!isMixed) {
-        saved.current.resume = null;
-        qqSaved.current.resume = null;
-        localSaved.current.resume = null;
-      }
-      const changeSource = songRef.current?.provider !== id;
-      songRef.current = targetSong;
-      if (changeSource && !isMixed) {
-        const target = providerSettings.current[id];
-        if (target) {
-          settings.current = { ...target };
-          setMode(target.mode);
-          setVolume(target.volume);
-          setMuted(target.muted);
-          audio.current.volume = target.volume;
-          audio.current.muted = target.muted;
-        } else {
-          providerSettings.current[id] = { ...settings.current };
-        }
-      }
-      setSong(targetSong);
-      setTrackQuality(nextTrackQuality);
-      if (!skipResumedLyric) {
-        replaceLyrics([]);
-        setLyricStatus('loading');
-        loadLyricsFor(targetSong, valid, undefined, p, undefined, lyricRequest);
-      }
-      diagnosticTick.current = null;
-      setRestoredProgress(null);
-      if (isMixed) {
-        const nextMixed = {
-          ...snapshot,
-          tracks: snapshot.tracks.map((item, idx) => (idx === snapshot.index ? targetSong : item)),
-        };
-        mixedQueueRef.current = nextMixed;
-        setMixedQueue(nextMixed);
-      } else {
-        mixedQueueRef.current = null;
-        setMixedQueue(null);
-        update(id, { queue: snapshot });
-        if (prior) prior.stagedQueues[id] = snapshot;
-        if (id === 'netease') {
-          if (snapshot.type === 'fm') saved.current.fm = snapshot;
-          else saved.current.normal = snapshot;
-          saved.current.current = {
-            provider: 'netease',
-            kind: snapshot.type === 'fm' ? 'fm' : 'normal',
-            index: snapshot.index,
-            position: resume,
-          };
-        } else if (id === 'local') {
-          localSaved.current.position = resume;
-          localSaved.current.cleared = false;
-        }
-        if (snapshot.type === 'fm' && snapshot.tracks.length - snapshot.index <= 2 && !fm.current.error) {
-          loadFm();
-        }
-      }
-      audio.current.src = streamUrl;
-      syncLyric(resume);
-      if (playbackRate !== 1) audio.current.playbackRate = playbackRate;
-      if (resume > 0) {
-        const target = audio.current;
-        target.addEventListener(
-          'loadedmetadata',
-          () => {
-            if (valid() && songRef.current === targetSong) {
-              try {
-                target.currentTime = Math.min(
-                  resume,
-                  Number.isFinite(target.duration) ? target.duration : resume
-                );
-              } catch {
-                update(id, { message: '无法恢复播放进度' });
-              }
-            }
-          },
-          { once: true }
-        );
-      }
-      triggerSmoothFade(settings.current.volume);
-      await audio.current.play();
-      if (!isMixed) scheduleSave(true);
-      if (valid()) {
-        rollbackRef.current = null;
-        if (isMixed) setCustomPlaylistNotice(trialBanner);
-        else update(id, { message: trialBanner });
-        if (autoOpenStage && audioPrefsRef.current.autoOpenStageOnPlay !== false) {
-          setView('stage');
-        }
-      }
-    } catch (e) {
-      stopSmoothFade();
-      if (valid()) {
-        if (isPlayInterruptedError(e)) {
-          rollbackRef.current = null;
-          setBuffering(false);
-          setPlaying(false);
-          const curMsg = workRef.current[id].message;
-          if (isMixed) {
-            setCustomPlaylistNotice(trialBanner);
-          } else if (trialBanner || curMsg === '正在获取歌曲…') {
-            update(id, { message: trialBanner });
-          }
-          return;
-        }
-        prior = prior || rollbackRef.current;
-        const canRestore =
-          prior &&
-          rollbackRef.current === prior &&
-          identity.current[prior.song.provider].isCurrent(prior.identity) &&
-          String(workRef.current[prior.song.provider].profile?.userId || '') ===
-            String(prior.song.accountId || '');
-        if (canRestore) {
-          const failedHandle = qqLocalHandle(audio.current.getAttribute('src'));
-          const previousHandle =
-            prior.song.provider === 'qqmusic' ? qqLocalHandle(prior.source) : null;
-          if (failedHandle && previousHandle && failedHandle !== previousHandle) {
-            try {
-              await invoke('qq_web_restore_previous', {
-                currentHandle: failedHandle,
-                previousHandle,
-              });
-            } catch {
-              if (valid()) {
-                rollbackRef.current = null;
-                if (isMixed) setCustomPlaylistNotice('上一首音频会话已失效，请手动重试');
-                else update(id, { message: '上一首音频会话已失效，请手动重试' });
-              }
-              return;
-            }
-            if (
-              !valid() ||
-              rollbackRef.current !== prior ||
-              !identity.current[prior.song.provider].isCurrent(prior.identity)
-            )
-              return;
-          }
-          rollbackRef.current = null;
-          audio.current.pause();
-          songRef.current = prior.song;
-          setSong(prior.song);
-          setTrackQuality(prior.trackQuality ?? null);
-          settings.current = { ...prior.settings };
-          setMode(prior.settings.mode);
-          setVolume(prior.settings.volume);
-          setMuted(prior.settings.muted);
-          audio.current.volume = prior.settings.volume;
-          audio.current.muted = prior.settings.muted;
-          mixedQueueRef.current = prior.previousMixedQueue ?? null;
-          setMixedQueue(prior.previousMixedQueue ?? null);
-          saved.current.normal = prior.normal;
-          saved.current.fm = prior.fm;
-          saved.current.current = prior.current;
-          saved.current.resume = prior.resume;
-          qqSaved.current.queue = prior.qqQueue;
-          qqSaved.current.position = prior.qqPosition;
-          qqSaved.current.resume = prior.qqResume;
-          qqSaved.current.cleared = prior.qqCleared;
-          localSaved.current.resume = prior.localResume ?? null;
-          localSaved.current.position = prior.localPosition ?? 0;
-          localSaved.current.cleared = prior.localCleared ?? false;
-          for (const provider of ['netease', 'qqmusic', 'local']) {
-            if (
-              prior.stagedQueues[provider] &&
-              workRef.current[provider].queue === prior.stagedQueues[provider]
-            ) {
-              update(provider, { queue: prior.queuesBefore[provider] });
-            }
-          }
-          if (isMixed) setCustomPlaylistNotice('新歌曲播放失败，已尝试恢复上一首');
-          else update(id, { message: '新歌曲播放失败，已尝试恢复上一首' });
-          replaceLyrics(prior.lyrics);
-          setLyricStatus(prior.lyricStatus);
-          setRestoredProgress(prior.restoredProgress);
-          listening.current.start({
-            provider: prior.song.provider,
-            accountId: prior.song.accountId,
-            trackId: prior.song.id,
-            source: prior.previousQueue?.source || 'unknown',
-          });
-          const target = audio.current;
-          if (prior.source) {
-            target.addEventListener(
-              'loadedmetadata',
-              () => {
-                if (valid() && songRef.current === prior.song) {
-                  try {
-                    target.currentTime = prior.position;
-                  } catch {
-                    update(prior.song.provider, { message: '上一首播放位置恢复失败' });
-                  }
-                }
-              },
-              { once: true }
-            );
-            target.src = prior.source;
-            if (prior.wasPlaying) {
-              target.play().catch(() => {
-                if (valid() && songRef.current === prior.song) {
-                  update(prior.song.provider, { message: '上一首恢复失败，请手动重试' });
-                }
-              });
-            }
-          } else {
-            target.removeAttribute('src');
-            target.load();
-          }
-          if (!prior.previousMixedQueue) scheduleSave(true);
-        } else {
-          const failMsg = '播放失败：' + errorText(e);
-          if (isMixed) setCustomPlaylistNotice(failMsg);
-          else update(id, { message: failMsg });
-        }
-      }
-    } finally {
-      if (valid()) pendingPlay.current = null;
-      if (id === 'qqmusic' && valid()) void refreshQqDiagnostic();
-    }
-  };
-
-  const skipTrack = delta => {
-    const current = songRef.current;
-    if (!current) return;
-    const mq = mixedQueueRef.current;
-    if (
-      mq &&
-      mq.tracks[mq.index]?.provider === current.provider &&
-      mq.tracks[mq.index]?.id === current.id
-    ) {
-      const idx = manualIndex(settings.current.mode, mq.index, mq.tracks.length, delta);
-      if (idx >= 0 && idx < mq.tracks.length) {
-        const nextTrack = hydrateCustomTrack(mq.tracks[idx], workRef.current);
-        void play(nextTrack, { ...mq, index: idx });
-      } else {
-        setCustomPlaylistNotice(delta > 0 ? '暂无下一首' : '暂无上一首');
-      }
-      return;
-    }
-    const queue = workRef.current[current.provider].queue;
-    if (
-      !queue ||
-      queue.accountId !== current.accountId ||
-      queue.tracks[queue.index]?.id !== current.id
-    )
-      return;
-    const index =
-      current.provider === 'qqmusic'
-        ? queue.index + delta
-        : manualIndex(queueMode(settings.current.mode, queue), queue.index, queue.tracks.length, delta);
-    if (index >= 0 && index < queue.tracks.length) {
-      play(queue.tracks[index], { ...queue, index });
-    } else {
-      update(current.provider, { message: delta > 0 ? '暂无下一首' : '暂无上一首' });
-    }
-  };
-
-  const togglePlayback = () => {
-    const current = songRef.current;
-    if (!current) return;
-    if (!audio.current.paused) {
-      stopSmoothFade();
-      audio.current.pause();
-      return;
-    }
-    if (
-      !mixedQueueRef.current &&
-      ((saved.current.resume && current.provider === 'netease') ||
-        (qqSaved.current.resume && current.provider === 'qqmusic') ||
-        (localSaved.current.resume && current.provider === 'local')) ||
-      !audio.current.getAttribute('src')
-    ) {
-      if (pendingPlay.current) return;
-      const q = mixedQueueRef.current || workRef.current[current.provider].queue;
-      if (q) play(current, q);
-      return;
-    }
-    triggerSmoothFade(settings.current.volume);
-    audio.current
-      .play()
-      .then(() => {
-        if (
-          songRef.current === current &&
-          workRef.current[current.provider].message.startsWith('播放失败：')
-        ) {
-          update(current.provider, { message: '' });
-        }
-      })
-      .catch(e => {
-        stopSmoothFade();
-        if (songRef.current !== current) return;
-        if (isPlayInterruptedError(e)) {
-          setBuffering(false);
-          return;
-        }
-        update(current.provider, { message: '播放失败：' + errorText(e) });
-      });
-  };
-
-  const adjustVolume = delta => {
-    const a = audio.current;
-    if (!a) return;
-    stopSmoothFade({ restoreVolume: false });
-    const next = Math.min(1, Math.max(0, Math.round((a.volume + delta) * 100) / 100));
-    a.volume = next;
-    if (delta > 0 && a.muted) a.muted = false;
-    scheduleSave(true);
-  };
-
-  const setDesktopLyricState = async ({ enabled, locked, style }) => {
-    if (!canDesktopLyric || desktopLyricBusy) return;
-    setDesktopLyricBusy(true);
-    setDesktopLyricError('');
-    try {
-      const res = await desktop.desktopLyricSet({ enabled, locked, style });
-      const next = normalizeDesktopLyricState(res, desktopLyricRef.current);
-      const turnedOn = next.enabled && !desktopLyricRef.current.enabled;
-      desktopLyricRef.current = next;
-      if (!next.enabled || turnedOn) lastDesktopLyricKeyRef.current = null;
-      setDesktopLyric(next);
-    } catch (e) {
-      setDesktopLyricError(errorText(e));
-    } finally {
-      setDesktopLyricBusy(false);
-    }
-  };
-
-  const toggleDesktopLyric = () => {
-    void setDesktopLyricState({ enabled: !desktopLyricRef.current.enabled });
-  };
-
-  const toggleDesktopLyricLock = () => {
-    void setDesktopLyricState({
-      enabled: desktopLyricRef.current.enabled,
-      locked: !desktopLyricRef.current.locked,
-    });
-  };
-
-  const updateDesktopLyricStyle = patch => {
-    if (!canDesktopLyric || !patch || typeof patch !== 'object') return;
-    setDesktopLyricError('');
-    desktopLyricStyleChainRef.current = desktopLyricStyleChainRef.current
-      .catch(() => {})
-      .then(async () => {
-        const res = await desktop.desktopLyricSet({
-          enabled: desktopLyricRef.current.enabled,
-          style: patch,
-        });
-        const next = normalizeDesktopLyricState(res, desktopLyricRef.current);
-        desktopLyricRef.current = next;
-        setDesktopLyric(next);
-      })
-      .catch(e => {
-        setDesktopLyricError(errorText(e));
-      });
-  };
-
-  const updateGlobalShortcuts = async ({ enabled, bindings }) => {
-    if (!canGlobalShortcuts || shortcutsBusy) return { ok: false };
-    setShortcutsBusy(true);
-    setShortcutsError('');
-    try {
-      const res = await desktop.globalShortcutsSet({ enabled, bindings });
-      setGlobalShortcuts({
-        enabled: Boolean(res?.enabled),
-        bindings: { ...DEFAULT_SHORTCUT_BINDINGS, ...(res?.bindings || bindings || {}) },
-        error: res?.error || null,
-      });
-      return { ok: true };
-    } catch (e) {
-      setShortcutsError(errorText(e));
-      if (e?.code === 'storage') {
-        desktop
-          .globalShortcutsGet()
-          .then(res => {
-            if (res) {
-              setGlobalShortcuts({
-                enabled: Boolean(res.enabled),
-                bindings: { ...DEFAULT_SHORTCUT_BINDINGS, ...(res.bindings || {}) },
-                error: res.error || null,
-              });
-            }
-          })
-          .catch(() => {});
-      }
-      return { ok: false, error: e };
-    } finally {
-      setShortcutsBusy(false);
-    }
-  };
-
-  desktopHandlersRef.current = {
-    togglePlayback,
-    prevTrack: () => skipTrack(-1),
-    nextTrack: () => skipTrack(1),
-    volumeUp: () => adjustVolume(0.05),
-    volumeDown: () => adjustVolume(-0.05),
-    toggleDesktopLyric,
-  };
-
-  const runUpdateCheck = async ({ silent = false, sourceOverride } = {}) => {
-    if (!canAppUpdater) return null;
-    const currentPhase = updateStateRef.current.phase;
-    if (currentPhase === 'checking' || currentPhase === 'downloading' || currentPhase === 'ready') {
-      return null;
-    }
-    if (!silent) {
-      commitUpdateState(prev => ({ ...prev, phase: 'checking', error: '', errorCode: '' }));
-    }
-    try {
-      const res = await desktop.updaterCheck(sourceOverride ? { sourceOverride } : {});
-      if (!updateMountedRef.current) return null;
-      if (res?.status === 'available' && res.version) {
-        commitUpdateState({
-          phase: 'available',
-          info: res,
-          progress: null,
-          error: '',
-          errorCode: '',
-        });
-        if (
-          silent &&
-          shouldAutoPromptUpdate({
-            checkResult: res,
-            config: updateConfigRef.current,
-            dismissedVersions: dismissedUpdateVersionsRef.current,
-          })
-        ) {
-          setShowUpdaterDialog(cur => cur || 'auto');
-        }
-      } else {
-        commitUpdateState({
-          phase: 'up-to-date',
-          info: res || null,
-          progress: null,
-          error: '',
-          errorCode: '',
-        });
-      }
-      return res;
-    } catch (e) {
-      if (!updateMountedRef.current) return null;
-      if (!silent) {
-        commitUpdateState(prev => ({
-          ...prev,
-          phase: 'error',
-          error: errorText(e),
-          errorCode: e?.code || 'unknown',
-        }));
-      }
-      return null;
-    }
-  };
-
-  const saveUpdateConfig = async patch => {
-    if (!canAppUpdater || updaterBusy) return null;
-    setUpdaterBusy(true);
-    try {
-      const res = await desktop.updaterConfigSet(patch);
-      if (!updateMountedRef.current) return null;
-      return commitUpdateConfig(res);
-    } catch (e) {
-      if (!updateMountedRef.current) return null;
-      commitUpdateState(prev => ({
-        ...prev,
-        phase: 'error',
-        error: errorText(e),
-        errorCode: e?.code || 'unknown',
-      }));
-      return null;
-    } finally {
-      if (updateMountedRef.current) setUpdaterBusy(false);
-    }
-  };
-
-  const handleChangeUpdateSource = async nextSource => {
-    if (nextSource !== 'github' && nextSource !== 'mirror') return;
-    const saved = await saveUpdateConfig({ source: nextSource });
-    if (saved && updateStateRef.current.phase === 'available') {
-      void runUpdateCheck({ silent: true, sourceOverride: nextSource });
-    }
-  };
-
-  const handleSaveCustomMirror = async nextMirror => {
-    const saved = await saveUpdateConfig({ customMirror: nextMirror });
-    if (saved && saved.source === 'mirror' && updateStateRef.current.phase === 'available') {
-      void runUpdateCheck({ silent: true, sourceOverride: 'mirror' });
-    }
-  };
-
-  const handleToggleAutoCheck = async nextAutoCheck => {
-    await saveUpdateConfig({ autoCheck: Boolean(nextAutoCheck) });
-  };
-
-  const handleSkipUpdateVersion = async version => {
-    if (!version) return;
-    const saved = await saveUpdateConfig({ skippedVersion: version });
-    if (saved) {
-      if (updateStateRef.current.phase === 'available' && updateStateRef.current.info?.version === version) {
-        commitUpdateState({
-          phase: 'idle',
-          info: null,
-          progress: null,
-          error: '',
-          errorCode: '',
-        });
-      }
-      setShowUpdaterDialog(false);
-    }
-  };
-
-  const handleRemindLater = version => {
-    if (version) dismissedUpdateVersionsRef.current.add(version);
-    setShowUpdaterDialog(false);
-  };
-
-  const handleSwitchSourceAndRetry = async nextSource => {
-    if (nextSource !== 'github' && nextSource !== 'mirror') return;
-    const saved = await saveUpdateConfig({ source: nextSource });
-    if (saved) {
-      await runUpdateCheck({ silent: false, sourceOverride: nextSource });
-    }
-  };
-
-  const startUpdateDownload = async () => {
-    if (!canAppUpdater || updateStateRef.current.phase === 'downloading') return;
-    const targetVersion = updateStateRef.current.info?.version || '';
-    commitUpdateState(prev => ({
-      ...prev,
-      phase: 'downloading',
-      progress: { version: targetVersion, downloadedBytes: 0, totalBytes: null, percent: 0 },
-      error: '',
-      errorCode: '',
-    }));
-    try {
-      const res = await desktop.updaterDownload();
-      if (!updateMountedRef.current) return;
-      commitUpdateState(prev => ({
-        ...prev,
-        phase: 'ready',
-        progress: {
-          version: res?.version || prev.info?.version || targetVersion,
-          downloadedBytes: res?.totalBytes ?? prev.progress?.downloadedBytes ?? 0,
-          totalBytes: res?.totalBytes ?? prev.progress?.totalBytes ?? null,
-          percent: 100,
-        },
-        error: '',
-        errorCode: '',
-      }));
-    } catch (e) {
-      if (!updateMountedRef.current) return;
-      commitUpdateState(prev => ({
-        ...prev,
-        phase: 'error',
-        error: errorText(e),
-        errorCode: e?.code || 'unknown',
-      }));
-    }
-  };
-
-  const installDownloadedUpdate = async () => {
-    if (!canAppUpdater || updaterBusy) return;
-    setUpdaterBusy(true);
-    try {
-      scheduleSave(true);
-      await saved.current.chain.catch(() => {});
-      await desktop.updaterInstall();
-    } catch (e) {
-      if (!updateMountedRef.current) return;
-      commitUpdateState(prev => ({
-        ...prev,
-        phase: 'error',
-        error: errorText(e),
-        errorCode: e?.code || 'unknown',
-      }));
-    } finally {
-      if (updateMountedRef.current) setUpdaterBusy(false);
-    }
-  };
-
-  const editQueue = (removeIndex, clear = false) => {
-    const id = activeRef.current;
-    const q = workRef.current[id].queue;
-    if (!q || q.type === 'fm' || q.source === 'fm') return;
-    if (pendingPlay.current) {
-      update(id, { message: '歌曲切换中，请稍后修改队列' });
-      return;
-    }
-    rollbackRef.current = null;
-    const current = songRef.current;
-    const removesCurrent = current?.provider === id && (clear || removeIndex === q.index);
-    if (pendingPlay.current?.provider === id) {
-      playback.current.next();
-      pendingPlay.current = null;
-    }
-    const tracks = clear ? [] : q.tracks.filter((_, index) => index !== removeIndex);
-    let next = null;
-    if (tracks.length) {
-      const index = clear ? 0 : Math.min(q.index - (removeIndex < q.index ? 1 : 0), tracks.length - 1);
-      next = { ...q, tracks, index };
-    }
-    if (removesCurrent) {
-      listening.current.settle();
-      listening.current.clear();
-      audio.current.pause();
-      audio.current.removeAttribute('src');
-      audio.current.load();
-      songRef.current = null;
-      setSong(null);
-      setTrackQuality(null);
-      setPlaying(false);
-      replaceLyrics([]);
-      setLyricStatus('idle');
-      setRestoredProgress(null);
-      if (id === 'netease') saved.current.resume = null;
-      else if (id === 'qqmusic') qqSaved.current.resume = null;
-      else localSaved.current.resume = null;
-    }
-    update(id, { queue: next });
-    if (id === 'netease') {
-      saved.current.normal = next;
-      if (removesCurrent || !next) saved.current.current = null;
-      else if (saved.current.current?.kind === 'normal') {
-        saved.current.current = { ...saved.current.current, index: next.index };
-      }
-    } else if (id === 'qqmusic') {
-      qqSaved.current.queue = next;
-      qqSaved.current.cleared = !next;
-      if (!next) qqSaved.current.position = 0;
-    } else {
-      localSaved.current.cleared = !next;
-      if (!next) localSaved.current.position = 0;
-    }
-    setConfirmClear(false);
-    scheduleSave(true);
-  };
-
-  const editMixedQueue = (removeIndex, clear = false) => {
-    const mq = mixedQueueRef.current;
-    if (!mq) return;
-    if (pendingPlay.current) {
-      setCustomPlaylistNotice('歌曲切换中，请稍后修改队列');
-      return;
-    }
-    rollbackRef.current = null;
-    const current = songRef.current;
-    const removesCurrent =
-      clear ||
-      (current &&
-        mq.tracks[removeIndex]?.provider === current.provider &&
-        mq.tracks[removeIndex]?.id === current.id &&
-        mq.index === removeIndex);
-    const tracks = clear ? [] : mq.tracks.filter((_, index) => index !== removeIndex);
-    let next = null;
-    if (tracks.length) {
-      const index = clear ? 0 : Math.min(mq.index - (removeIndex < mq.index ? 1 : 0), tracks.length - 1);
-      next = { ...mq, tracks, index };
-    }
-    if (removesCurrent) {
-      stopSmoothFade();
-      listening.current.settle();
-      listening.current.clear();
-      audio.current.pause();
-      audio.current.removeAttribute('src');
-      audio.current.load();
-      songRef.current = null;
-      setSong(null);
-      setTrackQuality(null);
-      setPlaying(false);
-      replaceLyrics([]);
-      setLyricStatus('idle');
-      setRestoredProgress(null);
-    }
-    mixedQueueRef.current = next;
-    setMixedQueue(next);
-    setConfirmClear(false);
-  };
-
-  const reorderQueue = (fromIndex, toIndex) => {
-    const id = activeRef.current;
-    const q = workRef.current[id].queue;
-    if (!q || q.type === 'fm' || q.source === 'fm') return;
-    if (pendingPlay.current) {
-      update(id, { message: '歌曲切换中，请稍后修改队列' });
-      return;
-    }
-    const reordered = reorderQueueTracks(q.tracks, q.index, fromIndex, toIndex);
-    if (!reordered) return;
-    rollbackRef.current = null;
-    const next = { ...q, tracks: reordered.tracks, index: reordered.index };
-    update(id, { queue: next });
-    if (id === 'netease') {
-      saved.current.normal = next;
-      if (saved.current.current?.kind === 'normal') {
-        saved.current.current = { ...saved.current.current, index: next.index };
-      }
-    } else if (id === 'qqmusic') {
-      qqSaved.current.queue = next;
-    }
-    scheduleSave(true);
-  };
-
-  const reorderMixedQueue = (fromIndex, toIndex) => {
-    const mq = mixedQueueRef.current;
-    if (!mq) return;
-    if (pendingPlay.current) {
-      setCustomPlaylistNotice('歌曲切换中，请稍后修改队列');
-      return;
-    }
-    const reordered = reorderQueueTracks(mq.tracks, mq.index, fromIndex, toIndex);
-    if (!reordered) return;
-    rollbackRef.current = null;
-    const next = { ...mq, tracks: reordered.tracks, index: reordered.index };
-    mixedQueueRef.current = next;
-    setMixedQueue(next);
-  };
-
-  const closeQr = () => {
-    const id = qr?.provider || 'netease';
-    qrRequest.current.next();
-    setQr(null);
-    getProvider(id)
-      .then(p => p.qrCancel())
-      .catch(e => update(id, { message: errorText(e) }));
-  };
-
-  const login = async () => {
-    const id = activeRef.current;
-    const token = account.current[id].next();
-    browse.current[id].next();
-    update(id, { accountBusy: true });
-    try {
-      const p = await getProvider(id);
-      if (id === 'netease') {
-        const qrToken = qrRequest.current.next();
-        const d = await p.login();
-        if (!qrRequest.current.isCurrent(qrToken) || !account.current[id].isCurrent(token)) return;
-        if (!d.image) throw Error('未取得登录二维码');
-        setQr({ ...d, provider: id });
-      } else if (id === 'qqmusic' && platformFlavor.qqmusic !== 'mock') {
-        const d = await p.login();
-        if (!account.current[id].isCurrent(token)) return;
-        if (d?.opened !== true) throw Error('无法打开 QQ 授权窗口');
-        setQqWebOpen(true);
-      } else {
-        const d = await p.login();
-        if (!account.current[id].isCurrent(token)) return;
-        clearAccountContent(id);
-        update(id, {
-          profile: d.profile,
-          identityUnknown: false,
-          message: '已进入 QQ 模拟账号',
-        });
-        await loadLists(id, token);
-      }
-    } catch (e) {
-      if (account.current[id].isCurrent(token)) update(id, { message: errorText(e) });
-    } finally {
-      if (account.current[id].isCurrent(token)) update(id, { accountBusy: false });
-    }
-  };
-
-  const cancelQqWeb = async () => {
-    account.current.qqmusic.next();
-    setQqWebOpen(false);
-    try {
-      const p = await getProvider('qqmusic');
-      await p.loginCancel();
-    } catch (e) {
-      update('qqmusic', { message: '无法关闭 QQ 授权：' + errorText(e) });
-    }
-  };
-
-  const completeQqWeb = async () => {
-    const id = 'qqmusic';
-    const token = account.current[id].next();
-    update(id, { accountBusy: true });
-    try {
-      const p = await getProvider(id);
-      const d = await p.loginComplete();
-      if (!account.current[id].isCurrent(token)) return;
-      const user = d?.profile;
-      if (!user?.userId) throw Error('QQ 账号资料不完整');
-      clearAccountContent(id);
-      update(id, { profile: user, identityUnknown: false, message: 'QQ 账号已验证' });
-      setQqWebOpen(false);
-      await restoreQq(user.userId, identity.current.qqmusic.current());
-      if (p.capabilities.getPlaylists) await loadLists(id, token);
-    } catch (e) {
-      if (account.current[id].isCurrent(token)) {
-        update(id, { message: 'QQ 登录未完成：' + errorText(e) });
-      }
-    } finally {
-      if (account.current[id].isCurrent(token)) update(id, { accountBusy: false });
-    }
-  };
-
-  useEffect(() => {
-    if (!canChooseCloseBehavior) return;
-    let active = true;
-    const offs = [];
-    invoke('close_behavior_get')
-      .then(v => {
-        if (active) {
-          setCloseMode(v.mode);
-          setTrayAvailable(v.trayAvailable);
-        }
-      })
-      .catch(() => {});
-    import('@tauri-apps/api/event')
-      .then(async ({ listen }) => {
-        const a = await listen('prism-close-choice', () => {
-          if (active) {
-            setCloseError('');
-            setCloseDialog('close');
-          }
-        });
-        if (!active) {
-          a();
-          return;
-        }
-        offs.push(a);
-        const b = await listen('prism-close-error', e => {
-          if (active) {
-            setCloseError(e.payload || '无法转入后台');
-            setCloseDialog('close');
-          }
-        });
-        if (!active) {
-          b();
-          return;
-        }
-        offs.push(b);
-        const c = await listen('prism-tray-exit', async () => {
-          scheduleSave(true);
-          try {
-            await saved.current.chain;
-          } catch {}
-          try {
-            await invoke('close_behavior_finish_exit');
-          } catch {}
-        });
-        if (!active) c();
-        else offs.push(c);
-      })
-      .catch(() => {});
-    return () => {
-      active = false;
-      offs.forEach(fn => fn());
-    };
-  }, [canChooseCloseBehavior]);
-
-  // 同步 Windows 开机自动启动状态
-  useEffect(() => {
-    if (!canAutostart) return undefined;
-    let active = true;
-    desktop
-      .autostartGet()
-      .then(res => {
-        if (active) setAutostartEnabled(Boolean(res?.enabled));
-      })
-      .catch(() => {});
-    return () => {
-      active = false;
-    };
-  }, [canAutostart]);
-
-  // 启动同步本机跨源歌单持久化文件（app_data_dir()/custom-playlists.json）与旧缓存自动迁移
-  useEffect(() => {
-    if (!canCustomPlaylistsStorage) return undefined;
-    let active = true;
-    const seqAtLoad = customPlaylistsSaveSeqRef.current;
-    desktop
-      .customPlaylistsLoad()
-      .then(res => {
-        if (!active) return;
-        const diskList =
-          res?.status === 'ok' && Array.isArray(res?.data?.playlists)
-            ? sanitizeCustomPlaylistsList(res.data.playlists)
-            : [];
-        if (diskList.length > 0) {
-          if (customPlaylistsSaveSeqRef.current !== seqAtLoad) {
-            const diskIds = new Set(diskList.map(pl => pl.id));
-            const localChanges = customPlaylistsRef.current.filter(pl => !diskIds.has(pl.id));
-            const merged = sanitizeCustomPlaylistsList([...localChanges, ...diskList]);
-            customPlaylistsRef.current = merged;
-            setCustomPlaylists(merged);
-            saveCustomPlaylists(merged);
-            const seq = ++customPlaylistsSaveSeqRef.current;
-            persistCustomPlaylistsToDisk(merged, seq);
-          } else {
-            customPlaylistsRef.current = diskList;
-            setCustomPlaylists(diskList);
-            saveCustomPlaylists(diskList);
-          }
-        } else if (
-          (res?.status === 'empty' || (res?.status === 'ok' && diskList.length === 0)) &&
-          customPlaylistsRef.current.length > 0
-        ) {
-          const seq = ++customPlaylistsSaveSeqRef.current;
-          persistCustomPlaylistsToDisk(customPlaylistsRef.current, seq);
-        }
-      })
-      .catch(() => {});
-    return () => {
-      active = false;
-    };
-  }, [canCustomPlaylistsStorage]);
-
-  // 注册或注销本地内嵌封面按需拉取函数
-  useEffect(() => {
-    if (!canLocalCover) {
-      setLocalCoverFetcher(null);
-      return undefined;
-    }
-    const fetcher = id => local.getCover(id);
-    setLocalCoverFetcher(fetcher);
-    return () => setLocalCoverFetcher(null);
-  }, [canLocalCover]);
-
-  // 客户端更新：启动配置读取、延迟静默检查与下载进度监听
-  useEffect(() => {
-    if (!canAppUpdater) return undefined;
-    updateMountedRef.current = true;
-    let active = true;
-    let checkTimer = null;
-    let unlistenProgress = null;
-
-    desktop
-      .updaterConfigGet()
-      .then(cfg => {
-        if (!active || !cfg) return;
-        const normalized = commitUpdateConfig(cfg);
-        if (normalized.autoCheck && normalized.pubkeyConfigured) {
-          const delayMs =
-            typeof window !== 'undefined' && Number.isFinite(window.__VESPER_UPDATER_DELAY_MS__)
-              ? Math.max(0, Number(window.__VESPER_UPDATER_DELAY_MS__))
-              : 4000;
-          checkTimer = setTimeout(() => {
-            if (active) void runUpdateCheck({ silent: true });
-          }, delayMs);
-        }
-      })
-      .catch(() => {});
-
-    import('@tauri-apps/api/event')
-      .then(async ({ listen }) => {
-        const eventName = desktop?.events?.updateProgress || 'prism:app-update-progress';
-        const un = await listen(eventName, e => {
-          if (!active || !e?.payload) return;
-          const payload = e.payload;
-          commitUpdateState(prev => ({
-            ...prev,
-            phase: prev.phase === 'ready' ? 'ready' : 'downloading',
-            progress: {
-              version: payload.version || prev.info?.version || '',
-              downloadedBytes: Number(payload.downloadedBytes) || 0,
-              totalBytes:
-                payload.totalBytes != null
-                  ? Number(payload.totalBytes)
-                  : (prev.progress?.totalBytes ?? null),
-              percent: Number.isFinite(Number(payload.percent))
-                ? Number(payload.percent)
-                : (prev.progress?.percent ?? 0),
-            },
-          }));
-        });
-        if (!active) un();
-        else unlistenProgress = un;
-      })
-      .catch(() => {});
-
-    return () => {
-      active = false;
-      updateMountedRef.current = false;
-      if (checkTimer) clearTimeout(checkTimer);
-      if (unlistenProgress) unlistenProgress();
-    };
-  }, [canAppUpdater]);
-
-  // 音频输出设备初始化与清理淡入
-  useEffect(() => {
-    const el = audio.current;
-    const supported = supportsAudioOutputSelection(el);
-    setAudioOutputSupported(supported);
-    if (supported) {
-      void listAudioOutputDevices().then(res => setAudioOutputDevices(res.devices));
-      if (audioPrefsRef.current.outputDeviceId) {
-        void applyAudioOutputDevice(el, audioPrefsRef.current.outputDeviceId);
-      }
-    }
-    return () => {
-      stopSmoothFade({ restoreVolume: false });
-    };
-  }, []);
-
-  useEffect(() => {
-    if (!closeDialog) return;
-    const previous = document.activeElement;
-    const box = document.querySelector('.lw-close-dialog');
-    const items = () => Array.from(box?.querySelectorAll('button:not([disabled])') || []);
-    box?.querySelector('[data-close-cancel]')?.focus();
-    const trap = e => {
-      if (e.key !== 'Tab') return;
-      const a = items();
-      if (!a.length) {
-        e.preventDefault();
-        return;
-      }
-      if (e.shiftKey && document.activeElement === a[0]) {
-        e.preventDefault();
-        a[a.length - 1].focus();
-      } else if (!e.shiftKey && document.activeElement === a[a.length - 1]) {
-        e.preventDefault();
-        a[0].focus();
-      }
-    };
-    box?.addEventListener('keydown', trap);
-    return () => {
-      box?.removeEventListener('keydown', trap);
-      if (previous?.isConnected) previous.focus();
-    };
-  }, [closeDialog]);
-
-  const chooseClose = async nextMode => {
-    if (closeBusy) return;
-    setCloseBusy(true);
-    setCloseError('');
-    try {
-      if (closeDialog === 'close' && nextMode === 'exit') {
-        scheduleSave(true);
-        await saved.current.chain.catch(() => {});
-      }
-      await invoke('close_behavior_set', { mode: nextMode, closeNow: closeDialog === 'close' });
-      setCloseMode(nextMode);
-      setCloseDialog(null);
-    } catch (e) {
-      setCloseError(e?.message || '无法保存关闭设置，请重试');
-    } finally {
-      setCloseBusy(false);
-    }
-  };
-
-  useEffect(() => {
-    let stopped = false;
-    let unlisten;
-    import('@tauri-apps/api/event')
-      .then(({ listen }) =>
-        listen('qq-auth-cleanup-failed', () =>
-          update('qqmusic', { message: 'QQ 授权临时数据未能清理，请检查本机应用数据' })
-        )
-      )
-      .then(fn => {
-        if (stopped) fn();
-        else unlisten = fn;
-      })
-      .catch(() => {});
-    return () => {
-      stopped = true;
-      if (unlisten) unlisten();
-    };
-  }, []);
-
-  // P2-A 启动状态同步与全局快捷键 / 原生桌面歌词事件监听
-  useEffect(() => {
-    if (!canGlobalShortcuts && !canDesktopLyric) return;
-    let active = true;
-    const offs = [];
-    if (canGlobalShortcuts) {
-      desktop
-        .globalShortcutsGet()
-        .then(res => {
-          if (!active || !res) return;
-          setGlobalShortcuts({
-            enabled: Boolean(res.enabled),
-            bindings: { ...DEFAULT_SHORTCUT_BINDINGS, ...(res.bindings || {}) },
-            error: res.error || null,
-          });
-          if (res.error?.message) setShortcutsError(res.error.message);
-        })
-        .catch(() => {});
-    }
-    if (canDesktopLyric) {
-      desktop
-        .desktopLyricGet()
-        .then(res => {
-          if (!active || !res) return;
-          const next = normalizeDesktopLyricState(res, desktopLyricRef.current);
-          desktopLyricRef.current = next;
-          setDesktopLyric(next);
-        })
-        .catch(() => {});
-    }
-    import('@tauri-apps/api/event')
-      .then(async ({ listen }) => {
-        if (canGlobalShortcuts) {
-          const eventName = desktop?.events?.globalShortcut || 'prism:global-shortcut';
-          const unShortcut = await listen(eventName, e => {
-            if (!active) return;
-            const action = e?.payload?.action;
-            if (typeof action === 'string') {
-              desktopHandlersRef.current[action]?.();
-            }
-          });
-          if (!active) unShortcut();
-          else offs.push(unShortcut);
-        }
-        if (canDesktopLyric) {
-          const eventName = desktop?.events?.desktopLyricState || 'prism:desktop-lyric-state';
-          const unLyric = await listen(eventName, e => {
-            if (!active || !e?.payload || typeof e.payload.enabled !== 'boolean') return;
-            const next = normalizeDesktopLyricState(e.payload, desktopLyricRef.current);
-            const turnedOn = next.enabled && !desktopLyricRef.current.enabled;
-            desktopLyricRef.current = next;
-            if (!next.enabled || turnedOn) lastDesktopLyricKeyRef.current = null;
-            setDesktopLyric(next);
-          });
-          if (!active) unLyric();
-          else offs.push(unLyric);
-        }
-      })
-      .catch(() => {});
-    return () => {
-      active = false;
-      offs.forEach(fn => fn());
-    };
-  }, []);
-
-  // 客户端更新：启动配置读取、延迟静默检查与下载进度监听
-  useEffect(() => {
-    if (!canAppUpdater) return undefined;
-    updateMountedRef.current = true;
-    let active = true;
-    let checkTimer = null;
-    let unlistenProgress = null;
-
-    desktop
-      .updaterConfigGet()
-      .then(cfg => {
-        if (!active || !cfg) return;
-        const normalized = commitUpdateConfig(cfg);
-        if (normalized.autoCheck && normalized.pubkeyConfigured) {
-          const delayMs =
-            typeof window !== 'undefined' && Number.isFinite(window.__VESPER_UPDATER_DELAY_MS__)
-              ? Math.max(0, Number(window.__VESPER_UPDATER_DELAY_MS__))
-              : 4000;
-          checkTimer = setTimeout(() => {
-            if (active) void runUpdateCheck({ silent: true });
-          }, delayMs);
-        }
-      })
-      .catch(() => {});
-
-    import('@tauri-apps/api/event')
-      .then(async ({ listen }) => {
-        const eventName = desktop?.events?.updateProgress || 'prism:app-update-progress';
-        const un = await listen(eventName, e => {
-          if (!active || !e?.payload) return;
-          const payload = e.payload;
-          commitUpdateState(prev => ({
-            ...prev,
-            phase: prev.phase === 'ready' ? 'ready' : 'downloading',
-            progress: {
-              version: payload.version || prev.info?.version || '',
-              downloadedBytes: Number(payload.downloadedBytes) || 0,
-              totalBytes:
-                payload.totalBytes != null
-                  ? Number(payload.totalBytes)
-                  : (prev.progress?.totalBytes ?? null),
-              percent: Number.isFinite(Number(payload.percent))
-                ? Number(payload.percent)
-                : (prev.progress?.percent ?? 0),
-            },
-          }));
-        });
-        if (!active) un();
-        else unlistenProgress = un;
-      })
-      .catch(() => {});
-
-    return () => {
-      active = false;
-      updateMountedRef.current = false;
-      if (checkTimer) clearTimeout(checkTimer);
-      if (unlistenProgress) unlistenProgress();
-    };
-  }, [canAppUpdater]);
-
-  // 音频输出设备初始化与清理淡入
-  useEffect(() => {
-    const el = audio.current;
-    const supported = supportsAudioOutputSelection(el);
-    setAudioOutputSupported(supported);
-    if (supported) {
-      void listAudioOutputDevices().then(res => setAudioOutputDevices(res.devices));
-      if (audioPrefsRef.current.outputDeviceId) {
-        void applyAudioOutputDevice(el, audioPrefsRef.current.outputDeviceId);
-      }
-    }
-    return () => {
-      stopSmoothFade({ restoreVolume: false });
-    };
-  }, []);
-
-  // 事件驱动推送桌面悬浮歌词：仅在桌面歌词开启且当前行、歌名、播放态、倍速或手动拖动变化时触发
-  useEffect(() => {
-    if (!canDesktopLyric || !desktopLyric.enabled) {
-      lastDesktopLyricKeyRef.current = null;
-      return;
-    }
-    const currentLine = lyricIndex >= 0 ? lyrics[lyricIndex] : null;
-    const nextLine =
-      lyricIndex >= 0 && lyricIndex + 1 < lyrics.length ? lyrics[lyricIndex + 1] : null;
-    const titleText = song
-      ? clipLyricField(artist(song) ? `${song.name} - ${artist(song)}` : song.name, 200)
-      : '';
-    let mainText = '';
-    if (currentLine?.text) {
-      mainText = currentLine.text;
-    } else if (!song) {
-      mainText = '还没有播放歌曲';
-    } else if (lyricStatus === 'loading') {
-      mainText = '正在加载歌词…';
-    } else if (lyricStatus === 'instrumental') {
-      mainText = '纯音乐，暂无歌词';
-    } else if (lyricStatus === 'error') {
-      mainText = '歌词加载失败';
-    } else if (lyrics.length > 0) {
-      mainText = song.name || '…';
-    } else {
-      mainText = '暂无歌词';
-    }
-    let elapsedMs = 0;
-    let durationMs = 0;
-    if (currentLine && Number.isFinite(currentLine.at)) {
-      const startSec = currentLine.at;
-      const nextAt = nextLine && Number.isFinite(nextLine.at) ? nextLine.at : null;
-      const audioEl = audio.current;
-      const trackDur =
-        audioEl && Number.isFinite(audioEl.duration) && audioEl.duration > startSec
-          ? audioEl.duration
-          : null;
-      const rawDurationMs =
-        nextAt != null
-          ? Math.round((nextAt - startSec) * 1000)
-          : trackDur != null
-            ? Math.round((trackDur - startSec) * 1000)
-            : 5000;
-      durationMs = Math.min(600000, Math.max(0, rawDurationMs));
-      const curSec =
-        audioEl && Number.isFinite(audioEl.currentTime) ? audioEl.currentTime : startSec;
-      elapsedMs =
-        durationMs > 0
-          ? Math.min(durationMs, Math.max(0, Math.round((curSec - startSec) * 1000)))
-          : 0;
-    }
-    const rate =
-      Number.isFinite(audio.current?.playbackRate) && audio.current.playbackRate > 0
-        ? audio.current.playbackRate
-        : playbackRate || 1;
-    const payload = {
-      text: clipLyricField(mainText),
-      translation: clipLyricField(currentLine?.translation || ''),
-      romaji: clipLyricField(currentLine?.romaji || ''),
-      title: titleText,
-      playing: Boolean(playing),
-      nextText: clipLyricField(nextLine?.text || ''),
-      elapsedMs,
-      durationMs,
-      rate,
-      accentColor: validHexColor(currentAccentRef.current),
-    };
-    const key = JSON.stringify(payload);
-    if (lastDesktopLyricKeyRef.current === key) return;
-    lastDesktopLyricKeyRef.current = key;
-    desktop.desktopLyricUpdate(payload).catch(() => {});
   }, [
-    canDesktopLyric,
-    desktopLyric.enabled,
-    song,
-    lyrics,
-    lyricIndex,
-    lyricStatus,
-    playing,
-    playbackRate,
-    desktopLyricSyncTick,
+    showQueue,
+    showShortcuts,
+    Boolean(showUpdaterDialog),
+    !!pickerTrack,
+    !!qr,
+    qqWebOpen,
   ]);
-
-  // 单次下一句精准唤醒定时器（亚 30ms 节拍同步，零轮询，隐藏/暂停即撤销）
-  useEffect(() => {
-    if (!playing || !lyrics.length) return undefined;
-    let timer = null;
-    const scheduleNext = () => {
-      if (timer) {
-        clearTimeout(timer);
-        timer = null;
-      }
-      if (typeof document !== 'undefined' && document.hidden) return;
-      const a = audio.current;
-      if (!a) return;
-      const next = lyrics[lyricIndex + 1];
-      if (!next) return;
-      const rate = a.playbackRate || playbackRate || 1;
-      const deltaMs = Math.ceil(((next.at - (a.currentTime || 0)) / rate) * 1000) + 12;
-      if (deltaMs <= 0) {
-        syncLyric(a.currentTime || 0);
-        return;
-      }
-      timer = setTimeout(() => {
-        timer = null;
-        if (audio.current) syncLyric(audio.current.currentTime || 0);
-      }, Math.min(delayMsBound(deltaMs), 60000));
-    };
-    const delayMsBound = ms => (Number.isFinite(ms) ? ms : 1000);
-    scheduleNext();
-    const onVisible = () => {
-      if (typeof document !== 'undefined' && !document.hidden && audio.current) {
-        syncLyric(audio.current.currentTime || 0);
-        scheduleNext();
-      }
-    };
-    document?.addEventListener?.('visibilitychange', onVisible);
-    return () => {
-      if (timer) clearTimeout(timer);
-      document?.removeEventListener?.('visibilitychange', onVisible);
-    };
-  }, [playing, lyrics, lyricIndex, playbackRate, song]);
-
-  useEffect(() => {
-    if (!qr) return;
-    const id = qr.provider;
-    const token = qrRequest.current.current();
-    let timer;
-    let active = true;
-    const poll = async () => {
-      try {
-        const p = await getProvider(id);
-        const d = await p.qrCheck();
-        if (!active || !qrRequest.current.isCurrent(token)) return;
-        if (d.code === 803) {
-          setQr(null);
-          const accountToken = account.current[id].next();
-          const userId = d.profile?.userId || null;
-          const old = workRef.current[id];
-          if ((old.profile?.userId || null) !== userId || !userId) clearAccountContent(id);
-          update(id, {
-            profile: userId ? d.profile : null,
-            identityUnknown: !userId,
-            message: userId ? '登录成功' : '账号身份待确认',
-            listStatus: userId ? '' : '账号资料不完整，请刷新账号',
-          });
-          if (id === 'netease' && userId) {
-            void restoreSaved(
-              userId,
-              identity.current.netease.current(),
-              playback.current.current()
-            );
-            void loadLikedIds(accountToken, userId);
-          }
-          if (userId && capabilities[id].getPlaylists) loadLists(id, accountToken);
-          return;
-        }
-        if (d.code === 800) {
-          setQr(null);
-          update(id, { message: '二维码已过期或被拒绝，请重新登录' });
-          return;
-        }
-      } catch (e) {
-        if (active && qrRequest.current.isCurrent(token)) {
-          update(id, { message: errorText(e) });
-          setQr(null);
-          getProvider(id)
-            .then(p => p.qrCancel())
-            .catch(() => {});
-        }
-        return;
-      }
-      if (active) timer = setTimeout(poll, 2500);
-    };
-    timer = setTimeout(poll, 2500);
-    return () => {
-      active = false;
-      clearTimeout(timer);
-    };
-  }, [qr]);
-
-  const logout = async () => {
-    const id = activeRef.current;
-    const token = account.current[id].next();
-    browse.current[id].next();
-    update(id, { accountBusy: true });
-    try {
-      const p = await getProvider(id);
-      const result = await p.logout();
-      if (!account.current[id].isCurrent(token)) return;
-      if (result?.localCleared !== true) throw Error('无法确认本机退出状态');
-      clearAccountContent(id);
-      update(id, {
-        profile: null,
-        identityUnknown: false,
-        listStatus: '',
-        message:
-          id === 'qqmusic' && platformFlavor.qqmusic === 'mock'
-            ? '已退出模拟账号'
-            : result.remoteRevoked
-              ? '已退出登录'
-              : '本机已退出，远端状态未确认',
-      });
-    } catch (e) {
-      if (account.current[id].isCurrent(token)) update(id, { message: '退出失败：' + errorText(e) });
-    } finally {
-      if (account.current[id].isCurrent(token)) update(id, { accountBusy: false });
-    }
-  };
 
   // 全局键盘快捷键（保留原优先级与顺序）
   useEffect(() => {
@@ -4149,15 +778,6 @@ export function App({
   });
 
   useEffect(() => {
-    if (showQueue) {
-      document.querySelector('.queue-item.selected')?.scrollIntoView?.({
-        block: 'nearest',
-        behavior: 'auto',
-      });
-    }
-  }, [showQueue, activeProvider, song]);
-
-  useEffect(() => {
     const onScroll = e => {
       const t = e.target;
       if (!t?.matches) return;
@@ -4169,182 +789,6 @@ export function App({
     return () => document.removeEventListener('scroll', onScroll, true);
   }, []);
 
-  useEffect(() => {
-    const session = navigator.mediaSession;
-    updateMediaSession(session, globalThis.MediaMetadata, song, playing);
-    return installMediaSession(session, {
-      play: () => {
-        if (audio.current?.paused) togglePlayback();
-      },
-      pause: () => {
-        if (audio.current && !audio.current.paused) audio.current.pause();
-      },
-      previoustrack: () => skipTrack(-1),
-      nexttrack: () => skipTrack(1),
-    });
-  }, [song, playing]);
-
-  // 封面漫反射取色：一次性离屏取色，仅写入根节点 CSS 变量，不进 React state
-  useEffect(() => {
-    const root = document.documentElement;
-    const apply = c => {
-      let nextAccent = '#F2A65A';
-      if (c && c.a) {
-        nextAccent = validHexColor(c.a);
-        root.style.setProperty('--nr-glow', c.a);
-        root.style.setProperty('--lw-a', c.a);
-        root.style.setProperty('--lw-on', c.on);
-        root.dataset.accent = c.monochrome ? 'mono' : 'color';
-      } else {
-        const fb = accentFor(song);
-        nextAccent = validHexColor(fb);
-        root.style.setProperty('--nr-glow', fb);
-        root.style.setProperty('--lw-a', fb);
-        root.style.setProperty('--lw-on', '#161C26');
-        root.dataset.accent = 'fallback';
-      }
-      if (currentAccentRef.current !== nextAccent) {
-        currentAccentRef.current = nextAccent;
-        if (desktopLyricRef.current.enabled && desktopLyricRef.current.style?.theme === 'accent') {
-          setDesktopLyricSyncTick(t => t + 1);
-        }
-      }
-    };
-    const directSrc = coverUrl(song, 500);
-    if (directSrc) {
-      root.dataset.accentSrc = directSrc;
-      let live = true;
-      extractAccent(directSrc).then(c => {
-        if (live) apply(c);
-      });
-      return () => {
-        live = false;
-      };
-    }
-    if (song?.provider === 'local' && song?.id && canLocalCover) {
-      let live = true;
-      root.dataset.accentSrc = '';
-      apply(null);
-      void loadLocalCover(String(song.id), id => local.getCover(id)).then(dataUrl => {
-        if (!live) return;
-        if (!dataUrl) {
-          root.dataset.accentSrc = '';
-          apply(null);
-          return;
-        }
-        root.dataset.accentSrc = dataUrl;
-        extractAccent(dataUrl).then(c => {
-          if (live) apply(c);
-        });
-      });
-      return () => {
-        live = false;
-      };
-    }
-    root.dataset.accentSrc = '';
-    apply(null);
-    return undefined;
-  }, [song, canLocalCover]);
-
-  // 暂停 <-> 播放平滑调节环境波浪速率（Web Animations API playbackRate 缓动，零跳变、无常驻 rAF）
-  useEffect(() => {
-    const state = ambientRateRef.current;
-    if (state.rafId != null && typeof globalThis.cancelAnimationFrame === 'function') {
-      globalThis.cancelAnimationFrame(state.rafId);
-      state.rafId = null;
-    }
-    const reduced =
-      typeof globalThis.matchMedia === 'function' &&
-      globalThis.matchMedia('(prefers-reduced-motion: reduce)').matches;
-    const layer = ambientLayerRef.current;
-    if (
-      themePrefs.ambient === 'off' ||
-      reduced ||
-      !layer ||
-      typeof layer.getAnimations !== 'function'
-    ) {
-      state.rate = playing ? 1 : 0.38;
-      state.initialized = false;
-      return undefined;
-    }
-
-    const applyRate = nextRate => {
-      state.rate = nextRate;
-      const anims = layer.getAnimations({ subtree: true });
-      for (const anim of anims) {
-        try {
-          if (anim.playbackRate !== nextRate) anim.playbackRate = nextRate;
-        } catch {}
-      }
-    };
-
-    const targetRate = playing ? 1 : 0.38;
-    if (
-      !state.initialized ||
-      typeof globalThis.requestAnimationFrame !== 'function' ||
-      typeof globalThis.cancelAnimationFrame !== 'function'
-    ) {
-      state.initialized = true;
-      applyRate(targetRate);
-      return undefined;
-    }
-
-    const startRate = state.rate;
-    if (Math.abs(targetRate - startRate) < 0.005) {
-      applyRate(targetRate);
-      return undefined;
-    }
-
-    const duration = 720;
-    const startTime = typeof performance !== 'undefined' ? performance.now() : Date.now();
-    const step = now => {
-      const elapsed = Math.max(0, (typeof now === 'number' ? now : Date.now()) - startTime);
-      const t = Math.min(1, elapsed / duration);
-      const eased = 1 - Math.pow(1 - t, 3);
-      applyRate(startRate + (targetRate - startRate) * eased);
-      if (t < 1) {
-        state.rafId = globalThis.requestAnimationFrame(step);
-      } else {
-        state.rafId = null;
-      }
-    };
-    state.rafId = globalThis.requestAnimationFrame(step);
-
-    return () => {
-      if (state.rafId != null) {
-        globalThis.cancelAnimationFrame(state.rafId);
-        state.rafId = null;
-      }
-    };
-  }, [playing, themePrefs.ambient]);
-
-  // 原生窗口标题跟随实际播放曲目
-  useEffect(() => {
-    const nextTitle = song ? [song.name, artist(song)].filter(Boolean).join(' — ') : 'Vesper';
-    try {
-      const pending = getCurrentWindow().setTitle(nextTitle);
-      if (pending && typeof pending.catch === 'function') pending.catch(() => {});
-    } catch {}
-    return undefined;
-  }, [song]);
-
-  // Windows 系统托盘 Tooltip 与播控菜单文案同步
-  useEffect(() => {
-    if (!trayAvailable || typeof window === 'undefined' || !('__TAURI_INTERNALS__' in window)) {
-      return undefined;
-    }
-    try {
-      const pending = invoke('tray_status_sync', {
-        title: song?.name || null,
-        artist: song ? artist(song) || null : null,
-        playing: Boolean(playing),
-      });
-      if (pending && typeof pending.catch === 'function') pending.catch(() => {});
-    } catch {}
-    return undefined;
-  }, [trayAvailable, song, playing]);
-
-  const line = lyrics[lyricIndex];
   const diagnostic = showDiagnostics ? listening.current.diagnosticSnapshot() : null;
   const diagnosticText = d =>
     `会话 ${d.sessionId} · 媒体前进 ${d.mediaSeconds.toFixed(1)} 秒 · 有效收听 ${d.validSeconds.toFixed(1)} 秒 · 暂停 ${d.pauses} 次 · 缓冲 ${d.buffering} 次 · 拖动 ${d.seeks} 次 · 全曲${d.thresholdReached ? '达到' : '未达到'} 30 秒候选阈值`;
@@ -4381,33 +825,12 @@ export function App({
       ws.page > 1 ||
       (ws.searchType === 1 ? songs.length >= 40 : (ws.searchItems?.length || 0) >= 40));
 
-  const updateSummary = canAppUpdater ? buildUpdateSummary({ updateConfig, updateState }) : null;
-  const updateAttention = canAppUpdater && hasUpdateBadge({ updateState, config: updateConfig });
-
   const isListLoading =
     ws.searching ||
     ['正在加载歌单…', '正在加载…', '正在搜索…', '正在读取本地记录…'].includes(message) ||
     (activeProvider === 'local' && localBusy);
 
-  const lwLyrics = lyricalLines(lyrics);
-  const lwCur = lwLyrics.findIndex(l => line && l.at >= line.at);
-  const lwPreview = lwCur >= 0 ? lwLyrics.slice(lwCur, lwCur + 2) : lwLyrics.slice(0, 2);
-
-  // 舞台实况 5 行歌词上下文
-  const stagePreview = (() => {
-    if (!lwLyrics.length) return [];
-    const anchor = lwCur >= 0 ? lwCur : 0;
-    const start = Math.max(0, anchor - 2);
-    return lwLyrics.slice(start, start + 5).map((item, offset) => ({
-      ...item,
-      isCurrent: lwCur >= 0 ? start + offset === anchor : offset === 0,
-    }));
-  })();
-
   const playingQueue = mixedQueue || (song ? workspaces[song.provider]?.queue : ws.queue);
-  const activeCustomPlaylist = activeCustomPlaylistId
-    ? customPlaylists.find(p => p.id === activeCustomPlaylistId) || null
-    : null;
   const customFilteredSongs = activeCustomPlaylist
     ? filterCustomPlaylistTracks(activeCustomPlaylist.tracks, customPlaylistFilter).map(t =>
         hydrateCustomTrack(t, workRef.current)
@@ -4416,7 +839,6 @@ export function App({
   const customSourceCounts = activeCustomPlaylist
     ? summarizeCustomPlaylistSources(activeCustomPlaylist.tracks)
     : null;
-  const customTotalTracks = customPlaylists.reduce((sum, pl) => sum + pl.tracks.length, 0);
   const playCustomTrack = (track, list = customFilteredSongs) => {
     if (!activeCustomPlaylist || !list.length) return;
     const idx = list.findIndex(t => t.provider === track.provider && t.id === track.id);
@@ -4433,17 +855,6 @@ export function App({
       },
       { autoOpenStage: true }
     );
-  };
-
-  const cycleMode = () => {
-    const all =
-      (songRef.current?.provider || activeProvider) === 'qqmusic'
-        ? ['sequential', 'repeat-one', 'shuffle']
-        : ['sequential', 'list-loop', 'repeat-one', 'shuffle'];
-    const value = all[(all.indexOf(settings.current.mode) + 1) % all.length];
-    settings.current.mode = value;
-    setMode(value);
-    scheduleSave(true);
   };
 
   const sleepLabel =
@@ -4566,7 +977,8 @@ export function App({
             activeProvider={activeProvider}
             ws={ws}
             mixedQueue={mixedQueue}
-            lwPreview={lwPreview}
+            lyrics={lyrics}
+            lyricIndexStore={lyricIndexStore}
             lyricStatus={lyricStatus}
             showLyrics={view === 'stage'}
             setShowLyrics={next => setView(next ? 'stage' : 'library')}
@@ -4983,12 +1395,7 @@ export function App({
                 openList={openList}
                 searchHistory={searchHistory[activeProvider]}
                 onPickHistory={term => search(null, 1, term)}
-                onClearHistory={() =>
-                  setSearchHistory(prev => ({
-                    ...prev,
-                    [activeProvider]: clearSearchHistory(activeProvider),
-                  }))
-                }
+                onClearHistory={() => clearProviderSearchHistory(activeProvider)}
               />
             )}
 
@@ -5118,29 +1525,12 @@ export function App({
           closeBusy={closeBusy}
           trayAvailable={trayAvailable}
           closeError={closeError}
-          onChooseCloseMode={canChooseCloseBehavior ? nextMode => {
-            if (closeBusy) return;
-            setCloseBusy(true);
-            setCloseError('');
-            invoke('close_behavior_set', { mode: nextMode, closeNow: false })
-              .then(() => setCloseMode(nextMode))
-              .catch(e => setCloseError(e?.message || '无法保存关闭设置，请重试'))
-              .finally(() => setCloseBusy(false));
-          } : null}
+          onChooseCloseMode={canChooseCloseBehavior ? handleChooseCloseMode : null}
           canAutostart={canAutostart}
           autostartEnabled={autostartEnabled}
           autostartBusy={autostartBusy}
           autostartError={autostartError}
-          onToggleAutostart={nextEnabled => {
-            if (!canAutostart || autostartBusy) return;
-            setAutostartBusy(true);
-            setAutostartError('');
-            desktop
-              .autostartSet(Boolean(nextEnabled))
-              .then(res => setAutostartEnabled(Boolean(res?.enabled)))
-              .catch(e => setAutostartError(e?.message || '无法更新开机自启设置，请重试'))
-              .finally(() => setAutostartBusy(false));
-          }}
+          onToggleAutostart={handleToggleAutostart}
           customPlaylistCount={customPlaylists.length}
           customTrackCount={customTotalTracks}
           onExportCustomPlaylists={handleExportCustomPlaylists}
@@ -5230,7 +1620,7 @@ export function App({
               stage
               embedded
               lyrics={lyrics}
-              index={lyricIndex}
+              indexStore={lyricIndexStore}
               status={lyricStatus}
               onSeek={at => {
                 if (
@@ -5404,7 +1794,7 @@ export function App({
           scheduleSave();
           const a = e.currentTarget;
           syncLyric(a.currentTime);
-          if (desktopLyricRef.current.enabled) setDesktopLyricSyncTick(t => t + 1);
+          if (desktopLyricRef.current.enabled) triggerDesktopLyricSync();
           if (!a.paused && a.readyState >= 3) {
             listening.current.resume(a.currentTime, performance.now(), a.playbackRate);
           }

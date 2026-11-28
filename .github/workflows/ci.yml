@@ -30,14 +30,22 @@ jobs:
 
       - name: Setup Rust toolchain
         uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
 
       - name: Cache Rust dependencies
         uses: Swatinem/rust-cache@v2
         with:
           workspaces: 'src-tauri -> target'
 
+      - name: Lint frontend React Hooks
+        run: npm run lint
+
       - name: Run frontend unit and integration tests
         run: npm run test
+
+      - name: Check Rust formatting
+        run: cargo fmt --manifest-path src-tauri/Cargo.toml --check
 
       - name: Run Rust backend tests
         run: cargo test --manifest-path src-tauri/Cargo.toml

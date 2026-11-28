@@ -1681,8 +1681,14 @@ mod tests {
                 assert!((200..255).contains(&(pixel(6, 13) >> 24)));
                 assert!((0..3).any(|top| red(13, top) > red(6, 13) + 25));
                 assert!(frame.iter().any(|pixel| (1..190).contains(&(pixel >> 24))));
-                assert!((6..10).any(|top| red(13, top) > 100), "shackle at {dpi} DPI");
-                assert!((18..21).any(|top| red(13, top) > 100), "lock body at {dpi} DPI");
+                assert!(
+                    (6..10).any(|top| red(13, top) > 100),
+                    "shackle at {dpi} DPI"
+                );
+                assert!(
+                    (18..21).any(|top| red(13, top) > 100),
+                    "lock body at {dpi} DPI"
+                );
                 assert!(
                     (10..17).all(|top| [5, 6, 19, 20]
                         .into_iter()

@@ -1,4 +1,4 @@
-import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import React, { memo, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { artist, album, QUALITY_LABELS, formatBitrate } from '../utils/format.js';
 import { SongArtwork, SourceTag, PlayButton } from './Artwork.jsx';
 import { Icon } from './Icons.jsx';
@@ -11,7 +11,7 @@ const prefersReducedMotion = () =>
 const STRIP_EASING = 'cubic-bezier(0.22, 1, 0.36, 1)';
 
 // 合并后的一体化沉浸舞台：左侧封面波段与曲目控制 + 右侧常驻大字号实时滚动歌词
-export function RadioStage({
+export const RadioStage = memo(function RadioStage({
   song,
   playing,
   buffering,
@@ -525,4 +525,4 @@ export function RadioStage({
       )}
     </section>
   );
-}
+});

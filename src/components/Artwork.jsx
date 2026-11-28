@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { memo, useEffect, useState } from 'react';
 import { playlistCoverUrl, coverUrl } from '../cover.js';
 import {
   getCachedLocalCover,
@@ -14,7 +14,7 @@ function useImageFailure(src) {
   return [state.src === src && state.failed, () => setState({ src, failed: true })];
 }
 
-export function PlaylistCover({ url, className }) {
+export const PlaylistCover = memo(function PlaylistCover({ url, className }) {
   const src = playlistCoverUrl(url);
   const [failed, markFailed] = useImageFailure(src);
   if (src && !failed) {
@@ -30,9 +30,9 @@ export function PlaylistCover({ url, className }) {
     );
   }
   return <span className={`${className} lw-cover-fallback`} aria-hidden="true" />;
-}
+});
 
-export function SongArtwork({ song, size, className, variant = 'small' }) {
+export const SongArtwork = memo(function SongArtwork({ song, size, className, variant = 'small' }) {
   const directSrc = coverUrl(song, size);
   const localId = !directSrc && song?.provider === 'local' && song?.id ? String(song.id) : null;
   const [fetcher, setFetcher] = useState(() => getLocalCoverFetcher());
@@ -92,9 +92,9 @@ export function SongArtwork({ song, size, className, variant = 'small' }) {
     return <div className="now-cover lw-cover-fallback" aria-hidden="true" />;
   }
   return <span className={`${className} lw-cover-fallback`} aria-hidden="true" />;
-}
+});
 
-export function SourceTag({ provider, browsing }) {
+export const SourceTag = memo(function SourceTag({ provider, browsing }) {
   if (!provider) return null;
   const label = providerLabel(provider);
   return (
@@ -103,7 +103,7 @@ export function SourceTag({ provider, browsing }) {
       {label}
     </span>
   );
-}
+});
 
 export function InlineNotice({ tone = 'err', role, children }) {
   if (!children) return null;
@@ -115,7 +115,7 @@ export function InlineNotice({ tone = 'err', role, children }) {
 }
 
 // 温润鹅卵石主播放键：保持 .play-toggle 与无障碍状态语义，彻底告别锋利方框。
-export function PlayButton({ playing, buffering, pending, onClick, disabled, size = 'md' }) {
+export const PlayButton = memo(function PlayButton({ playing, buffering, pending, onClick, disabled, size = 'md' }) {
   const state = playing || buffering ? 'pause' : 'play';
   return (
     <button
@@ -140,4 +140,4 @@ export function PlayButton({ playing, buffering, pending, onClick, disabled, siz
       </svg>
     </button>
   );
-}
+});

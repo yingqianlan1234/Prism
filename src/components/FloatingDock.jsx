@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { memo, useEffect, useRef, useState } from 'react';
 import { artist, NETEASE_QUALITIES, QUALITY_LABELS, formatBitrate } from '../utils/format.js';
 import { SongArtwork, SourceTag, PlayButton } from './Artwork.jsx';
 import { PlaybackProgress } from './PlaybackProgress.jsx';
@@ -27,7 +27,7 @@ const SLEEP_OPTIONS = [
   { id: 'track', label: '播完本首' },
 ];
 
-export function FloatingDock({
+export const FloatingDock = memo(function FloatingDock({
   view,
   song,
   playing,
@@ -479,4 +479,4 @@ export function FloatingDock({
       </div>
     </div>
   );
-}
+});

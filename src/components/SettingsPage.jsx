@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { memo, useEffect, useRef, useState } from 'react';
 import {
   NETEASE_QUALITIES,
   QUALITY_LABELS,
@@ -49,7 +49,7 @@ const LYRIC_FONT_SIZES = [
   { size: 40, label: '特大' },
 ];
 
-export function SettingsPage({
+export const SettingsPage = memo(function SettingsPage({
   activeSection,
   onSelectSection,
   onBackToLibrary,
@@ -1133,4 +1133,4 @@ export function SettingsPage({
       </div>
     </main>
   );
-}
+});

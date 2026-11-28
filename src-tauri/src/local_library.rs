@@ -180,7 +180,12 @@ impl Library {
     fn cache_cover(&mut self, id: String, track: &Track, data_url: Option<String>) {
         self.covers.retain(|cover| cover.id != id);
         let byte_len = data_url.as_ref().map_or(0, String::len);
-        let mut total = byte_len + self.covers.iter().map(|cover| cover.byte_len).sum::<usize>();
+        let mut total = byte_len
+            + self
+                .covers
+                .iter()
+                .map(|cover| cover.byte_len)
+                .sum::<usize>();
         while self.covers.len() >= MAX_CACHED_COVERS || total > MAX_CACHED_COVER_BYTES {
             total -= self.covers.pop_front().unwrap().byte_len;
         }
@@ -436,9 +441,7 @@ pub(crate) async fn local_library_folder_pick(window: WebviewWindow) -> Result<O
     };
     tauri::async_runtime::spawn_blocking(move || {
         let invalid = || err("validation", "请选择可访问的本地目录");
-        if local_media::path_length(&selected) > 2044
-            || !local_media::safe_directory(&selected)
-        {
+        if local_media::path_length(&selected) > 2044 || !local_media::safe_directory(&selected) {
             return Err(invalid());
         }
         let path = fs::canonicalize(selected).map_err(|_| invalid())?;
@@ -745,7 +748,11 @@ fn detect_image_mime(bytes: &[u8]) -> Option<&'static str> {
 
 fn extract_cover_data_url(file: File) -> Option<String> {
     let tagged = Probe::new(io::BufReader::new(file))
-        .options(ParseOptions::new().read_cover_art(true).read_properties(false))
+        .options(
+            ParseOptions::new()
+                .read_cover_art(true)
+                .read_properties(false),
+        )
         .guess_file_type()
         .ok()?
         .read()

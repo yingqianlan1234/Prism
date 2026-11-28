@@ -1,8 +1,8 @@
-import React, { useEffect, useState } from 'react';
+import React, { memo, useEffect, useState } from 'react';
 import { time } from '../utils/format.js';
 
 // 进度更新严格收口在这个小组件内部，不触发主页面重绘。
-export function PlaybackProgress({ audio, restored, onSeek, onSeekEnd, variant }) {
+export const PlaybackProgress = memo(function PlaybackProgress({ audio, restored, onSeek, onSeekEnd, variant }) {
   const [elapsed, setElapsed] = useState(0);
   const [duration, setDuration] = useState(0);
 
@@ -66,4 +66,4 @@ export function PlaybackProgress({ audio, restored, onSeek, onSeekEnd, variant }
       </span>
     </div>
   );
-}
+});
