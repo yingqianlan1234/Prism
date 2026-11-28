@@ -7,6 +7,7 @@ import * as providers from './providers.js';
 import { ListeningTracker } from './listening.js';
 import { applyThemePrefsToDocument, loadThemePrefs } from './theme-prefs.js';
 import { App } from './App.jsx';
+import { ErrorBoundary } from './components/ErrorBoundary.jsx';
 
 applyThemePrefsToDocument(loadThemePrefs());
 
@@ -19,7 +20,9 @@ async function start() {
     ? providers.capabilitiesForHost?.(host) ?? providers.capabilities
     : providers.capabilities;
   createRoot(document.getElementById('root')).render(
-    <App providers={{ ...providers, capabilities }} ListeningTracker={ListeningTracker} />
+    <ErrorBoundary>
+      <App providers={{ ...providers, capabilities }} ListeningTracker={ListeningTracker} />
+    </ErrorBoundary>
   );
 }
 

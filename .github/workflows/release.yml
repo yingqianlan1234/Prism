@@ -20,10 +20,10 @@ jobs:
     runs-on: windows-latest
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: '22'
           cache: 'npm'
@@ -76,7 +76,7 @@ jobs:
             - 请在此填写本次更新的主要新特性或修复说明
 
             > 提示：在发布页首行使用 `[feature]` 会向客户端主动弹出更新提示；使用 `[patch]`（或留空且仅递增修订号如 1.1.1）则仅在“更多设置”按钮亮起暖琥珀提醒点，不打断听歌。
-          releaseDraft: ${{ github.event_name == 'workflow_dispatch' && inputs.draft || true }}
+          releaseDraft: ${{ github.event_name != 'workflow_dispatch' || inputs.draft }}
           prerelease: false
           includeUpdaterJson: true
           updaterJsonKeepUniversal: false

@@ -1,1 +1,0 @@
-{"main-window":{"identifier":"main-window","description":"主窗口最小权限","local":true,"windows":["main"],"permissions":["core:default","core:window:allow-set-title"]}}

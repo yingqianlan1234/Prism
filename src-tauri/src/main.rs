@@ -351,6 +351,17 @@ fn host_capabilities() -> Value {
     })
 }
 
+fn focus_main_window(app: &tauri::AppHandle) {
+    #[cfg(windows)]
+    background::restore(app);
+    #[cfg(not(windows))]
+    if let Some(window) = app.get_webview_window("main") {
+        let _ = window.show();
+        let _ = window.unminimize();
+        let _ = window.set_focus();
+    }
+}
+
 fn main() {
     let cookie = entry().and_then(|entry| match entry.get_password() {
         Ok(value) => Ok(Some(value)),
@@ -367,7 +378,10 @@ fn main() {
         .build()
         .expect("HTTP client");
 
-    let builder = tauri::Builder::default();
+    let builder = tauri::Builder::default()
+        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+            focus_main_window(app);
+        }));
     #[cfg(target_os = "macos")]
     let builder = builder.plugin(tauri_plugin_dialog::init());
     #[cfg(any(windows, target_os = "macos"))]

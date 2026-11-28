@@ -31,7 +31,7 @@ fn close_action(mode:CloseMode,tray_ready:bool,force:bool)->CloseAction {
     if force{return CloseAction::Close}
     match mode {CloseMode::Exit=>CloseAction::Close,CloseMode::Background if tray_ready=>CloseAction::Hide,_=>CloseAction::Ask}
 }
-fn restore(app:&AppHandle) {
+pub(crate) fn restore(app:&AppHandle) {
     if let Some(state)=app.try_state::<BackgroundState>() { state.user_hidden.store(false,Ordering::SeqCst); }
     if let Some(window)=app.get_webview_window("main") { let _=window.show(); crate::window_dwm::apply_for(&window); let _=window.unminimize(); let _=window.set_focus(); }
 }
