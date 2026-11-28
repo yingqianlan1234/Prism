@@ -187,8 +187,8 @@ try {
     () =>
       countCmd('global_shortcuts_get') >= 1 &&
       countCmd('desktop_lyric_get') >= 1 &&
-      listeners.has('prism:global-shortcut') &&
-      listeners.has('prism:desktop-lyric-state') &&
+      listeners.has('vesper:global-shortcut') &&
+      listeners.has('vesper:desktop-lyric-state') &&
       buttonIncludes('夜车测试单'),
     'P2-A 初始化'
   );
@@ -250,26 +250,26 @@ try {
   buttonByText('返回音乐库').click();
   await wait(() => document.querySelector('.app').dataset.view === 'library', '退出设置页返回音乐库');
 
-  // 3. 验证 prism:global-shortcut 全动作驱动唯一 <audio>
-  listeners.get('prism:global-shortcut')({ payload: { action: 'togglePlayback' } });
+  // 3. 验证 vesper:global-shortcut 全动作驱动唯一 <audio>
+  listeners.get('vesper:global-shortcut')({ payload: { action: 'togglePlayback' } });
   await wait(() => paused, '全局热键暂停');
-  listeners.get('prism:global-shortcut')({ payload: { action: 'togglePlayback' } });
+  listeners.get('vesper:global-shortcut')({ payload: { action: 'togglePlayback' } });
   await wait(() => !paused, '全局热键继续播放');
 
-  listeners.get('prism:global-shortcut')({ payload: { action: 'volumeDown' } });
+  listeners.get('vesper:global-shortcut')({ payload: { action: 'volumeDown' } });
   await wait(() => Math.abs(audio.volume - 0.95) < 0.001, '全局热键减小音量');
-  listeners.get('prism:global-shortcut')({ payload: { action: 'volumeUp' } });
+  listeners.get('vesper:global-shortcut')({ payload: { action: 'volumeUp' } });
   await wait(() => Math.abs(audio.volume - 1) < 0.001, '全局热键增大音量');
 
-  listeners.get('prism:global-shortcut')({ payload: { action: 'nextTrack' } });
+  listeners.get('vesper:global-shortcut')({ payload: { action: 'nextTrack' } });
   await wait(() => audio.src.endsWith('/502.mp3'), '全局热键下一首');
-  listeners.get('prism:global-shortcut')({ payload: { action: 'prevTrack' } });
+  listeners.get('vesper:global-shortcut')({ payload: { action: 'prevTrack' } });
   await wait(() => audio.src.endsWith('/501.mp3'), '全局热键上一首');
   assert.equal(document.querySelectorAll('audio').length, 1, '全过程仅一个 audio');
 
   // 4. 桌面悬浮歌词开关、事件驱动推送、同句零重复推送、锁定与外部状态同步关闭
   const lyricUpdatesBefore = countCmd('desktop_lyric_update');
-  listeners.get('prism:global-shortcut')({ payload: { action: 'toggleDesktopLyric' } });
+  listeners.get('vesper:global-shortcut')({ payload: { action: 'toggleDesktopLyric' } });
   await wait(() => document.querySelector('[aria-label="关闭桌面歌词"]'), '快捷键开启桌面歌词');
   await wait(() => countCmd('desktop_lyric_update') > lyricUpdatesBefore, '开启后推送首帧');
 
@@ -348,7 +348,7 @@ try {
   await wait(() => lyricWindowState.style.panelOpacity === 64, '更新桌面歌词底板透明度');
 
   // 模拟从悬浮窗控制条触发的事件回传同步到主界面
-  listeners.get('prism:desktop-lyric-state')({
+  listeners.get('vesper:desktop-lyric-state')({
     payload: {
       enabled: true,
       locked: false,
@@ -358,9 +358,9 @@ try {
   });
   await wait(() => document.querySelector('.nr-settings-page')?.textContent.includes('38px'), '同步悬浮窗修改字号');
 
-  // 模拟原生桌面歌词窗关闭 -> 派发 prism:desktop-lyric-state
+  // 模拟原生桌面歌词窗关闭 -> 派发 vesper:desktop-lyric-state
   const beforeCloseCount = countCmd('desktop_lyric_update');
-  listeners.get('prism:desktop-lyric-state')({
+  listeners.get('vesper:desktop-lyric-state')({
     payload: { enabled: false, locked: false, position: { x: 160, y: 520 } },
   });
   await wait(() => document.querySelector('[aria-label="开启桌面歌词"]'), '同步原生窗口关闭态');

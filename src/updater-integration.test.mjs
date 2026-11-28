@@ -40,7 +40,7 @@ let nextCheckHandler = ({ source }) => ({
 });
 
 let downloadHandler = async () => {
-  const emitProgress = listeners.get('prism:app-update-progress');
+  const emitProgress = listeners.get('vesper:app-update-progress');
   emitProgress?.({
     payload: {
       version: '1.2.0',
@@ -134,7 +134,7 @@ try {
     () =>
       countCmd('app_update_config_get') >= 1 &&
       countCmd('app_update_check') >= 1 &&
-      listeners.has('prism:app-update-progress'),
+      listeners.has('vesper:app-update-progress'),
     '启动静默检查完成'
   );
   await new Promise(r => setTimeout(r, 40));
@@ -219,7 +219,7 @@ try {
   // 4. 点击立即更新 -> 后台进度推送 -> 完成后点击重启并安装
   let resolveDownload;
   downloadHandler = async () => {
-    const emitProgress = listeners.get('prism:app-update-progress');
+    const emitProgress = listeners.get('vesper:app-update-progress');
     emitProgress?.({
       payload: {
         version: '1.2.0',

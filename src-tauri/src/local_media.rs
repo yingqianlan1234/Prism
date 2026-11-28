@@ -17,9 +17,9 @@ pub(crate) use self::windows::*;
 
 pub(crate) fn stream_url(token: &str) -> String {
     #[cfg(windows)]
-    let origin = "http://prismlocal.localhost";
+    let origin = "http://vesperlocal.localhost";
     #[cfg(target_os = "macos")]
-    let origin = "prismlocal://localhost";
+    let origin = "vesperlocal://localhost";
     format!("{origin}/{token}")
 }
 

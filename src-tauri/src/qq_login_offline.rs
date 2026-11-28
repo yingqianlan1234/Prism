@@ -1,7 +1,8 @@
 //! Offline QQ login model. No IPC or network is registered in this phase.
 #![allow(dead_code)]
 
-const SERVICE: &str = "xianyu.qqmusic";
+const SERVICE: &str = "vesper.qqmusic";
+const LEGACY_SERVICE: &str = "xianyu.qqmusic";
 const USER: &str = "session";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -121,12 +122,22 @@ impl CredentialStore for SystemCredentialStore {
             .map_err(|_| LoginError::Storage)
     }
     fn load(&self) -> Result<Option<Credential>, LoginError> {
-        match keyring::Entry::new(SERVICE, USER)
-            .map_err(|_| LoginError::Storage)?
-            .get_password()
-        {
+        let entry = keyring::Entry::new(SERVICE, USER).map_err(|_| LoginError::Storage)?;
+        match entry.get_password() {
             Ok(value) => Credential::new(value).map(Some),
-            Err(keyring::Error::NoEntry) => Ok(None),
+            Err(keyring::Error::NoEntry) => {
+                let legacy =
+                    keyring::Entry::new(LEGACY_SERVICE, USER).map_err(|_| LoginError::Storage)?;
+                match legacy.get_password() {
+                    Ok(value) => {
+                        let credential = Credential::new(value)?;
+                        let _ = entry.set_password(credential.expose());
+                        Ok(Some(credential))
+                    }
+                    Err(keyring::Error::NoEntry) => Ok(None),
+                    Err(_) => Err(LoginError::Storage),
+                }
+            }
             Err(_) => Err(LoginError::Storage),
         }
     }
@@ -135,7 +146,12 @@ impl CredentialStore for SystemCredentialStore {
             .map_err(|_| LoginError::Storage)?
             .delete_credential()
         {
-            Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
+            Ok(()) | Err(keyring::Error::NoEntry) => {
+                if let Ok(legacy) = keyring::Entry::new(LEGACY_SERVICE, USER) {
+                    let _ = legacy.delete_credential();
+                }
+                Ok(())
+            }
             Err(_) => Err(LoginError::Storage),
         }
     }
@@ -228,6 +244,6 @@ mod tests {
         s.clear().unwrap();
         assert!(s.load().unwrap().is_none());
         assert!(Credential::new(String::new()).is_err());
-        assert_ne!((SERVICE, USER), ("local.xianyu.music", "netease-session"));
+        assert_ne!((SERVICE, USER), ("app.vesper.music", "netease-session"));
     }
 }

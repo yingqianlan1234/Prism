@@ -24,7 +24,7 @@ use crate::{
 };
 
 const GITHUB_LATEST_JSON_URL: &str =
-    "https://github.com/yingqianlan1234/Prism/releases/latest/download/latest.json";
+    "https://github.com/yingqianlan1234/Vesper/releases/latest/download/latest.json";
 const DEFAULT_MIRROR_PREFIX: &str = "https://gh-proxy.com/";
 const SETTINGS_LIMIT: usize = 4096;
 const MIRROR_LIMIT: usize = 256;
@@ -520,7 +520,7 @@ pub(crate) async fn app_update_download(
     let mut last_emit = None::<Instant>;
     let emit_progress = |downloaded, total| {
         let _ = window.emit(
-            "prism:app-update-progress",
+            "vesper:app-update-progress",
             json!({
                 "version": update.version,
                 "downloadedBytes": downloaded,
@@ -593,7 +593,7 @@ mod tests {
     use super::*;
 
     const ARTIFACT: &str =
-        "https://github.com/yingqianlan1234/Prism/releases/download/v1.2.0/Vesper.exe";
+        "https://github.com/yingqianlan1234/Vesper/releases/download/v1.2.0/Vesper.exe";
 
     #[test]
     fn mirror_prefix_normalizes_https_paths_and_templates() {

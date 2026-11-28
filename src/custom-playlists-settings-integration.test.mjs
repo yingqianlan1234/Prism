@@ -4,8 +4,8 @@ import { pathToFileURL } from 'node:url';
 import assert from 'node:assert/strict';
 
 const macos = process.argv.includes('--macos');
-const localMediaOrigin = macos ? 'prismlocal://localhost' : 'http://prismlocal.localhost';
-const qqMediaOrigin = macos ? 'prismmedia://localhost' : 'http://prismmedia.localhost';
+const localMediaOrigin = macos ? 'vesperlocal://localhost' : 'http://vesperlocal.localhost';
+const qqMediaOrigin = macos ? 'vespermedia://localhost' : 'http://vespermedia.localhost';
 const dom = new JSDOM('<div id="root"></div>', { url: 'http://localhost' });
 globalThis.window = dom.window;
 globalThis.document = dom.window.document;

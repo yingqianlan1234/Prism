@@ -273,7 +273,7 @@ export function useUpdater({ canAppUpdater, desktop, errorText, beforeInstall })
 
     import('@tauri-apps/api/event')
       .then(async ({ listen }) => {
-        const eventName = desktop?.events?.updateProgress || 'prism:app-update-progress';
+        const eventName = desktop?.events?.updateProgress || 'vesper:app-update-progress';
         const un = await listen(eventName, e => {
           if (!active || !e?.payload) return;
           const payload = e.payload;

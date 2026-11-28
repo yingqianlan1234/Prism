@@ -21,9 +21,9 @@ test('macOS 保留三个音乐来源，Windows 桌面能力随宿主关闭',()=>
 
 test('QQ 播放回滚只接受 Windows 和 macOS 的本地媒体句柄',()=>{
  const handle='a'.repeat(40);
- assert.equal(qqLocalHandle(`http://prismmedia.localhost/${handle}`),handle);
- assert.equal(qqLocalHandle(`prismmedia://localhost/${handle}`),handle);
- for(const url of [`prismmedia://example.com/${handle}`,`prismmedia://localhost/${handle}?token=x`,`http://prismmedia.localhost:8000/${handle}`]){
+ assert.equal(qqLocalHandle(`http://vespermedia.localhost/${handle}`),handle);
+ assert.equal(qqLocalHandle(`vespermedia://localhost/${handle}`),handle);
+ for(const url of [`vespermedia://example.com/${handle}`,`vespermedia://localhost/${handle}?token=x`,`http://vespermedia.localhost:8000/${handle}`]){
   assert.equal(qqLocalHandle(url),null);
  }
 });
@@ -141,13 +141,13 @@ test('QQ 实际 mock 所有能力均不访问网络、IPC、Worker 或浏览器�
 test('Release 构建配置使用静态前端且未配置 Node 后台服务（静态检查）',async()=>{
  const config=JSON.parse(await readFile('src-tauri/tauri.conf.json','utf8'));
  const pkg=JSON.parse(await readFile('package.json','utf8'));
- assert.equal(config.productName,'Vesper');assert.equal(config.mainBinaryName,'Vesper');assert.equal(config.identifier,'local.xianyu.music');
+ assert.equal(config.productName,'Vesper');assert.equal(config.mainBinaryName,'Vesper');assert.equal(config.identifier,'app.vesper.music');
  assert.equal(config.build.frontendDist,'../dist');
  assert.equal(config.build.beforeBuildCommand,'npm run build');
  assert.equal(config.bundle.externalBin,undefined);
  assert(!Object.keys(pkg.dependencies).some(x=>/netease|concurrently|express/.test(x)));
  const rust=await readFile('src-tauri/src/main.rs','utf8');
- assert(rust.includes('keyring::Entry::new("local.xianyu.music", "netease-session")'));
+ assert(rust.includes('keyring::Entry::new("app.vesper.music", "netease-session")'));
  assert(!/Command::new\s*\(\s*"(?:node|npm|npx)|\.sidecar\s*\(/.test(rust));
 });
 
@@ -188,7 +188,7 @@ test('桌面功能能力位、事件名与 P2-A IPC 命令参数映射正确',as
  assert.deepEqual(capabilities.desktop,{globalShortcuts:true,desktopLyric:true,appUpdater:true,autostart:false,customPlaylistsStorage:false});
  assert(Object.isFrozen(capabilities.desktop));
  assert.equal(desktop.capabilities,capabilities.desktop);
- assert.deepEqual(desktop.events,{globalShortcut:'prism:global-shortcut',desktopLyricState:'prism:desktop-lyric-state',updateProgress:'prism:app-update-progress'});
+ assert.deepEqual(desktop.events,{globalShortcut:'vesper:global-shortcut',desktopLyricState:'vesper:desktop-lyric-state',updateProgress:'vesper:app-update-progress'});
  assert(Object.isFrozen(desktop.events));
  await desktop.globalShortcutsGet();
  assert.deepEqual(calls.at(-1),{command:'global_shortcuts_get',args:{}});

@@ -263,7 +263,7 @@ const ANIMATION_MS: f32 = 140.0;
 const TIMER: usize = 1;
 const LOCK_PROBE_TIMER: usize = 2;
 const UNLOCK_HIDE_DELAY: Duration = Duration::from_millis(260);
-const UNLOCK_CLASS: PCWSTR = w!("Prism.DesktopLyric.Unlock");
+const UNLOCK_CLASS: PCWSTR = w!("Vesper.DesktopLyric.Unlock");
 const MOUSE_LEFT_DOWN: usize = 0x0001;
 const WM_MOUSELEAVE: u32 = 0x02a3;
 const TOOLBAR_HEIGHT: i32 = 32;
@@ -428,7 +428,7 @@ pub(crate) fn shutdown() {
 
 fn publish() {
     if let Ok((app, status)) = state(|overlay| (overlay.app.clone(), overlay.status())) {
-        let _ = app.emit_to("main", "prism:desktop-lyric-state", status);
+        let _ = app.emit_to("main", "vesper:desktop-lyric-state", status);
     }
 }
 
@@ -495,7 +495,7 @@ fn create(main: HWND, locked: bool) -> Result<()> {
             .map_err(|_| err("unavailable", "无法初始化桌面歌词"))?
             .0,
     );
-    let class = w!("Prism.DesktopLyric");
+    let class = w!("Vesper.DesktopLyric");
     let (registered, saved, style, height) = state(|overlay| {
         (
             overlay.class_registered,
@@ -1359,7 +1359,7 @@ fn activate(hwnd: HWND, button: Button) -> Result<()> {
         let app = state(|overlay| overlay.app.clone())?;
         let _ = app.emit_to(
             "main",
-            "prism:global-shortcut",
+            "vesper:global-shortcut",
             serde_json::json!({ "action": action }),
         );
         return Ok(());
@@ -1992,7 +1992,7 @@ mod tests {
     #[test]
     fn native_window_is_nonactivating_and_switches_hit_testing() {
         let instance = HINSTANCE(unsafe { GetModuleHandleW(None) }.unwrap().0);
-        let class = w!("Prism.DesktopLyric.Test");
+        let class = w!("Vesper.DesktopLyric.Test");
         let window_class = WNDCLASSW {
             lpfnWndProc: Some(window_proc),
             hInstance: instance,
@@ -2007,7 +2007,7 @@ mod tests {
         let frame = renderer
             .render(
                 &Content {
-                    text: "夜间电台 · Prism".into(),
+                    text: "夜间电台 · Vesper".into(),
                     ..Default::default()
                 },
                 LyricStyle::default(),

@@ -171,7 +171,7 @@ unsafe extern "system" fn window_proc(
         if let Some((app, action)) = notification {
             let _ = app.emit_to(
                 "main",
-                "prism:global-shortcut",
+                "vesper:global-shortcut",
                 serde_json::json!({ "action": action }),
             );
             return LRESULT(0);

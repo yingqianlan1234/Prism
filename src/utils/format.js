@@ -23,8 +23,8 @@ export const lyricalLines = arr =>
 export const qqLocalHandle = src => {
   try {
     const u = new URL(src);
-    const isMediaOrigin = (u.protocol === 'http:' && u.hostname === 'prismmedia.localhost') ||
-      (u.protocol === 'prismmedia:' && u.hostname === 'localhost');
+    const isMediaOrigin = (u.protocol === 'http:' && u.hostname === 'vespermedia.localhost') ||
+      (u.protocol === 'vespermedia:' && u.hostname === 'localhost');
     return isMediaOrigin && !u.username && !u.password && !u.port &&
       !u.search &&
       !u.hash &&
@@ -49,12 +49,23 @@ export const accentFor = s => {
 };
 
 // 本地搜索历史：仅保存用户输入关键词，按平台隔离，最多保留 8 条。
-const HISTORY_KEY_PREFIX = 'prism.searchHistory.';
+const HISTORY_KEY_PREFIX = 'vesper.searchHistory.';
+const LEGACY_HISTORY_KEY_PREFIX = 'prism.searchHistory.';
 const MAX_HISTORY = 8;
 
 export function loadSearchHistory(provider) {
   try {
-    const raw = globalThis.localStorage?.getItem(HISTORY_KEY_PREFIX + provider);
+    let raw = globalThis.localStorage?.getItem(HISTORY_KEY_PREFIX + provider);
+    if (raw == null) {
+      const legacy = globalThis.localStorage?.getItem(LEGACY_HISTORY_KEY_PREFIX + provider);
+      if (legacy != null) {
+        raw = legacy;
+        try {
+          globalThis.localStorage?.setItem(HISTORY_KEY_PREFIX + provider, legacy);
+          globalThis.localStorage?.removeItem(LEGACY_HISTORY_KEY_PREFIX + provider);
+        } catch {}
+      }
+    }
     const parsed = raw ? JSON.parse(raw) : [];
     return Array.isArray(parsed)
       ? parsed.filter(item => typeof item === 'string' && item.trim()).slice(0, MAX_HISTORY)
@@ -88,6 +99,7 @@ export function removeSearchHistory(provider, term) {
 export function clearSearchHistory(provider) {
   try {
     globalThis.localStorage?.removeItem(HISTORY_KEY_PREFIX + provider);
+    globalThis.localStorage?.removeItem(LEGACY_HISTORY_KEY_PREFIX + provider);
   } catch {}
   return [];
 }
@@ -107,12 +119,23 @@ export const QUALITY_LABELS = Object.freeze({
   hires: 'Hi-Res',
 });
 
-const QUALITY_STORAGE_KEY = 'prism.netease.quality';
+const QUALITY_STORAGE_KEY = 'vesper.netease.quality';
+const LEGACY_QUALITY_STORAGE_KEY = 'prism.netease.quality';
 const VALID_QUALITIES = new Set(NETEASE_QUALITIES.map(q => q.id));
 
 export function loadNeteaseQuality() {
   try {
-    const raw = globalThis.localStorage?.getItem(QUALITY_STORAGE_KEY);
+    let raw = globalThis.localStorage?.getItem(QUALITY_STORAGE_KEY);
+    if (!VALID_QUALITIES.has(raw)) {
+      const legacy = globalThis.localStorage?.getItem(LEGACY_QUALITY_STORAGE_KEY);
+      if (VALID_QUALITIES.has(legacy)) {
+        raw = legacy;
+        try {
+          globalThis.localStorage?.setItem(QUALITY_STORAGE_KEY, legacy);
+          globalThis.localStorage?.removeItem(LEGACY_QUALITY_STORAGE_KEY);
+        } catch {}
+      }
+    }
     return VALID_QUALITIES.has(raw) ? raw : 'standard';
   } catch {
     return 'standard';

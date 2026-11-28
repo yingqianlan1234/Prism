@@ -24,7 +24,7 @@ npx tauri signer generate -w "$HOME\.tauri\vesper.key"
 "plugins": {
   "updater": {
     "endpoints": [
-      "https://github.com/yingqianlan1234/Prism/releases/latest/download/latest.json"
+      "https://github.com/yingqianlan1234/Vesper/releases/latest/download/latest.json"
     ],
     "pubkey": "这里粘贴你生成的公钥",
     "windows": {

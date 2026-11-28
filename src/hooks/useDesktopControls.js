@@ -235,7 +235,7 @@ export function useDesktopControls({
       .catch(() => {});
     import('@tauri-apps/api/event')
       .then(async ({ listen }) => {
-        const a = await listen('prism-close-choice', () => {
+        const a = await listen('vesper-close-choice', () => {
           if (active) {
             setCloseError('');
             setCloseDialog('close');
@@ -246,7 +246,7 @@ export function useDesktopControls({
           return;
         }
         offs.push(a);
-        const b = await listen('prism-close-error', e => {
+        const b = await listen('vesper-close-error', e => {
           if (active) {
             setCloseError(e.payload || '无法转入后台');
             setCloseDialog('close');
@@ -257,7 +257,7 @@ export function useDesktopControls({
           return;
         }
         offs.push(b);
-        const c = await listen('prism-tray-exit', async () => {
+        const c = await listen('vesper-tray-exit', async () => {
           try {
             await beforeExitRef.current?.();
           } catch {}
@@ -352,7 +352,7 @@ export function useDesktopControls({
     import('@tauri-apps/api/event')
       .then(async ({ listen }) => {
         if (canGlobalShortcuts) {
-          const eventName = desktop?.events?.globalShortcut || 'prism:global-shortcut';
+          const eventName = desktop?.events?.globalShortcut || 'vesper:global-shortcut';
           const unShortcut = await listen(eventName, e => {
             if (!active) return;
             const action = e?.payload?.action;
@@ -364,7 +364,7 @@ export function useDesktopControls({
           else offs.push(unShortcut);
         }
         if (canDesktopLyric) {
-          const eventName = desktop?.events?.desktopLyricState || 'prism:desktop-lyric-state';
+          const eventName = desktop?.events?.desktopLyricState || 'vesper:desktop-lyric-state';
           const unLyric = await listen(eventName, e => {
             if (!active || !e?.payload || typeof e.payload.enabled !== 'boolean') return;
             const next = normalizeDesktopLyricState(e.payload, desktopLyricRef.current);

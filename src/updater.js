@@ -101,7 +101,7 @@ export function validateMirrorPrefix(raw) {
     return { valid: false, normalized: '', error: '自定义镜像地址必须以 https:// 开头' };
   }
   const sample = trimmed.includes('{url}')
-    ? trimmed.replaceAll('{url}', 'https://github.com/yingqianlan1234/Prism/releases/latest/download/latest.json')
+    ? trimmed.replaceAll('{url}', 'https://github.com/yingqianlan1234/Vesper/releases/latest/download/latest.json')
     : trimmed;
   let parsed;
   try {

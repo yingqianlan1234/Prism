@@ -1478,9 +1478,9 @@ pub async fn qq_web_resolve(
         }
     }
     #[cfg(windows)]
-    let origin = "http://prismmedia.localhost";
+    let origin = "http://vespermedia.localhost";
     #[cfg(target_os = "macos")]
-    let origin = "prismmedia://localhost";
+    let origin = "vespermedia://localhost";
     Ok(json!({"data":[{"code":200,"url":format!("{origin}/{handle}")}] }))
 }
 fn bounded_range(value: Option<&str>) -> Result<(u64, u64)> {

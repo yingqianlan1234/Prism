@@ -99,7 +99,7 @@ fn quit(app: &AppHandle) {
     }
     let emitted = app
         .get_webview_window("main")
-        .is_some_and(|w| w.emit("prism-tray-exit", ()).is_ok());
+        .is_some_and(|w| w.emit("vesper-tray-exit", ()).is_ok());
     if !emitted {
         state.quit_pending.store(false, Ordering::SeqCst);
         force_quit(app);
@@ -135,7 +135,7 @@ pub(crate) fn restore_close_behavior_after_update_error(app: &AppHandle) {
 fn emit_playback_action(app: &AppHandle, action: &str) {
     let _ = app.emit_to(
         "main",
-        "prism:global-shortcut",
+        "vesper:global-shortcut",
         serde_json::json!({ "action": action }),
     );
 }
@@ -158,27 +158,27 @@ pub(crate) fn install(app: &mut App) {
     let tray = (|| -> tauri::Result<_> {
         let playback = MenuItem::with_id(
             app,
-            "prism_play_toggle",
+            "vesper_play_toggle",
             DEFAULT_PLAYBACK_LABEL,
             true,
             None::<&str>,
         )?;
-        let previous = MenuItem::with_id(app, "prism_prev", "上一首", true, None::<&str>)?;
-        let next = MenuItem::with_id(app, "prism_next", "下一首", true, None::<&str>)?;
+        let previous = MenuItem::with_id(app, "vesper_prev", "上一首", true, None::<&str>)?;
+        let next = MenuItem::with_id(app, "vesper_next", "下一首", true, None::<&str>)?;
         let playback_separator = PredefinedMenuItem::separator(app)?;
         let exit_separator = PredefinedMenuItem::separator(app)?;
-        let open = MenuItem::with_id(app, "prism_open", "打开 Vesper", true, None::<&str>)?;
-        let exit = MenuItem::with_id(app, "prism_exit", "退出 Vesper", true, None::<&str>)?;
+        let open = MenuItem::with_id(app, "vesper_open", "打开 Vesper", true, None::<&str>)?;
+        let exit = MenuItem::with_id(app, "vesper_exit", "退出 Vesper", true, None::<&str>)?;
         let lyric = MenuItem::with_id(
             app,
-            "prism_lyric_toggle",
+            "vesper_lyric_toggle",
             "显示/隐藏桌面歌词",
             true,
             None::<&str>,
         )?;
         let lock = MenuItem::with_id(
             app,
-            "prism_lyric_lock",
+            "vesper_lyric_lock",
             "锁定/解锁桌面歌词",
             true,
             None::<&str>,
@@ -198,19 +198,19 @@ pub(crate) fn install(app: &mut App) {
             ],
         )?;
         let icon = tauri::image::Image::from_bytes(include_bytes!("../icons/window-icon.png"))?;
-        let icon = TrayIconBuilder::with_id("prism_tray")
+        let icon = TrayIconBuilder::with_id("vesper_tray")
             .icon(icon)
             .tooltip(DEFAULT_TOOLTIP)
             .menu(&menu)
             .show_menu_on_left_click(false)
             .on_menu_event(|app, event| match event.id().as_ref() {
-                "prism_play_toggle" => emit_playback_action(app, "togglePlayback"),
-                "prism_prev" => emit_playback_action(app, "prevTrack"),
-                "prism_next" => emit_playback_action(app, "nextTrack"),
-                "prism_open" => restore(app),
-                "prism_exit" => quit(app),
-                "prism_lyric_toggle" => crate::desktop_lyric::toggle_from_tray(app, false),
-                "prism_lyric_lock" => crate::desktop_lyric::toggle_from_tray(app, true),
+                "vesper_play_toggle" => emit_playback_action(app, "togglePlayback"),
+                "vesper_prev" => emit_playback_action(app, "prevTrack"),
+                "vesper_next" => emit_playback_action(app, "nextTrack"),
+                "vesper_open" => restore(app),
+                "vesper_exit" => quit(app),
+                "vesper_lyric_toggle" => crate::desktop_lyric::toggle_from_tray(app, false),
+                "vesper_lyric_lock" => crate::desktop_lyric::toggle_from_tray(app, true),
                 _ => {}
             })
             .on_tray_icon_event(|tray, event| {
@@ -248,12 +248,12 @@ pub(crate) fn install(app: &mut App) {
                         state.user_hidden.store(true, Ordering::SeqCst);
                         if w.hide().is_err() {
                             state.user_hidden.store(false, Ordering::SeqCst);
-                            let _ = w.emit("prism-close-error", "无法转入后台，请重试");
+                            let _ = w.emit("vesper-close-error", "无法转入后台，请重试");
                         }
                     }
                     CloseAction::Ask => {
                         api.prevent_close();
-                        let _ = w.emit("prism-close-choice", ());
+                        let _ = w.emit("vesper-close-choice", ());
                     }
                 }
             }

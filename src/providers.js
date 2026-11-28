@@ -57,7 +57,7 @@ export const desktop = Object.freeze({
  customPlaylistsSave:data=>invoke('custom_playlists_save',{data}),
  autostartGet:()=>invoke('autostart_get'),
  autostartSet:enabled=>invoke('autostart_set',{enabled}),
- events:Object.freeze({globalShortcut:'prism:global-shortcut',desktopLyricState:'prism:desktop-lyric-state',updateProgress:'prism:app-update-progress'})
+ events:Object.freeze({globalShortcut:'vesper:global-shortcut',desktopLyricState:'vesper:desktop-lyric-state',updateProgress:'vesper:app-update-progress'})
 });
 export const platformFlavor=Object.freeze({netease:'netease',qqmusic:'community'});
 export const recommendationCapabilities=Object.freeze({

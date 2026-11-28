@@ -108,7 +108,7 @@ window.__TAURI_INTERNALS__ = {
         };
       }
       case 'local_track_resolve':
-        return { url: `prismlocal://localhost/${args.id}.flac`, contentType: 'audio/flac' };
+        return { url: `vesperlocal://localhost/${args.id}.flac`, contentType: 'audio/flac' };
       case 'local_track_lyric':
         if (args.id === 'loc-1') return '[00:10.00]窗外雨滴落下来\n[00:50.00]耳机里正播到半夜';
         return null;
@@ -170,7 +170,7 @@ try {
 
   const audio = document.querySelector('audio');
   document.querySelector('.play-toggle').click();
-  await wait(() => audio.src === 'prismlocal://localhost/loc-1.flac' && !paused, '点击播放恢复的本地歌曲');
+  await wait(() => audio.src === 'vesperlocal://localhost/loc-1.flac' && !paused, '点击播放恢复的本地歌曲');
   audio.dispatchEvent(new Event('loadedmetadata'));
   await wait(() => Math.round(audio.currentTime) === 42, '恢复位置跳至 42 秒');
 

@@ -16,7 +16,7 @@ for(const name of ['MutationObserver','HTMLElement','Event'])globalThis[name]=do
 const deferred=()=>{let resolve,reject;const promise=new Promise((a,b)=>{resolve=a;reject=b});return {promise,resolve,reject};};
 const pendingB=deferred(),pendingC=deferred();let bRequested=false,cRequests=0,playingStream=null,candidateStream=null,playCount=0;
 const track=(id,name)=>({id,name,artists:[{name:'合成歌手'}],album:{name:'合成专辑'},duration:120000});
-const qqa='http://prismmedia.localhost/SYNTHETICA',qqb='http://prismmedia.localhost/SYNTHETICB',netease='https://example.invalid/synthetic-c';
+const qqa='http://vespermedia.localhost/SYNTHETICA',qqb='http://vespermedia.localhost/SYNTHETICB',netease='https://example.invalid/synthetic-c';
 // Simulate the Rust boundary: resolving a new QQ URL only creates a candidate.
 // The candidate becomes the playing stream only when the shared audio selects it.
 const srcProperty=Object.getOwnPropertyDescriptor(dom.window.HTMLMediaElement.prototype,'src');

@@ -85,8 +85,17 @@ struct App {
     session: Mutex<Session>,
 }
 fn entry() -> Result<keyring::Entry> {
+    keyring::Entry::new("app.vesper.music", "netease-session")
+        .map_err(|_| err("storage", "系统凭据存储不可用"))
+}
+fn legacy_entry() -> Result<keyring::Entry> {
     keyring::Entry::new("local.xianyu.music", "netease-session")
         .map_err(|_| err("storage", "系统凭据存储不可用"))
+}
+fn has_netease_session(cookie: &str) -> bool {
+    cookie
+        .split("; ")
+        .any(|value| value.starts_with("MUSIC_U=") && value.len() > 8)
 }
 fn prepare_weapi_data(mut data: Value) -> Value {
     if data.get("csrf_token").is_none() {
@@ -563,10 +572,7 @@ async fn netease_qr_check(app: State<'_, App>) -> Result<Value> {
         return Ok(json!({"code":code}));
     }
     let cookie = cookie
-        .filter(|c| {
-            c.split("; ")
-                .any(|v| v.starts_with("MUSIC_U=") && v.len() > 8)
-        })
+        .filter(|cookie| has_netease_session(cookie))
         .ok_or(err("auth", "登录未返回有效凭据"))?;
     let profile = app
         .request_raw("nuser/account/get", json!({}), Some(&cookie), false)
@@ -713,6 +719,9 @@ async fn netease_logout(app: State<'_, App>) -> Result<Value> {
         Ok(()) | Err(keyring::Error::NoEntry) => {}
         Err(_) => return Err(err("storage", "无法删除系统凭据")),
     };
+    if let Ok(legacy) = legacy_entry() {
+        let _ = legacy.delete_credential();
+    }
     s.generation += 1;
     s.qr = None;
     s.storage_error = false;
@@ -746,10 +755,45 @@ fn focus_main_window(app: &tauri::AppHandle) {
     }
 }
 
+fn migrate_legacy_app_data_dir(legacy_dir: &std::path::Path, new_dir: &std::path::Path) {
+    let marker = new_dir.join(".migrated-from-legacy");
+    if !legacy_dir.is_dir() || marker.exists() {
+        return;
+    }
+    if std::fs::create_dir_all(new_dir).is_err() {
+        return;
+    }
+    let Ok(entries) = std::fs::read_dir(legacy_dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let source = entry.path();
+        if !entry.file_type().is_ok_and(|kind| kind.is_file())
+            || source.extension() != Some(std::ffi::OsStr::new("json"))
+        {
+            continue;
+        }
+        let target = new_dir.join(entry.file_name());
+        if std::fs::symlink_metadata(&target)
+            .is_err_and(|error| error.kind() == std::io::ErrorKind::NotFound)
+        {
+            let _ = std::fs::copy(source, target);
+        }
+    }
+    let _ = std::fs::write(marker, []);
+}
+
 fn main() {
     let cookie = entry().and_then(|entry| match entry.get_password() {
         Ok(value) => Ok(Some(value)),
-        Err(keyring::Error::NoEntry) => Ok(None),
+        Err(keyring::Error::NoEntry) => match legacy_entry()?.get_password() {
+            Ok(cookie) if has_netease_session(&cookie) => {
+                let _ = entry.set_password(&cookie);
+                Ok(Some(cookie))
+            }
+            Ok(_) | Err(keyring::Error::NoEntry) => Ok(None),
+            Err(_) => Err(err("storage", "无法读取系统凭据")),
+        },
         Err(_) => Err(err("storage", "无法读取系统凭据")),
     });
     let (cookie, storage_error) = match cookie {
@@ -770,7 +814,7 @@ fn main() {
     let builder = builder.plugin(tauri_plugin_dialog::init());
     #[cfg(any(windows, target_os = "macos"))]
     let builder = builder
-        .register_asynchronous_uri_scheme_protocol("prismmedia", |ctx, request, responder| {
+        .register_asynchronous_uri_scheme_protocol("vespermedia", |ctx, request, responder| {
             use tauri::http::{header, Method, Response};
             let forbidden = || Response::builder().status(403).body(Vec::new()).unwrap();
             if ctx.webview_label() != "main" || request.method() != Method::GET {
@@ -793,6 +837,11 @@ fn main() {
         .manage(qq_web_auth::QqWebAuth::new());
     builder
         .setup(|app| {
+            if let Ok(new_dir) = app.path().app_data_dir() {
+                if let Some(legacy_dir) = new_dir.parent().map(|p| p.join("local.xianyu.music")) {
+                    migrate_legacy_app_data_dir(&legacy_dir, &new_dir);
+                }
+            }
             #[cfg(windows)]
             updater::install(app);
             window_state::install(app);
@@ -818,7 +867,7 @@ fn main() {
             }
             Ok(())
         })
-        .register_asynchronous_uri_scheme_protocol("prismlocal", local_library::protocol)
+        .register_asynchronous_uri_scheme_protocol("vesperlocal", local_library::protocol)
         .manage(App {
             client,
             session: Mutex::new(Session {
@@ -934,6 +983,52 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn legacy_app_data_migration_copies_only_missing_top_level_json_once() {
+        use std::fs;
+
+        let root = std::env::temp_dir().join(format!(
+            "vesper-migration-test-{:016x}",
+            rand::random::<u64>()
+        ));
+        let legacy = root.join("local.xianyu.music");
+        let new = root.join("app.vesper.music");
+        fs::create_dir(&root).unwrap();
+        fs::create_dir_all(legacy.join("subdir")).unwrap();
+        fs::create_dir(&new).unwrap();
+        fs::write(legacy.join("copy.json"), "{}").unwrap();
+        fs::write(legacy.join("existing.json"), "[]").unwrap();
+        fs::write(legacy.join("ignore.txt"), "text").unwrap();
+        fs::write(legacy.join("subdir/nested.json"), "{}").unwrap();
+        fs::write(new.join("existing.json"), "[1]").unwrap();
+
+        migrate_legacy_app_data_dir(&legacy, &new);
+
+        assert_eq!(fs::read_to_string(new.join("copy.json")).unwrap(), "{}");
+        assert_eq!(
+            fs::read_to_string(new.join("existing.json")).unwrap(),
+            "[1]"
+        );
+        assert_eq!(
+            fs::read_to_string(legacy.join("existing.json")).unwrap(),
+            "[]"
+        );
+        assert!(!new.join("ignore.txt").exists());
+        assert!(!new.join("subdir").exists());
+        assert!(!new.join("nested.json").exists());
+        assert!(fs::read(new.join(".migrated-from-legacy"))
+            .unwrap()
+            .is_empty());
+
+        fs::write(new.join("copy.json"), "[2]").unwrap();
+        fs::write(legacy.join("late.json"), "{}").unwrap();
+        migrate_legacy_app_data_dir(&legacy, &new);
+
+        assert_eq!(fs::read_to_string(new.join("copy.json")).unwrap(), "[2]");
+        assert!(!new.join("late.json").exists());
+        fs::remove_dir_all(root).unwrap();
+    }
+
     #[test]
     fn playlist_pages_are_bounded_and_validate_ids() {
         let ids: Vec<Value> = (1..=250).map(|id| json!({"id":id})).collect();

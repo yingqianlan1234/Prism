@@ -39,7 +39,7 @@
 
 ## 下载与安装（Windows 10 / 11 x64）
 
-前往 [GitHub Releases 最新版本](https://github.com/yingqianlan1234/Prism/releases/latest) 下载对应文件：
+前往 [GitHub Releases 最新版本](https://github.com/yingqianlan1234/Vesper/releases/latest) 下载对应文件：
 
 | 安装形态 | 说明 |
 | :--- | :--- |
