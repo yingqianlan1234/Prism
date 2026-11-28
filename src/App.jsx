@@ -1619,7 +1619,7 @@ export function App({
           }}
           canFeedback={canFeedback}
           feedbackContext={{
-            appVersion: updateConfig?.currentVersion || '1.2.0',
+            appVersion: updateConfig?.currentVersion || '1.3.0',
             activeProvider,
             neteaseQuality,
             qqQuality,

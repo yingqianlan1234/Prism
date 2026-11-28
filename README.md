@@ -43,8 +43,8 @@
 
 | 安装形态 | 说明 |
 | :--- | :--- |
-| **`Vesper_1.2.0_x64-setup.exe`** | **推荐**：NSIS 简体中文安装向导（当前用户安装，支持完整安装与卸载） |
-| **`Vesper_1.2.0_x64_en-US.msi`** | 标准 Windows MSI 安装包 |
+| **`Vesper_1.3.0_x64-setup.exe`** | **推荐**：NSIS 简体中文安装向导（当前用户安装，支持完整安装与卸载） |
+| **`Vesper_1.3.0_x64_en-US.msi`** | 标准 Windows MSI 安装包 |
 
 > **使用提示**
 > - 需要 Windows 10 / 11（64 位）及系统自带 WebView2 Runtime。
