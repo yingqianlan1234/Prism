@@ -1,6 +1,7 @@
 import React, { memo, useEffect, useRef, useState } from 'react';
 import {
   NETEASE_QUALITIES,
+  QQ_QUALITIES,
   QUALITY_LABELS,
   SHORTCUT_MODIFIERS,
   SHORTCUT_KEY_GROUPS,
@@ -18,6 +19,14 @@ import {
   validateMirrorPrefix,
 } from '../updater.js';
 import { AMBIENT_LEVELS, THEME_PRESETS } from '../theme-prefs.js';
+import {
+  FEEDBACK_CATEGORIES,
+  FEEDBACK_LIMITS,
+  charLength,
+  validateFeedbackDraft,
+  formatFeedbackEnvLines,
+  buildFeedbackCopyText,
+} from '../feedback.js';
 import { Icon } from './Icons.jsx';
 
 const PLAYBACK_RATES = [0.75, 1, 1.25, 1.5, 2];
@@ -82,9 +91,13 @@ export const SettingsPage = memo(function SettingsPage({
   canSelectQuality,
   neteaseQuality,
   onChangeQuality,
+  canSelectQqQuality,
+  qqQuality,
+  onChangeQqQuality,
   song,
   trackQuality,
   onReloadWithQuality,
+  onReloadQqWithQuality,
   audioPrefs,
   onToggleSmoothFadeIn,
   onToggleAutoOpenStage,
@@ -122,6 +135,10 @@ export const SettingsPage = memo(function SettingsPage({
   onSaveMirror,
   onToggleAutoCheck,
   onSwitchSourceAndRetry,
+  // 问题反馈
+  canFeedback,
+  feedbackContext,
+  onSubmitFeedback,
 }) {
   const sections = [
     { id: 'general', label: '常规与数据', icon: 'collection' },
@@ -130,6 +147,7 @@ export const SettingsPage = memo(function SettingsPage({
     ...(canDesktopLyric ? [{ id: 'lyric', label: '桌面歌词', icon: 'desktopLyric' }] : []),
     ...(canGlobalShortcuts ? [{ id: 'shortcuts', label: '全局快捷键', icon: 'keyboard' }] : []),
     ...(canAppUpdater ? [{ id: 'updater', label: '更新与关于', icon: 'update' }] : []),
+    { id: 'feedback', label: '问题反馈', icon: 'feedback' },
   ];
   const currentSection = sections.some(s => s.id === activeSection) ? activeSection : 'general';
 
@@ -219,6 +237,101 @@ export const SettingsPage = memo(function SettingsPage({
     song?.provider === 'netease' &&
     trackQuality?.level &&
     trackQuality.level !== neteaseQuality;
+  const canReloadQqQuality =
+    canSelectQqQuality &&
+    song?.provider === 'qqmusic' &&
+    trackQuality?.level &&
+    trackQuality.level !== qqQuality;
+
+  // 问题反馈表单状态
+  const [fbCategory, setFbCategory] = useState('bug');
+  const [fbTitle, setFbTitle] = useState('');
+  const [fbDesc, setFbDesc] = useState('');
+  const [fbContact, setFbContact] = useState('');
+  const [fbIncludeEnv, setFbIncludeEnv] = useState(true);
+  const [fbShowEnvPreview, setFbShowEnvPreview] = useState(false);
+  const [fbSubmitting, setFbSubmitting] = useState(false);
+  const [fbError, setFbError] = useState('');
+  const [fbSuccessIssue, setFbSuccessIssue] = useState(null);
+  const [fbCopied, setFbCopied] = useState(false);
+  const fbCopiedTimerRef = useRef(null);
+
+  useEffect(
+    () => () => {
+      if (fbCopiedTimerRef.current) clearTimeout(fbCopiedTimerRef.current);
+    },
+    []
+  );
+
+  const activeCategoryMeta =
+    FEEDBACK_CATEGORIES.find(c => c.id === fbCategory) || FEEDBACK_CATEGORIES[0];
+  const fbEnvLines = formatFeedbackEnvLines(feedbackContext);
+
+  const handleFeedbackSubmit = async e => {
+    e.preventDefault();
+    if (fbSubmitting) return;
+    setFbSuccessIssue(null);
+    const check = validateFeedbackDraft({
+      category: fbCategory,
+      title: fbTitle,
+      description: fbDesc,
+      contact: fbContact,
+    });
+    if (!check.valid) {
+      setFbError(check.error);
+      return;
+    }
+    if (!canFeedback || !onSubmitFeedback) {
+      setFbError('当前环境不支持直接发送反馈，请先点击「复制反馈内容」');
+      return;
+    }
+    setFbError('');
+    setFbSubmitting(true);
+    try {
+      const result = await onSubmitFeedback({
+        category: check.normalized.category,
+        title: check.normalized.title,
+        description: check.normalized.description,
+        contact: check.normalized.contact || null,
+        includeEnv: fbIncludeEnv,
+        context: fbIncludeEnv ? feedbackContext || null : null,
+      });
+      if (!result?.ok || !result?.issueNumber) {
+        setFbError('反馈服务返回状态异常，请稍后重试或复制反馈内容');
+        return;
+      }
+      setFbSuccessIssue(result.issueNumber);
+      setFbTitle('');
+      setFbDesc('');
+    } catch (err) {
+      setFbError(err?.message || '反馈提交失败，请检查网络或先复制反馈内容');
+    } finally {
+      setFbSubmitting(false);
+    }
+  };
+
+  const handleCopyFeedback = async () => {
+    const text = buildFeedbackCopyText({
+      category: fbCategory,
+      title: fbTitle,
+      description: fbDesc,
+      contact: fbContact,
+      includeEnv: fbIncludeEnv,
+      envLines: fbEnvLines,
+    });
+    try {
+      if (navigator?.clipboard?.writeText) {
+        await navigator.clipboard.writeText(text);
+      } else {
+        throw new Error('clipboard unavailable');
+      }
+      setFbCopied(true);
+      if (fbCopiedTimerRef.current) clearTimeout(fbCopiedTimerRef.current);
+      fbCopiedTimerRef.current = setTimeout(() => setFbCopied(false), 2000);
+    } catch {
+      setFbError('自动复制失败，请手动选中文本框内容复制');
+    }
+  };
 
   // 应用更新状态衍生
   const updPhase = updateState?.phase || 'idle';
@@ -608,6 +721,40 @@ export const SettingsPage = memo(function SettingsPage({
                       </div>
                       {canReloadQuality && (
                         <button type="button" className="nr-more-reload" onClick={onReloadWithQuality}>
+                          按当前音质重载本首
+                        </button>
+                      )}
+                    </div>
+                  )}
+
+                  {canSelectQqQuality && (
+                    <div className="nr-settings-field">
+                      <div className="nr-more-label-row">
+                        <span className="nr-more-label">QQ 音乐默认音质</span>
+                        {song?.provider === 'qqmusic' && trackQuality?.level && (
+                          <span className="nr-more-sub">
+                            当前播放：{QUALITY_LABELS[trackQuality.level] || trackQuality.level}
+                          </span>
+                        )}
+                      </div>
+                      <div className="nr-seg-pills" role="group" aria-label="设置页 QQ 音乐音质">
+                        {QQ_QUALITIES.map(q => (
+                          <button
+                            key={q.id}
+                            type="button"
+                            className={'nr-seg-btn' + (qqQuality === q.id ? ' is-on' : '')}
+                            aria-pressed={qqQuality === q.id}
+                            onClick={() => onChangeQqQuality?.(q.id)}
+                          >
+                            {q.label}
+                          </button>
+                        ))}
+                      </div>
+                      <p className="nr-settings-note">
+                        高品质与无损需要 QQ 音乐绿钻权限；不可用时将自动回退到可用音质。
+                      </p>
+                      {canReloadQqQuality && (
+                        <button type="button" className="nr-more-reload" onClick={onReloadQqWithQuality}>
                           按当前音质重载本首
                         </button>
                       )}
@@ -1127,6 +1274,189 @@ export const SettingsPage = memo(function SettingsPage({
                   )}
                 </div>
               </div>
+            </div>
+          )}
+
+          {currentSection === 'feedback' && (
+            <div className="nr-settings-panel" role="region" aria-label="问题反馈与建议">
+              <header className="nr-settings-head">
+                <h2>问题反馈与建议</h2>
+                <p>提交后会直接登记到 Vesper 问题清单，无需登录 GitHub 账号。</p>
+              </header>
+
+              <form className="nr-settings-card nr-feedback-form" onSubmit={handleFeedbackSubmit} noValidate>
+                <div className="nr-settings-field">
+                  <span className="nr-more-label">反馈类型</span>
+                  <div className="nr-seg-pills" role="group" aria-label="设置页反馈类型">
+                    {FEEDBACK_CATEGORIES.map(cat => (
+                      <button
+                        key={cat.id}
+                        type="button"
+                        className={'nr-seg-btn' + (fbCategory === cat.id ? ' is-on' : '')}
+                        aria-pressed={fbCategory === cat.id}
+                        disabled={fbSubmitting}
+                        onClick={() => {
+                          setFbCategory(cat.id);
+                          if (fbError) setFbError('');
+                        }}
+                      >
+                        {cat.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="nr-settings-field">
+                  <div className="nr-more-label-row">
+                    <label className="nr-more-label" htmlFor="nr-feedback-title">
+                      简短标题
+                    </label>
+                    <span className="nr-more-sub">
+                      {charLength(fbTitle)} / {FEEDBACK_LIMITS.TITLE_MAX}
+                    </span>
+                  </div>
+                  <input
+                    id="nr-feedback-title"
+                    type="text"
+                    className="nr-feedback-input"
+                    value={fbTitle}
+                    disabled={fbSubmitting}
+                    maxLength={FEEDBACK_LIMITS.TITLE_MAX}
+                    placeholder="用一句话概括问题或建议（2 - 80 字）"
+                    onChange={e => {
+                      setFbTitle(e.target.value);
+                      if (fbError) setFbError('');
+                      if (fbSuccessIssue != null) setFbSuccessIssue(null);
+                    }}
+                  />
+                </div>
+
+                <div className="nr-settings-field">
+                  <div className="nr-more-label-row">
+                    <label className="nr-more-label" htmlFor="nr-feedback-desc">
+                      详细描述
+                    </label>
+                    <span className="nr-more-sub">
+                      {charLength(fbDesc)} / {FEEDBACK_LIMITS.DESC_MAX}
+                    </span>
+                  </div>
+                  <textarea
+                    id="nr-feedback-desc"
+                    className="nr-feedback-textarea"
+                    rows={5}
+                    value={fbDesc}
+                    disabled={fbSubmitting}
+                    maxLength={FEEDBACK_LIMITS.DESC_MAX}
+                    placeholder={activeCategoryMeta.placeholder}
+                    onChange={e => {
+                      setFbDesc(e.target.value);
+                      if (fbError) setFbError('');
+                      if (fbSuccessIssue != null) setFbSuccessIssue(null);
+                    }}
+                  />
+                </div>
+
+                <div className="nr-settings-field">
+                  <div className="nr-more-label-row">
+                    <label className="nr-more-label" htmlFor="nr-feedback-contact">
+                      联系方式（选填）
+                    </label>
+                    <span className="nr-more-sub">
+                      {charLength(fbContact)} / {FEEDBACK_LIMITS.CONTACT_MAX}
+                    </span>
+                  </div>
+                  <input
+                    id="nr-feedback-contact"
+                    type="text"
+                    className="nr-feedback-input"
+                    value={fbContact}
+                    disabled={fbSubmitting}
+                    maxLength={FEEDBACK_LIMITS.CONTACT_MAX}
+                    placeholder="微信 / QQ / 邮箱，方便需要补充复现信息时联系你"
+                    onChange={e => {
+                      setFbContact(e.target.value);
+                      if (fbError) setFbError('');
+                    }}
+                  />
+                </div>
+
+                <div className="nr-feedback-env-box">
+                  <div className="nr-shortcut-master">
+                    <div className="nr-shortcut-master-copy">
+                      <strong>附带脱敏运行环境信息</strong>
+                      <small>仅包含应用版本、系统、当前音频源、默认音质与主题，绝不上传账号或歌单信息。</small>
+                    </div>
+                    <div className="nr-feedback-env-actions">
+                      <button
+                        type="button"
+                        className="nr-soft-btn nr-feedback-preview-btn"
+                        aria-expanded={fbShowEnvPreview}
+                        onClick={() => setFbShowEnvPreview(v => !v)}
+                      >
+                        {fbShowEnvPreview ? '收起内容' : '查看内容'}
+                      </button>
+                      <button
+                        type="button"
+                        className={'nr-shortcut-toggle' + (fbIncludeEnv ? ' is-on' : '')}
+                        aria-pressed={fbIncludeEnv}
+                        disabled={fbSubmitting}
+                        onClick={() => setFbIncludeEnv(v => !v)}
+                      >
+                        {fbIncludeEnv ? '已开启' : '已关闭'}
+                      </button>
+                    </div>
+                  </div>
+
+                  {fbShowEnvPreview && (
+                    <dl className="nr-feedback-env-preview" aria-label="脱敏环境信息预览">
+                      {fbEnvLines.map(item => (
+                        <div key={item.label} className="nr-feedback-env-row">
+                          <dt>{item.label}</dt>
+                          <dd>{item.value}</dd>
+                        </div>
+                      ))}
+                    </dl>
+                  )}
+                </div>
+
+                {fbError && (
+                  <p className="nr-dialog-error" role="alert">
+                    {fbError}
+                  </p>
+                )}
+
+                {fbSuccessIssue != null && (
+                  <div className="nr-feedback-success" role="status">
+                    <strong>感谢反馈，已登记为 #{fbSuccessIssue}</strong>
+                    <span>问题已同步至仓库跟踪列表，我们会尽快查看处理。</span>
+                  </div>
+                )}
+
+                <div className="nr-settings-actions-row">
+                  <button
+                    type="submit"
+                    className="nr-primary-btn"
+                    disabled={fbSubmitting || !canFeedback}
+                  >
+                    {fbSubmitting ? '正在发送…' : '发送反馈'}
+                  </button>
+                  <button
+                    type="button"
+                    className="nr-soft-btn"
+                    disabled={fbSubmitting}
+                    onClick={() => {
+                      void handleCopyFeedback();
+                    }}
+                  >
+                    {fbCopied ? '已复制反馈内容' : '复制反馈内容'}
+                  </button>
+                  {!canFeedback && (
+                    <span className="nr-settings-note">
+                      当前为浏览器预览环境，请先复制文本，或在桌面应用内一键提交。
+                    </span>
+                  )}
+                </div>
+              </form>
             </div>
           )}
         </section>

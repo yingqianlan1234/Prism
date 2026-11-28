@@ -356,6 +356,13 @@ const ICONS = {
       <path d="M14.8 7.4 17.5 4.7l2.7 2.7" />
     </>
   ),
+  feedback: (
+    <>
+      <path d="M5.2 6.2h13.6a1.8 1.8 0 0 1 1.8 1.8v8a1.8 1.8 0 0 1-1.8 1.8H10.6L6 21v-3.2H5.2a1.8 1.8 0 0 1-1.8-1.8V8a1.8 1.8 0 0 1 1.8-1.8Z" />
+      <path d="M8.5 11.2h7" />
+      <path d="M8.5 14.3h4.5" />
+    </>
+  ),
 };
 
 export const Icon = memo(function Icon({ name, className = 'nr-icon' }) {

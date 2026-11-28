@@ -112,6 +112,13 @@ export const NETEASE_QUALITIES = [
   { id: 'hires', label: 'Hi-Res', short: 'Hi-Res' },
 ];
 
+// QQ 音乐音质档位（默认 standard；更高档位依赖账号权限，不可用时自动向下回退）
+export const QQ_QUALITIES = [
+  { id: 'standard', label: '标准', short: '标准' },
+  { id: 'exhigh', label: 'HQ 极高', short: '极高' },
+  { id: 'lossless', label: '无损 SQ', short: '无损 SQ' },
+];
+
 export const QUALITY_LABELS = Object.freeze({
   standard: '标准',
   exhigh: '极高',
@@ -122,6 +129,9 @@ export const QUALITY_LABELS = Object.freeze({
 const QUALITY_STORAGE_KEY = 'vesper.netease.quality';
 const LEGACY_QUALITY_STORAGE_KEY = 'prism.netease.quality';
 const VALID_QUALITIES = new Set(NETEASE_QUALITIES.map(q => q.id));
+
+const QQ_QUALITY_STORAGE_KEY = 'vesper.qqmusic.quality';
+const VALID_QQ_QUALITIES = new Set(QQ_QUALITIES.map(q => q.id));
 
 export function loadNeteaseQuality() {
   try {
@@ -146,6 +156,23 @@ export function saveNeteaseQuality(level) {
   const safe = VALID_QUALITIES.has(level) ? level : 'standard';
   try {
     globalThis.localStorage?.setItem(QUALITY_STORAGE_KEY, safe);
+  } catch {}
+  return safe;
+}
+
+export function loadQqQuality() {
+  try {
+    const raw = globalThis.localStorage?.getItem(QQ_QUALITY_STORAGE_KEY);
+    return VALID_QQ_QUALITIES.has(raw) ? raw : 'standard';
+  } catch {
+    return 'standard';
+  }
+}
+
+export function saveQqQuality(level) {
+  const safe = VALID_QQ_QUALITIES.has(level) ? level : 'standard';
+  try {
+    globalThis.localStorage?.setItem(QQ_QUALITY_STORAGE_KEY, safe);
   } catch {}
   return safe;
 }

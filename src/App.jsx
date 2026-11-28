@@ -91,6 +91,7 @@ export function App({
   const canAutostart = Boolean(
     capabilities?.desktop?.autostart && desktop?.autostartGet && desktop?.autostartSet
   );
+  const canFeedback = Boolean(capabilities?.desktop?.feedback && desktop?.feedbackSubmit);
   const canUseQq = capabilities?.qqmusic?.available !== false;
   const canChooseCloseBehavior = capabilities?.desktop?.closeBehavior !== false;
 
@@ -474,6 +475,8 @@ export function App({
     clearProviderSearchHistory,
     neteaseQuality,
     qualityRef,
+    qqQuality,
+    qqQualityRef,
     likedIds,
     likedBusyIds,
     fmTrashBusy,
@@ -496,6 +499,7 @@ export function App({
     retryFm,
     openFm,
     changeNeteaseQuality,
+    changeQqQuality,
     toggleLike,
     trashCurrentFmTrack,
     addTrackToPlaylist,
@@ -595,6 +599,7 @@ export function App({
     localInitRef,
     setCustomPlaylistNotice,
     qualityRef,
+    qqQualityRef,
     setFmError,
     setFmStageFocus,
     loadFm,
@@ -1543,10 +1548,18 @@ export function App({
           canSelectQuality={!!capabilities.netease.playbackQuality}
           neteaseQuality={neteaseQuality}
           onChangeQuality={changeNeteaseQuality}
+          canSelectQqQuality={!!capabilities.qqmusic.playbackQuality}
+          qqQuality={qqQuality}
+          onChangeQqQuality={changeQqQuality}
           song={song}
           trackQuality={trackQuality}
           onReloadWithQuality={() => {
             if (song?.provider === 'netease' && playingQueue) {
+              play(song, playingQueue);
+            }
+          }}
+          onReloadQqWithQuality={() => {
+            if (song?.provider === 'qqmusic' && playingQueue) {
               play(song, playingQueue);
             }
           }}
@@ -1604,6 +1617,15 @@ export function App({
           onSwitchSourceAndRetry={nextSource => {
             void handleSwitchSourceAndRetry(nextSource);
           }}
+          canFeedback={canFeedback}
+          feedbackContext={{
+            appVersion: updateConfig?.currentVersion || '1.2.0',
+            activeProvider,
+            neteaseQuality,
+            qqQuality,
+            theme: themePrefs?.theme || 'night-radio',
+          }}
+          onSubmitFeedback={payload => desktop.feedbackSubmit(payload)}
         />
       )}
 
@@ -1717,8 +1739,11 @@ export function App({
         canSelectQuality={!!capabilities.netease.playbackQuality}
         neteaseQuality={neteaseQuality}
         onChangeQuality={changeNeteaseQuality}
+        canSelectQqQuality={!!capabilities.qqmusic.playbackQuality}
+        qqQuality={qqQuality}
+        onChangeQqQuality={changeQqQuality}
         onReloadWithQuality={() => {
-          if (song?.provider === 'netease' && playingQueue) {
+          if ((song?.provider === 'netease' || song?.provider === 'qqmusic') && playingQueue) {
             play(song, playingQueue);
           }
         }}

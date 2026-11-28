@@ -301,11 +301,13 @@ export const RadioStage = memo(function RadioStage({
   const albumName = song ? album(song).name : '';
   const showNeteaseActions = neteaseSignedIn && song?.provider === 'netease';
   const qualityText =
-    song?.provider === 'netease' && trackQuality?.level
+    (song?.provider === 'netease' || song?.provider === 'qqmusic') && trackQuality?.level
       ? QUALITY_LABELS[trackQuality.level] || trackQuality.level
       : '';
   const bitrateText =
-    song?.provider === 'netease' && trackQuality?.br ? formatBitrate(trackQuality.br) : '';
+    (song?.provider === 'netease' || song?.provider === 'qqmusic') && trackQuality?.br
+      ? formatBitrate(trackQuality.br)
+      : '';
 
   return (
     <section

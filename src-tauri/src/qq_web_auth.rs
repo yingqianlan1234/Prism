@@ -25,7 +25,7 @@ use webview2_com::Microsoft::Web::WebView2::Win32::ICoreWebView2Settings4;
 use windows::{core::Interface, core::BOOL};
 
 use crate::qq_login_offline::{Credential, CredentialStore, SystemCredentialStore};
-use crate::{err, Result};
+use crate::{err, Error, Result};
 
 const LABEL: &str = "qq-auth";
 const PROFILE_URL: &str = "https://y.qq.com/n/ryqq_v2/profile";
@@ -1212,11 +1212,74 @@ pub async fn qq_web_playlist_tracks(
 fn valid_mid(value: &str) -> bool {
     !value.is_empty() && value.len() <= 64 && value.bytes().all(|b| b.is_ascii_alphanumeric())
 }
+fn qq_playback_level(level: Option<&Value>) -> Result<&'static str> {
+    match level {
+        None | Some(Value::Null) => Ok("standard"),
+        Some(Value::String(level)) => match level.as_str() {
+            "standard" => Ok("standard"),
+            "exhigh" => Ok("exhigh"),
+            "lossless" => Ok("lossless"),
+            _ => Err(err("validation", "音质档位无效")),
+        },
+        _ => Err(err("validation", "音质档位无效")),
+    }
+}
+
+struct QqQualityCandidate {
+    prefix: &'static str,
+    ext: &'static str,
+    level: &'static str,
+    bitrate: Option<u32>,
+}
+
+fn qq_quality_candidates(level: &str) -> &'static [QqQualityCandidate] {
+    const CANDIDATES: [QqQualityCandidate; 4] = [
+        QqQualityCandidate {
+            prefix: "F000",
+            ext: "flac",
+            level: "lossless",
+            bitrate: None,
+        },
+        QqQualityCandidate {
+            prefix: "M800",
+            ext: "mp3",
+            level: "exhigh",
+            bitrate: Some(320_000),
+        },
+        QqQualityCandidate {
+            prefix: "M500",
+            ext: "mp3",
+            level: "standard",
+            bitrate: Some(128_000),
+        },
+        QqQualityCandidate {
+            prefix: "C400",
+            ext: "m4a",
+            level: "standard",
+            bitrate: None,
+        },
+    ];
+    match level {
+        "lossless" => &CANDIDATES,
+        "exhigh" => &CANDIDATES[1..],
+        _ => &CANDIDATES[3..],
+    }
+}
+
+#[cfg(test)]
 fn vkey_filename(mid: &str, media_mid: Option<&str>) -> Result<String> {
+    vkey_filename_for(mid, media_mid, "C400", "m4a")
+}
+fn vkey_filename_for(
+    mid: &str,
+    media_mid: Option<&str>,
+    prefix: &str,
+    ext: &str,
+) -> Result<String> {
     if !valid_mid(mid) || media_mid.is_some_and(|v| !valid_mid(v)) {
         return Err(err("validation", "QQ 曲目标识无效"));
     }
-    Ok(format!("C400{}.m4a", media_mid.unwrap_or(mid)))
+    Ok(format!("{prefix}{}.{ext}", media_mid.unwrap_or(mid)))
 }
 fn allowed_media_url(base: &str, purl: &str) -> Result<tauri::Url> {
     let invalid = || err("upstream", "QQ 音频地址无效");
@@ -1315,10 +1378,15 @@ fn parse_media_response(data: &Value) -> Result<(String, &'static str)> {
         "audio/mp4"
     } else if extension.eq_ignore_ascii_case("mp3") {
         "audio/mpeg"
+    } else if extension.eq_ignore_ascii_case("flac") {
+        "audio/flac"
     } else {
         return Err(err("upstream", "QQ 返回的音频格式不受支持"));
     };
     Ok((url.into(), mime))
+}
+fn should_fallback_qq_error(error: &Error) -> bool {
+    error.kind == "upstream"
 }
 fn media_request(
     client: &reqwest::Client,
@@ -1345,6 +1413,7 @@ pub async fn qq_web_resolve(
     state: State<'_, QqWebAuth>,
     mid: String,
     media_mid: Option<String>,
+    level: Option<Value>,
 ) -> Result<Value> {
     main_only(&caller)?;
     let (diag_rev, resolve_rev) = {
@@ -1371,7 +1440,12 @@ pub async fn qq_web_resolve(
         inner: state.inner.clone(),
         revision: resolve_rev,
     };
-    let filename = vkey_filename(&mid, media_mid.as_deref()).map_err(|e| {
+    let media_mid_ref = media_mid.as_deref();
+    if !valid_mid(&mid) || media_mid_ref.is_some_and(|v| !valid_mid(v)) {
+        update_diagnostic_for(&state, diag_rev, |d| d.failure = Some("输入无效"));
+        return Err(err("validation", "QQ 曲目标识无效"));
+    }
+    let requested_level = qq_playback_level(level.as_ref()).map_err(|e| {
         update_diagnostic_for(&state, diag_rev, |d| d.failure = Some("输入无效"));
         e
     })?;
@@ -1386,56 +1460,65 @@ pub async fn qq_web_resolve(
         d.media_mid_present = media_mid.is_some();
         d.media_mid_matches_song_mid = media_mid.as_ref().map(|m| m == &mid);
     });
-    require_generation(&state, generation).map_err(|e| {
-        update_diagnostic_for(&state, diag_rev, |d| {
-            d.generation_match = Some(false);
-            d.failure = Some("账号代次冲突");
-        });
-        e
-    })?;
+    let check_generation = || {
+        require_generation(&state, generation).map_err(|e| {
+            update_diagnostic_for(&state, diag_rev, |d| {
+                d.generation_match = Some(false);
+                d.failure = Some("账号代次冲突");
+            });
+            e
+        })
+    };
     let guid: String = rand::thread_rng()
         .gen_range(10_000_000_u64..99_999_999)
         .to_string();
-    update_diagnostic_for(&state, diag_rev, |d| {
-        d.stage = "接口响应";
-        d.request_complete = true;
-        d.uses_login = true;
-        d.generation_match = Some(true);
-    });
-    let response = media_request(&state.client, &session, &guid, &mid, &filename)
-        .send()
-        .await
-        .map_err(|e| {
-            update_diagnostic_for(&state, diag_rev, |d| d.failure = Some("网络或超时"));
-            if e.is_timeout() {
-                err("timeout", "QQ 音频请求超时")
-            } else {
-                err("network", "无法连接 QQ 音乐")
-            }
-        })?;
-    let data = read_json(response).await.map_err(|e| {
-        update_diagnostic_for(&state, diag_rev, |d| d.failure = Some("接口响应错误"));
-        e
-    })?;
-    require_generation(&state, generation).map_err(|e| {
+    let mut candidates = qq_quality_candidates(requested_level).iter().peekable();
+    let (url, mime, candidate) = loop {
+        let candidate = candidates.next().expect("QQ quality chain is nonempty");
+        check_generation()?;
+        let filename = vkey_filename_for(&mid, media_mid_ref, candidate.prefix, candidate.ext)?;
         update_diagnostic_for(&state, diag_rev, |d| {
-            d.generation_match = Some(false);
-            d.failure = Some("账号代次冲突");
+            d.stage = "接口响应";
+            d.request_complete = true;
+            d.uses_login = true;
+            d.generation_match = Some(true);
+            d.top_code = None;
+            d.module_code = None;
+            d.business_code = None;
         });
-        e
-    })?;
-    update_diagnostic_for(&state, diag_rev, |d| {
-        d.stage = "URL 解析";
-        d.top_code = data.get("code").and_then(Value::as_i64);
-        d.module_code = data.pointer("/req_0/code").and_then(Value::as_i64);
-        d.business_code = data
-            .pointer("/req_0/data/midurlinfo/0/result")
-            .and_then(Value::as_i64);
-    });
-    let (url, mime) = parse_media_response(&data).map_err(|e| {
-        update_diagnostic_for(&state, diag_rev, |d| d.failure = Some("未获得有效播放地址"));
-        e
-    })?;
+        let response = media_request(&state.client, &session, &guid, &mid, &filename)
+            .send()
+            .await
+            .map_err(|e| {
+                update_diagnostic_for(&state, diag_rev, |d| d.failure = Some("网络或超时"));
+                if e.is_timeout() {
+                    err("timeout", "QQ 音频请求超时")
+                } else {
+                    err("network", "无法连接 QQ 音乐")
+                }
+            })?;
+        let data = read_json(response).await.map_err(|e| {
+            update_diagnostic_for(&state, diag_rev, |d| d.failure = Some("接口响应错误"));
+            e
+        })?;
+        check_generation()?;
+        update_diagnostic_for(&state, diag_rev, |d| {
+            d.stage = "URL 解析";
+            d.top_code = data.get("code").and_then(Value::as_i64);
+            d.module_code = data.pointer("/req_0/code").and_then(Value::as_i64);
+            d.business_code = data
+                .pointer("/req_0/data/midurlinfo/0/result")
+                .and_then(Value::as_i64);
+        });
+        match parse_media_response(&data) {
+            Ok((url, mime)) => break (url, mime, candidate),
+            Err(e) if should_fallback_qq_error(&e) && candidates.peek().is_some() => continue,
+            Err(e) => {
+                update_diagnostic_for(&state, diag_rev, |d| d.failure = Some("未获得有效播放地址"));
+                return Err(e);
+            }
+        }
+    };
     let handle: String = rand::thread_rng()
         .sample_iter(&Alphanumeric)
         .take(40)
@@ -1481,7 +1564,11 @@ pub async fn qq_web_resolve(
     let origin = "http://vespermedia.localhost";
     #[cfg(target_os = "macos")]
     let origin = "vespermedia://localhost";
-    Ok(json!({"data":[{"code":200,"url":format!("{origin}/{handle}")}] }))
+    let mut track = json!({"code":200,"url":format!("{origin}/{handle}"),"level":candidate.level});
+    if let Some(bitrate) = candidate.bitrate {
+        track["br"] = json!(bitrate);
+    }
+    Ok(json!({"data":[track]}))
 }
 fn bounded_range(value: Option<&str>) -> Result<(u64, u64)> {
     let raw = value
@@ -2076,6 +2163,66 @@ mod tests {
         );
     }
     #[test]
+    fn playback_level_defaults_to_standard_and_rejects_unsupported_values() {
+        assert_eq!(qq_playback_level(None).unwrap(), "standard");
+        assert_eq!(qq_playback_level(Some(&Value::Null)).unwrap(), "standard");
+        for level in ["standard", "exhigh", "lossless"] {
+            assert_eq!(qq_playback_level(Some(&json!(level))).unwrap(), level);
+        }
+        for invalid in [
+            json!("hires"),
+            json!(320_000),
+            json!(true),
+            json!({}),
+            json!([]),
+        ] {
+            let error = qq_playback_level(Some(&invalid)).unwrap_err();
+            assert_eq!(error.kind, "validation");
+            assert_eq!(error.message, "音质档位无效");
+        }
+    }
+    #[test]
+    fn quality_candidates_fall_back_in_order_and_use_the_file_mid() {
+        let expected = [
+            ("F000FILE2.flac", "lossless", None),
+            ("M800FILE2.mp3", "exhigh", Some(320_000)),
+            ("M500FILE2.mp3", "standard", Some(128_000)),
+            ("C400FILE2.m4a", "standard", None),
+        ];
+        for (level, start) in [("lossless", 0), ("exhigh", 1), ("standard", 3)] {
+            let candidates = qq_quality_candidates(level);
+            assert_eq!(candidates.len(), expected.len() - start);
+            for (candidate, (filename, level, bitrate)) in candidates.iter().zip(&expected[start..])
+            {
+                assert_eq!(
+                    vkey_filename_for("SONG1", Some("FILE2"), candidate.prefix, candidate.ext)
+                        .unwrap(),
+                    *filename
+                );
+                assert_eq!(candidate.level, *level);
+                assert_eq!(candidate.bitrate, *bitrate);
+            }
+        }
+        assert_eq!(
+            vkey_filename_for("SONG1", None, "F000", "flac").unwrap(),
+            "F000SONG1.flac"
+        );
+    }
+    #[test]
+    fn quality_fallback_only_accepts_upstream_errors() {
+        assert!(should_fallback_qq_error(&err("upstream", "fixture")));
+        for kind in [
+            "network",
+            "timeout",
+            "permission",
+            "auth",
+            "validation",
+            "cancelled",
+        ] {
+            assert!(!should_fallback_qq_error(&err(kind, "fixture")));
+        }
+    }
+    #[test]
     fn vkey_filename_uses_file_mid_and_validates_both_ids() {
         assert_eq!(
             vkey_filename("SONG1", Some("FILE2")).unwrap(),
@@ -2185,6 +2332,24 @@ mod tests {
         assert_eq!(parse_media_response(&allowed).unwrap().1, "audio/mpeg");
         let missing = json!({"code":0,"req_0":{"code":0,"data":{"sip":["https://ws.stream.qqmusic.qq.com/"],"midurlinfo":[{"purl":"M500FAKE.mp3"}]}}});
         assert!(parse_media_response(&missing).is_err());
+    }
+    #[test]
+    fn media_response_accepts_flac_and_rejects_unknown_extensions() {
+        let response = |path: &str| {
+            json!({"code":0,"req_0":{"code":0,"data":{
+                "sip":["https://ws.stream.qqmusic.qq.com/"],
+                "midurlinfo":[{"purl":path,"result":0}]
+            }}})
+        };
+        let (url, mime) = parse_media_response(&response("F000FIXTURE.flac?vkey=fixture")).unwrap();
+        assert_eq!(
+            url,
+            "https://ws.stream.qqmusic.qq.com/F000FIXTURE.flac?vkey=fixture"
+        );
+        assert_eq!(mime, "audio/flac");
+        let error =
+            parse_media_response(&response("F000FIXTURE.bin?file=fixture.flac")).unwrap_err();
+        assert_eq!(error.kind, "upstream");
     }
     #[test]
     fn media_response_requires_a_supported_path_on_an_allowed_host() {

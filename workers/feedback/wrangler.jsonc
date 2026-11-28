@@ -1,0 +1,30 @@
+{
+  "$schema": "../../node_modules/wrangler/config-schema.json",
+  "name": "vesper-feedback",
+  "main": "src/index.js",
+  "compatibility_date": "2026-11-28",
+  "compatibility_flags": ["nodejs_compat"],
+  "observability": {
+    "enabled": true,
+    "logs": {
+      "enabled": true,
+      "head_sampling_rate": 1
+    },
+    "traces": {
+      "enabled": true,
+      "head_sampling_rate": 0.1
+    }
+  },
+  "routes": [
+    {
+      "pattern": "feedback.yingqianlan.top",
+      "custom_domain": true
+    }
+  ],
+  "vars": {
+    "GITHUB_REPO": "yingqianlan1234/Vesper",
+    "RATE_LIMIT_WINDOW_SEC": "60",
+    "RATE_LIMIT_MAX": "3"
+  }
+  // 密钥 GITHUB_TOKEN 通过 `npx wrangler secret put GITHUB_TOKEN` 或 Cloudflare Dashboard 设置，禁止写入配置文件
+}

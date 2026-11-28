@@ -1,5 +1,5 @@
 import React, { memo, useEffect, useRef, useState } from 'react';
-import { artist, NETEASE_QUALITIES, QUALITY_LABELS, formatBitrate } from '../utils/format.js';
+import { artist, NETEASE_QUALITIES, QQ_QUALITIES, QUALITY_LABELS, formatBitrate } from '../utils/format.js';
 import { SongArtwork, SourceTag, PlayButton } from './Artwork.jsx';
 import { PlaybackProgress } from './PlaybackProgress.jsx';
 import { Icon } from './Icons.jsx';
@@ -57,6 +57,9 @@ export const FloatingDock = memo(function FloatingDock({
   canSelectQuality,
   neteaseQuality,
   onChangeQuality,
+  canSelectQqQuality,
+  qqQuality,
+  onChangeQqQuality,
   onReloadWithQuality,
   queueCount,
   trackQuality,
@@ -101,19 +104,31 @@ export const FloatingDock = memo(function FloatingDock({
 
   const modeText = MODE_LABELS[mode] || '顺序播放';
   const showNeteaseActions = neteaseSignedIn && song?.provider === 'netease';
+  const qualityProvider =
+    song?.provider === 'netease' || song?.provider === 'qqmusic'
+      ? song.provider
+      : activeProvider === 'netease' || activeProvider === 'qqmusic'
+        ? activeProvider
+        : null;
+  const isQqQuality = qualityProvider === 'qqmusic';
+  const selectedQuality = isQqQuality ? qqQuality : neteaseQuality;
+  const qualityOptions = isQqQuality ? QQ_QUALITIES : NETEASE_QUALITIES;
+  const handleChangeQuality = isQqQuality ? onChangeQqQuality : onChangeQuality;
+  const qualityProviderLabel = isQqQuality ? 'QQ 音乐' : '网易云';
   const qualityText =
-    song?.provider === 'netease' && trackQuality?.level
+    song?.provider === qualityProvider && trackQuality?.level
       ? QUALITY_LABELS[trackQuality.level] || trackQuality.level
-      : QUALITY_LABELS[neteaseQuality] || '标准';
+      : QUALITY_LABELS[selectedQuality] || '标准';
   const bitrateText =
-    song?.provider === 'netease' && trackQuality?.br ? formatBitrate(trackQuality.br) : '';
+    song?.provider === qualityProvider && trackQuality?.br ? formatBitrate(trackQuality.br) : '';
   const showQualityChip =
-    canSelectQuality && (song?.provider === 'netease' || activeProvider === 'netease');
+    (qualityProvider === 'netease' && canSelectQuality) ||
+    (qualityProvider === 'qqmusic' && canSelectQqQuality);
   const canReloadQuality =
-    canSelectQuality &&
-    song?.provider === 'netease' &&
+    showQualityChip &&
+    song?.provider === qualityProvider &&
     trackQuality?.level &&
-    trackQuality.level !== neteaseQuality;
+    trackQuality.level !== selectedQuality;
   const tempoActive = playbackRate !== 1 || Boolean(sleepLabel);
 
   const inStage = view === 'stage';
@@ -207,7 +222,7 @@ export const FloatingDock = memo(function FloatingDock({
           className={
             'nr-status-chip nr-quality-btn' + (openPopover === 'quality' ? ' is-active' : '')
           }
-          aria-label={`网易云音质：${qualityText}，点击切换`}
+          aria-label={`${qualityProviderLabel}音质：${qualityText}，点击切换`}
           aria-expanded={openPopover === 'quality'}
           title={bitrateText ? `${qualityText} · ${bitrateText}（点击切换）` : `音质：${qualityText}（点击切换）`}
           onClick={() => setOpenPopover(v => (v === 'quality' ? null : 'quality'))}
@@ -328,21 +343,21 @@ export const FloatingDock = memo(function FloatingDock({
       {openPopover === 'quality' && showQualityChip && (
         <div className="nr-more-group">
           <div className="nr-more-label-row">
-            <span className="nr-more-label">网易云默认音质</span>
-            {song?.provider === 'netease' && trackQuality?.level && (
+            <span className="nr-more-label">{qualityProviderLabel}默认音质</span>
+            {song?.provider === qualityProvider && trackQuality?.level && (
               <span className="nr-more-sub">
                 当前播放：{QUALITY_LABELS[trackQuality.level] || trackQuality.level}
               </span>
             )}
           </div>
-          <div className="nr-seg-pills" role="group" aria-label="网易云音质">
-            {NETEASE_QUALITIES.map(q => (
+          <div className="nr-seg-pills" role="group" aria-label={`${qualityProviderLabel}音质`}>
+            {qualityOptions.map(q => (
               <button
                 key={q.id}
                 type="button"
-                className={'nr-seg-btn' + (neteaseQuality === q.id ? ' is-on' : '')}
-                aria-pressed={neteaseQuality === q.id}
-                onClick={() => onChangeQuality(q.id)}
+                className={'nr-seg-btn' + (selectedQuality === q.id ? ' is-on' : '')}
+                aria-pressed={selectedQuality === q.id}
+                onClick={() => handleChangeQuality?.(q.id)}
               >
                 {q.label}
               </button>

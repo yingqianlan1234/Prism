@@ -7,4 +7,4 @@ export const qq=Object.freeze({capabilities:capabilities.qqmusic,recommendationC
  loginComplete:()=>invoke('qq_web_login_complete'),loginCancel:()=>invoke('qq_web_login_cancel'),
  search:(query,{page=1,pageSize=5}={})=>invoke('qq_search',{query,page,pageSize}),
  getPlaylists:({page=1}={})=>invoke('qq_web_playlists',{page}),getPlaylistTracks:(id,{page=1}={})=>invoke('qq_web_playlist_tracks',{id:String(id),page}),getLyrics:id=>invoke('qq_web_lyric',{mid:String(id)}),
- resolvePlayback:(id,mediaMid)=>invoke('qq_web_resolve',{mid:String(id),mediaMid:mediaMid||null}),getRecommendations:async kind=>{if(!Object.hasOwn(qqRecommendationCommands,kind))throw unsupported('该 QQ 推荐类型');return invoke(qqRecommendationCommands[kind]);},reportListening:no('QQ 收听上报')});
+ resolvePlayback:(id,mediaMid,opts)=>invoke('qq_web_resolve',{mid:String(id),mediaMid:mediaMid||null,...(opts?.level?{level:opts.level}:{})}),getRecommendations:async kind=>{if(!Object.hasOwn(qqRecommendationCommands,kind))throw unsupported('该 QQ 推荐类型');return invoke(qqRecommendationCommands[kind]);},reportListening:no('QQ 收听上报')});

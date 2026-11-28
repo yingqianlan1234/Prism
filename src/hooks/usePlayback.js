@@ -642,6 +642,7 @@ export function usePlayback({
               () => ({ failed: true })
             );
       const qualityLevel = deps.qualityRef?.current;
+      const qqQualityLevel = deps.qqQualityRef?.current;
       const url =
         id === 'netease'
           ? await p.resolvePlayback(
@@ -652,7 +653,13 @@ export function usePlayback({
             )
           : id === 'local'
             ? await p.resolvePlayback(targetSong.id)
-            : await p.resolvePlayback(targetSong.id, targetSong.mediaMid);
+            : await p.resolvePlayback(
+                targetSong.id,
+                targetSong.mediaMid,
+                capabilities[id].playbackQuality && qqQualityLevel && qqQualityLevel !== 'standard'
+                  ? { level: qqQualityLevel }
+                  : undefined
+              );
       if (!valid()) return;
       let streamUrl = '';
       let info = null;
@@ -672,7 +679,7 @@ export function usePlayback({
       const trial = info?.freeTrialInfo;
       const isTrial = !!(trial && Number(trial.end) > Number(trial.start));
       const nextTrackQuality =
-        id === 'netease' && (info?.level || info?.br || isTrial)
+        (id === 'netease' || id === 'qqmusic') && (info?.level || info?.br || isTrial)
           ? {
               level: typeof info.level === 'string' ? info.level : null,
               br: Number.isFinite(Number(info.br)) && Number(info.br) > 0 ? Number(info.br) : null,

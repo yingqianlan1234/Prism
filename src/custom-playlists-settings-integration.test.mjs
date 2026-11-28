@@ -60,6 +60,7 @@ window.__TAURI_INTERNALS__ = {
           autostart: !macos,
           customPlaylistsStorage: true,
           localTrackCover: true,
+          feedback: true,
         };
       case 'custom_playlists_load':
         return persistedPlaylists.playlists.length
@@ -182,6 +183,11 @@ window.__TAURI_INTERNALS__ = {
           skippedVersion: null,
           pubkeyConfigured: true,
         };
+      case 'feedback_submit':
+        if (args?.payload?.title?.includes('模拟失败')) {
+          throw Error('反馈服务暂时不可用，请稍后重试');
+        }
+        return { ok: true, issueNumber: 18 };
       default:
         throw Error('unexpected IPC ' + cmd);
     }
@@ -203,7 +209,9 @@ const wait = async (fn, label) => {
 const buttonByText = text => [...document.querySelectorAll('button')].find(x => x.textContent.trim() === text);
 const buttonIncludes = text => [...document.querySelectorAll('button')].find(x => x.textContent.includes(text));
 const setInputValue = (input, val) => {
-  const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
+  const proto =
+    input.tagName === 'TEXTAREA' ? window.HTMLTextAreaElement.prototype : window.HTMLInputElement.prototype;
+  const setter = Object.getOwnPropertyDescriptor(proto, 'value').set;
   setter.call(input, val);
   input.dispatchEvent(new Event('input', { bubbles: true }));
   input.dispatchEvent(new Event('change', { bubbles: true }));
@@ -369,7 +377,7 @@ try {
   assert.equal(storedAudioPrefs.autoOpenStageOnPlay, false, '设置页开关应持久化 autoOpenStageOnPlay');
 
   if (macos) {
-    assert.equal(document.querySelectorAll('.nr-settings-aside nav button').length, 3);
+    assert.equal(document.querySelectorAll('.nr-settings-aside nav button').length, 4);
   } else {
     buttonByText('桌面歌词').click();
     await wait(() => document.body.textContent.includes('原生 Direct2D 桌面悬浮字幕'), '进入桌面歌词分组');
@@ -380,6 +388,34 @@ try {
     buttonIncludes('更新与关于').click();
     await wait(() => document.body.textContent.includes('Vesper v1.1.0'), '进入应用更新分组');
   }
+
+  // 问题反馈分组（Windows 与 macOS 均可用）
+  buttonByText('问题反馈').click();
+  await wait(() => document.body.textContent.includes('问题反馈与建议'), '进入问题反馈分组');
+  buttonByText('播放与音质').click();
+  buttonByText('查看内容').click();
+  await wait(() => document.body.textContent.includes('Vesper v1.1.0'), '展示脱敏运行环境预览');
+  const titleInput = document.querySelector('#nr-feedback-title');
+  const descInput = document.querySelector('#nr-feedback-desc');
+  setInputValue(titleInput, 'a');
+  setInputValue(descInput, '太短');
+  buttonByText('发送反馈').click();
+  await wait(() => document.body.textContent.includes('标题至少需要 2 个字符'), '本地长度校验拦截无效提交');
+  assert.equal(calls.filter(c => c.cmd === 'feedback_submit').length, 0);
+
+  setInputValue(titleInput, 'QQ 无损回退测试反馈');
+  setInputValue(descInput, '在设置页提交一条完整的问题反馈用于验证前后端联调。');
+  buttonByText('发送反馈').click();
+  await wait(() => document.body.textContent.includes('已登记为 #18'), '成功提交反馈并展示 Issue 编号');
+  const fbCall = calls.filter(c => c.cmd === 'feedback_submit').at(-1);
+  assert.equal(fbCall.args.payload.category, 'playback');
+  assert.equal(fbCall.args.payload.includeEnv, true);
+  assert.equal(fbCall.args.payload.context.theme, 'obsidian');
+
+  setInputValue(titleInput, '模拟失败反馈提交');
+  setInputValue(descInput, '再次提交以测试网络或服务失败时保留内容并展示错误提示。');
+  buttonByText('发送反馈').click();
+  await wait(() => document.body.textContent.includes('反馈服务暂时不可用，请稍后重试'), '提交失败时显示错误提示');
 
   document.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
   await wait(() => document.querySelector('.app').dataset.view === 'library', '按 Escape 返回曲库');

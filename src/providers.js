@@ -2,14 +2,14 @@ import {invoke} from '@tauri-apps/api/core';
 export const unsupported = (name) => Object.assign(new Error(`${name}暂不支持`), {code:'unsupported'});
 const no = name => async () => { throw unsupported(name); };
 const neteaseLibraryCapabilities = enabled => ({
- playbackQuality:enabled,searchPagination:enabled,searchCategories:enabled,
+ searchPagination:enabled,searchCategories:enabled,
  likeTrack:enabled,getLikedSongIds:enabled,trashFmTrack:enabled,editPlaylistTracks:enabled
 });
 export const capabilities = Object.freeze({
- desktop:Object.freeze({globalShortcuts:true,desktopLyric:true,appUpdater:true,autostart:false,customPlaylistsStorage:false}),
+ desktop:Object.freeze({globalShortcuts:true,desktopLyric:true,appUpdater:true,autostart:false,customPlaylistsStorage:false,feedback:false}),
  local:Object.freeze({manageFolders:true,scanLibrary:true,getTracks:true,resolvePlayback:true,getLyrics:true,persistQueue:true,getCover:false}),
- netease:Object.freeze({login:true,logout:true,restoreSession:true,getUserProfile:true,search:true,getPlaylists:true,getPlaylistTracks:true,getLyrics:true,resolvePlayback:true,getRecommendations:true,reportListening:false,...neteaseLibraryCapabilities(true)}),
- qqmusic:Object.freeze({login:true,logout:true,restoreSession:true,getUserProfile:true,search:true,getPlaylists:true,getPlaylistTracks:true,getLyrics:true,resolvePlayback:true,getRecommendations:true,reportListening:false,...neteaseLibraryCapabilities(false)})
+ netease:Object.freeze({login:true,logout:true,restoreSession:true,getUserProfile:true,search:true,getPlaylists:true,getPlaylistTracks:true,getLyrics:true,resolvePlayback:true,getRecommendations:true,reportListening:false,playbackQuality:true,...neteaseLibraryCapabilities(true)}),
+ qqmusic:Object.freeze({login:true,logout:true,restoreSession:true,getUserProfile:true,search:true,getPlaylists:true,getPlaylistTracks:true,getLyrics:true,resolvePlayback:true,getRecommendations:true,reportListening:false,playbackQuality:true,...neteaseLibraryCapabilities(false)})
 });
 export function capabilitiesForHost(host) {
  if(typeof host?.qqMusic!=='boolean') return capabilities;
@@ -22,7 +22,8 @@ export function capabilitiesForHost(host) {
    appUpdater:host.appUpdater===true,
    customTitlebar:host.customTitlebar===true,
    autostart:host.autostart===true,
-   customPlaylistsStorage:host.customPlaylistsStorage===true
+   customPlaylistsStorage:host.customPlaylistsStorage===true,
+   feedback:host.feedback===true
   }),
   local:Object.freeze({...capabilities.local,getCover:host.localTrackCover===true}),
   qqmusic:Object.freeze({...capabilities.qqmusic,available:host.qqMusic})
@@ -57,6 +58,7 @@ export const desktop = Object.freeze({
  customPlaylistsSave:data=>invoke('custom_playlists_save',{data}),
  autostartGet:()=>invoke('autostart_get'),
  autostartSet:enabled=>invoke('autostart_set',{enabled}),
+ feedbackSubmit:payload=>invoke('feedback_submit',{payload}),
  events:Object.freeze({globalShortcut:'vesper:global-shortcut',desktopLyricState:'vesper:desktop-lyric-state',updateProgress:'vesper:app-update-progress'})
 });
 export const platformFlavor=Object.freeze({netease:'netease',qqmusic:'community'});

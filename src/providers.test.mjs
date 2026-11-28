@@ -8,14 +8,14 @@ globalThis.window={__TAURI_INTERNALS__:{invoke:async(command,args)=>{calls.push(
 const {getProvider,capabilities,capabilitiesForHost,recommendationCapabilities,desktop}=await import('./providers.js');
 
 test('macOS 保留三个音乐来源，Windows 桌面能力随宿主关闭',()=>{
- const mac=capabilitiesForHost({qqMusic:true,globalShortcuts:false,desktopLyric:false,closeBehavior:false,appUpdater:false,customTitlebar:false,autostart:false,customPlaylistsStorage:true,localTrackCover:true});
+ const mac=capabilitiesForHost({qqMusic:true,globalShortcuts:false,desktopLyric:false,closeBehavior:false,appUpdater:false,customTitlebar:false,autostart:false,customPlaylistsStorage:true,localTrackCover:true,feedback:false});
  assert.deepEqual(mac.local,{...capabilities.local,getCover:true});
  assert.equal(mac.netease,capabilities.netease);
  assert.equal(mac.qqmusic.available,true);
- assert.deepEqual(mac.desktop,{globalShortcuts:false,desktopLyric:false,closeBehavior:false,appUpdater:false,customTitlebar:false,autostart:false,customPlaylistsStorage:true});
- const windows=capabilitiesForHost({qqMusic:true,globalShortcuts:true,desktopLyric:true,closeBehavior:true,appUpdater:true,customTitlebar:true,autostart:true,customPlaylistsStorage:true,localTrackCover:true});
+ assert.deepEqual(mac.desktop,{globalShortcuts:false,desktopLyric:false,closeBehavior:false,appUpdater:false,customTitlebar:false,autostart:false,customPlaylistsStorage:true,feedback:false});
+ const windows=capabilitiesForHost({qqMusic:true,globalShortcuts:true,desktopLyric:true,closeBehavior:true,appUpdater:true,customTitlebar:true,autostart:true,customPlaylistsStorage:true,localTrackCover:true,feedback:true});
  assert.equal(windows.qqmusic.available,true);
- assert.deepEqual(windows.desktop,{globalShortcuts:true,desktopLyric:true,closeBehavior:true,appUpdater:true,customTitlebar:true,autostart:true,customPlaylistsStorage:true});
+ assert.deepEqual(windows.desktop,{globalShortcuts:true,desktopLyric:true,closeBehavior:true,appUpdater:true,customTitlebar:true,autostart:true,customPlaylistsStorage:true,feedback:true});
  assert.equal(capabilitiesForHost(undefined),capabilities);
 });
 
@@ -50,15 +50,16 @@ test('本地曲库由独立 provider 注入，IPC 参数只包含曲库标识和
  }
 });
 const features=['login','logout','restoreSession','getUserProfile','search','getPlaylists','getPlaylistTracks','getLyrics','resolvePlayback','getRecommendations','reportListening'];
-const libraryFeatures=['playbackQuality','searchPagination','searchCategories','likeTrack','getLikedSongIds','trashFmTrack','editPlaylistTracks'];
+const libraryFeatures=['searchPagination','searchCategories','likeTrack','getLikedSongIds','trashFmTrack','editPlaylistTracks'];
 
 test('两平台独立声明基础能力和网易增强能力；未知平台明确拒绝',async()=>{
  for(const id of ['netease','qqmusic']){
   const provider=await getProvider(id);
-  assert.deepEqual(Object.keys(provider.capabilities).sort(),[...features,...libraryFeatures].sort());
+  assert.deepEqual(Object.keys(provider.capabilities).sort(),[...features,'playbackQuality',...libraryFeatures].sort());
   assert.equal(provider.capabilities,capabilities[id]);
   assert.equal(provider.recommendationCapabilities,recommendationCapabilities[id]);
   assert(Object.isFrozen(provider.recommendationCapabilities));
+  assert.equal(provider.capabilities.playbackQuality,true);
   for(const feature of features){assert.equal(typeof provider.capabilities[feature],'boolean');assert.equal(typeof provider[feature],'function');}
   for(const feature of libraryFeatures)assert.equal(provider.capabilities[feature],id==='netease');
  }
@@ -163,7 +164,7 @@ test('QQ 社区仅匿名搜索并映射固定 IPC 参数',async()=>{
  await qq.search('合成查询',{page:2,pageSize:5});
  assert.deepEqual(calls.at(-1),{command:'qq_search',args:{query:'合成查询',page:2,pageSize:5}});
  for(const [name,command] of [['login','qq_web_login_open'],['loginComplete','qq_web_login_complete'],['loginCancel','qq_web_login_cancel'],['logout','qq_web_logout'],['getUserProfile','qq_web_account'],['restoreSession','qq_web_account']]){await qq[name]();assert.equal(calls.at(-1).command,command);}
- await qq.getPlaylists({page:2});assert.deepEqual(calls.at(-1),{command:'qq_web_playlists',args:{page:2}});await qq.getPlaylistTracks('123',{page:3});assert.deepEqual(calls.at(-1),{command:'qq_web_playlist_tracks',args:{id:'123',page:3}});await qq.getLyrics('MID1');assert.deepEqual(calls.at(-1),{command:'qq_web_lyric',args:{mid:'MID1'}});await qq.resolvePlayback('MID1','MEDIA1');assert.deepEqual(calls.at(-1),{command:'qq_web_resolve',args:{mid:'MID1',mediaMid:'MEDIA1'}});
+ await qq.getPlaylists({page:2});assert.deepEqual(calls.at(-1),{command:'qq_web_playlists',args:{page:2}});await qq.getPlaylistTracks('123',{page:3});assert.deepEqual(calls.at(-1),{command:'qq_web_playlist_tracks',args:{id:'123',page:3}});await qq.getLyrics('MID1');assert.deepEqual(calls.at(-1),{command:'qq_web_lyric',args:{mid:'MID1'}});await qq.resolvePlayback('MID1','MEDIA1');assert.deepEqual(calls.at(-1),{command:'qq_web_resolve',args:{mid:'MID1',mediaMid:'MEDIA1'}});await qq.resolvePlayback('MID1','MEDIA1',{level:'lossless'});assert.deepEqual(calls.at(-1),{command:'qq_web_resolve',args:{mid:'MID1',mediaMid:'MEDIA1',level:'lossless'}});
  await qq.getRecommendations('playlists');assert.deepEqual(calls.at(-1),{command:'qq_recommended_playlists',args:{}});
  await qq.getRecommendations('newsong');assert.deepEqual(calls.at(-1),{command:'qq_recommended_new_songs',args:{}});
  const before=calls.length;
@@ -185,7 +186,7 @@ test('QQ Mock 与社区适配器分别声明真实能力',async()=>{
 });
 
 test('桌面功能能力位、事件名与 P2-A IPC 命令参数映射正确',async()=>{
- assert.deepEqual(capabilities.desktop,{globalShortcuts:true,desktopLyric:true,appUpdater:true,autostart:false,customPlaylistsStorage:false});
+ assert.deepEqual(capabilities.desktop,{globalShortcuts:true,desktopLyric:true,appUpdater:true,autostart:false,customPlaylistsStorage:false,feedback:false});
  assert(Object.isFrozen(capabilities.desktop));
  assert.equal(desktop.capabilities,capabilities.desktop);
  assert.deepEqual(desktop.events,{globalShortcut:'vesper:global-shortcut',desktopLyricState:'vesper:desktop-lyric-state',updateProgress:'vesper:app-update-progress'});
@@ -226,4 +227,7 @@ test('桌面功能能力位、事件名与 P2-A IPC 命令参数映射正确',as
  assert.deepEqual(calls.at(-1),{command:'autostart_get',args:{}});
  await desktop.autostartSet(true);
  assert.deepEqual(calls.at(-1),{command:'autostart_set',args:{enabled:true}});
+ const feedbackPayload={category:'bug',title:'反馈标题',description:'反馈描述内容超过十个字',includeEnv:true};
+ await desktop.feedbackSubmit(feedbackPayload);
+ assert.deepEqual(calls.at(-1),{command:'feedback_submit',args:{payload:feedbackPayload}});
 });

@@ -25,6 +25,7 @@ use windows::core::{
 #[cfg(windows)]
 mod autostart;
 mod custom_playlists_storage;
+mod feedback;
 mod netease_library;
 mod netease_recommendations;
 mod playback_storage;
@@ -740,6 +741,7 @@ fn host_capabilities() -> Value {
         "customTitlebar": cfg!(windows),
         "localTrackCover": cfg!(any(windows, target_os = "macos")),
         "customPlaylistsStorage": true,
+        "feedback": true,
         "autostart": cfg!(windows),
     })
 }
@@ -890,6 +892,7 @@ fn main() {
             reveal_main_window,
             window_theme_sync,
             host_capabilities,
+            feedback::feedback_submit,
             local_library::local_library_folders_get,
             local_library::local_library_folder_pick,
             local_library::local_library_folder_remove,

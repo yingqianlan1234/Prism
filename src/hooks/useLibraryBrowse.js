@@ -8,6 +8,8 @@ import {
   QUALITY_LABELS,
   loadNeteaseQuality,
   saveNeteaseQuality,
+  loadQqQuality,
+  saveQqQuality,
   isOwnedPlaylist,
 } from '../utils/format.js';
 
@@ -62,9 +64,11 @@ export function useLibraryBrowse({
     local: [],
   }));
 
-  // 网易云 P1 增强能力状态：音质档位、红心喜欢集合、FM 跳过、歌单收藏与移出
+  // 音质档位偏好（两平台独立）、红心喜欢集合、FM 跳过、歌单收藏与移出
   const [neteaseQuality, setNeteaseQuality] = useState(() => loadNeteaseQuality());
   const qualityRef = useRef(neteaseQuality);
+  const [qqQuality, setQqQuality] = useState(() => loadQqQuality());
+  const qqQualityRef = useRef(qqQuality);
   const [likedIds, setLikedIds] = useState(() => new Set());
   const [likedBusyIds, setLikedBusyIds] = useState(() => new Set());
   const [fmTrashBusy, setFmTrashBusy] = useState(false);
@@ -656,6 +660,17 @@ export function useLibraryBrowse({
     }
   };
 
+  const changeQqQuality = level => {
+    const savedLevel = saveQqQuality(level);
+    qqQualityRef.current = savedLevel;
+    setQqQuality(savedLevel);
+    if (songRef.current?.provider === 'qqmusic') {
+      update('qqmusic', {
+        message: `已设为${QUALITY_LABELS[savedLevel] || savedLevel}音质，下首歌或重载后生效`,
+      });
+    }
+  };
+
   const toggleLike = async targetSong => {
     if (!targetSong || targetSong.provider !== 'netease' || !capabilities.netease.likeTrack) return;
     const w = workRef.current.netease;
@@ -848,6 +863,8 @@ export function useLibraryBrowse({
     clearProviderSearchHistory,
     neteaseQuality,
     qualityRef,
+    qqQuality,
+    qqQualityRef,
     likedIds,
     likedBusyIds,
     fmTrashBusy,
@@ -870,6 +887,7 @@ export function useLibraryBrowse({
     retryFm,
     openFm,
     changeNeteaseQuality,
+    changeQqQuality,
     toggleLike,
     trashCurrentFmTrack,
     addTrackToPlaylist,
